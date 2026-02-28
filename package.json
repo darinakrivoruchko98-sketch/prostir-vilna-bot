@@ -7,7 +7,6 @@
   },
   "dependencies": {
     "dotenv": "^17.3.1",
-    "google-spreadsheet": "^5.2.0",
     "googleapis": "^171.4.0",
     "node-telegram-bot-api": "^0.67.0"
   }
