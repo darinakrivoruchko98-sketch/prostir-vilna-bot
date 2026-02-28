@@ -4,14 +4,22 @@ const TelegramBot = require("node-telegram-bot-api");
 const { google } = require("googleapis");
 
 const TOKEN = process.env.TOKEN;
+const GROUP_ID = process.env.GROUP_ID;
+const CHAT_ID = process.env.CHAT_ID;
+// Таблиця для розкладу та реєстрацій на заходи
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || "1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8";
-const GROUP_ID = process.env.GROUP_ID; // ID групи vilna_dnipro, формат: -100123456789
-const CHAT_ID = process.env.CHAT_ID;   // ID чату chat_vilna_dnipro
+// Таблиця для персональних даних (ПІБ, телефон тощо)
+const PERSONAL_DATA_SPREADSHEET_ID = process.env.PERSONAL_DATA_SPREADSHEET_ID || "1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE";
+
+// Таблиця розкладу: https://docs.google.com/spreadsheets/d/1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8/edit
+// Таблиця персональних даних: https://docs.google.com/spreadsheets/d/1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE/edit
+
 
 if (!SPREADSHEET_ID) {
     console.log("SPREADSHEET_ID не встановлений");
 }
-console.log("Spreadsheet ID:", SPREADSHEET_ID);
+console.log("📋 Таблиця розкладу:", SPREADSHEET_ID);
+console.log("👤 Таблиця персональних даних:", PERSONAL_DATA_SPREADSHEET_ID);
 
 if (!TOKEN) {
     console.error("TOKEN не встановлено");
@@ -21,16 +29,24 @@ if (!TOKEN) {
 const bot = new TelegramBot(TOKEN, { polling: true });
 
 // Логування налаштованих груп для налагодження
-if (GROUP_ID) {
-    console.log(`✅ GROUP_ID встановлено: ${GROUP_ID}`);
+if (typeof GROUP_ID !== 'undefined') {
+    if (GROUP_ID) {
+        console.log(`✅ GROUP_ID встановлено: ${GROUP_ID}`);
+    } else {
+        console.log("⚠️ GROUP_ID не встановлено (встановіть: export GROUP_ID=-100xxxxx)");
+    }
 } else {
-    console.log("⚠️ GROUP_ID не встановлено (встановіть: export GROUP_ID=-100xxxxx)");
+    console.log("⚠️ GROUP_ID змінна не визначена (можна додати у .env або через export)");
 }
 
-if (CHAT_ID) {
-    console.log(`✅ CHAT_ID встановлено: ${CHAT_ID}`);
+if (typeof CHAT_ID !== 'undefined') {
+    if (CHAT_ID) {
+        console.log(`✅ CHAT_ID встановлено: ${CHAT_ID}`);
+    } else {
+        console.log("⚠️ CHAT_ID не встановлено (встановіть: export CHAT_ID=-1003282996506)");
+    }
 } else {
-    console.log("⚠️ CHAT_ID не встановлено (встановіть: export CHAT_ID=-1003282996506)");
+    console.log("⚠️ CHAT_ID змінна не визначена (можна додати у .env або через export)");
 }
 
 let users = {};
@@ -268,7 +284,7 @@ async function initSheets() {
     try {
 
         const auth = new google.auth.GoogleAuth({
-            keyFile: "./vilna-bot-51777c881dcb.json",
+            keyFile: process.cwd() + "/vilna-bot-8e7e5cb23ce2.json",
             scopes: ["https://www.googleapis.com/auth/spreadsheets"]
         });
 
@@ -371,43 +387,36 @@ async function loadEventsFromSheet() {
         events = [];
         const seen = new Set();
 
-        for (const row of rows) {
-            if (!row || row.length < 3) continue; // пропускаємо пусті рядки
-            const dateStr = (row[0] || '').toString().trim(); // DD.MM.YYYY
-            const timeStr = (row[1] || '').toString().trim(); // HH:MM
-            const title = (row[2] || '').toString().trim();
-            const capacityRaw = (row[3] || '').toString().trim();
+        for (const [i, row] of rows.entries()) {
+            // Пропускаємо заголовок
+            if (i === 0) continue;
+            if (!row || row.length < 5) continue;
+            const dateStr = row[0].trim();
+            const timeStr = row[1].trim();
+            const title = row[2].trim();
+            const seats = parseInt(row[3], 10) || 0;
+            const registrations = parseInt(row[4], 10) || 0;
 
-            // Skip header rows where first cell is non-date (e.g., 'Дата')
-            if (!/\d{1,2}\.\d{1,2}\.\d{4}/.test(dateStr)) continue;
-            if (!dateStr || !timeStr || !title) continue;
-
-            const id = `${title.replace(/\s+/g,'_')}_${dateStr}_${timeStr}`;
-            if (seen.has(id)) continue;
-            seen.add(id);
-
+            // Парсимо дату і час
             const dateParts = dateStr.split('.');
             if (dateParts.length !== 3) continue;
             const day = parseInt(dateParts[0], 10);
             const month = parseInt(dateParts[1], 10) - 1;
             const year = parseInt(dateParts[2], 10);
-
             const timeParts = timeStr.split(':');
-            const hour = parseInt(timeParts[0] || '0', 10);
-            const minute = parseInt(timeParts[1] || '0', 10);
-
+            if (timeParts.length !== 2) continue;
+            const hour = parseInt(timeParts[0], 10);
+            const minute = parseInt(timeParts[1], 10);
             const eventDate = new Date(year, month, day, hour, minute, 0);
             if (isNaN(eventDate.getTime())) continue;
 
-            const capacityMatch = capacityRaw.match(/\d+/);
-            const capacity = capacityMatch ? parseInt(capacityMatch[0], 10) : 0;
-
+            const id = `${title.replace(/\s+/g,'_')}_${dateStr}_${timeStr}`;
             events.push({
                 id,
                 name: title,
                 date: eventDate,
-                seats: capacity,
-                registrations: 0
+                seats,
+                registrations
             });
         }
 
@@ -422,8 +431,8 @@ async function loadEventsFromSheet() {
 
 async function appendRegistrationRow(chatId, user) {
 
-    if (!SPREADSHEET_ID) {
-        throw new Error('SPREADSHEET_ID not set');
+    if (!PERSONAL_DATA_SPREADSHEET_ID) {
+        throw new Error('PERSONAL_DATA_SPREADSHEET_ID not set');
     }
 
     const values = [
@@ -451,7 +460,7 @@ async function appendRegistrationRow(chatId, user) {
 
         try {
             await sheetsClient.spreadsheets.values.append({
-                spreadsheetId: SPREADSHEET_ID,
+                spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
                 range: "Березень!A:G",
                 valueInputOption: "USER_ENTERED",
                 requestBody: { values: [values] }
@@ -474,7 +483,7 @@ async function appendRegistrationRow(chatId, user) {
                 try {
                     console.warn('appendRegistrationRow: попробую fallback-діапазон A:G (перший аркуш)');
                     await sheetsClient.spreadsheets.values.append({
-                        spreadsheetId: SPREADSHEET_ID,
+                        spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
                         range: "A:G",
                         valueInputOption: "USER_ENTERED",
                         requestBody: { values: [values] }
@@ -630,7 +639,10 @@ bot.on('message', async (msg) => {
 
     // === ОБРОБКА ПОВІДОМЛЕНЬ З ГРУПИ/КАНАЛУ ===
     // Только з офіційної групи (за ID)
-    const authorizedChat = [Number(CHAT_ID), Number(GROUP_ID)].includes(msg.chat.id);
+    const chatIds = [];
+    if (typeof CHAT_ID !== 'undefined' && CHAT_ID) chatIds.push(Number(CHAT_ID));
+    if (typeof GROUP_ID !== 'undefined' && GROUP_ID) chatIds.push(Number(GROUP_ID));
+    const authorizedChat = chatIds.includes(msg.chat.id);
     
     // Дебаг: показуємо кожне повідомлення з групи
     if (msg.chat.type === 'group' || msg.chat.type === 'supergroup' || msg.chat.type === 'channel') {
@@ -813,10 +825,13 @@ bot.on('message', async (msg) => {
         
         // build keyboard options
         const buttons = [];
-        if (user.context !== 'afisha' && seatsLeft > 0) {
-            buttons.push([{ text: "Реєструватися" }]);
+        if (user.context !== 'afisha') {
+            if (seatsLeft > 0) {
+                buttons.push([{ text: "Реєструватися" }]);
+            } else {
+                buttons.push([{ text: "Місць немає" }]);
+            }
         }
-        // Видаліли кнопки нагадування звідси
         buttons.push([{ text: "Назад" }]);
 
         bot.sendMessage(chatId, `✅ Ви вибрали: ${selectedEvent.name}\n📅 ${formatEventDate(selectedEvent.date)}\n${seatsInfo}`, {
@@ -1165,5 +1180,6 @@ bot.on('message', async (msg) => {
 
 });
 
-console.log("Server running, spreadsheet=", SPREADSHEET_ID);
-console.log("You can change SPREADSHEET_ID in the file or via env.");
+console.log("✅ Бот запущено!");
+console.log("📋 Розклад:", SPREADSHEET_ID);
+console.log("👤 Персональні дані:", PERSONAL_DATA_SPREADSHEET_ID);
