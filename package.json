@@ -2,6 +2,9 @@
   "name": "vilna-bot",
   "version": "1.0.0",
   "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
   "dependencies": {
     "dotenv": "^17.3.1",
     "googleapis": "^171.4.0",
