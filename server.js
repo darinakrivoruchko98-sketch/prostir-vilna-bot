@@ -10,10 +10,12 @@ const GROUP_ID = process.env.GROUP_ID;
 const CHAT_ID = process.env.CHAT_ID;
 // Таблиця для розкладу та реєстрацій на заходи
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || "1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8";
+const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || "Розклад";
 // Таблиця для персональних даних (ПІБ, телефон тощо)
 const PERSONAL_DATA_SPREADSHEET_ID = process.env.PERSONAL_DATA_SPREADSHEET_ID || "1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE";
 const PERSONAL_DATA_SHEET_NAME = process.env.PERSONAL_DATA_SHEET_NAME || "Березень";
 const REGISTRATION_SHEET_CANDIDATES = ["Реєстрація", "Реєстрації"];
+const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
 
 // Таблиця розкладу: https://docs.google.com/spreadsheets/d/1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8/edit
 // Таблиця персональних даних: https://docs.google.com/spreadsheets/d/1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE/edit
@@ -23,7 +25,9 @@ if (!SPREADSHEET_ID) {
     console.log("SPREADSHEET_ID не встановлений");
 }
 console.log("📋 Таблиця розкладу:", SPREADSHEET_ID);
+console.log("📄 Аркуш розкладу:", SCHEDULE_SHEET_NAME);
 console.log("👤 Таблиця персональних даних:", PERSONAL_DATA_SPREADSHEET_ID);
+console.log("📄 Аркуш персональних даних:", PERSONAL_DATA_SHEET_NAME);
 
 if (!TOKEN) {
     console.error("TOKEN не встановлено");
@@ -202,11 +206,12 @@ function formatSheetTime(date) {
 
 async function incrementSheetRegistration(event) {
     if (!sheetsClient || !SPREADSHEET_ID) return;
-    try {
-        const resp = await sheetsClient.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID,
-            range: "Розклад!A:E"
-        });
+    for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
+        try {
+            const resp = await sheetsClient.spreadsheets.values.get({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `${scheduleSheet}!A:E`
+            });
         const rows = resp.data.values || [];
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
@@ -218,19 +223,26 @@ async function incrementSheetRegistration(event) {
                 const newReg = currReg + 1;
                 const currCap = parseInt(row[3] || '0', 10);
                 const newCap = Math.max(0, currCap - 1);
-                const range = `Розклад!D${i+1}:E${i+1}`;
+                const range = `${scheduleSheet}!D${i+1}:E${i+1}`;
                 await sheetsClient.spreadsheets.values.update({
                     spreadsheetId: SPREADSHEET_ID,
                     range,
                     valueInputOption: 'USER_ENTERED',
                     requestBody: { values: [[newCap, newReg]] }
                 });
-                break;
+                return;
             }
         }
-    } catch (e) {
-        console.error('Error incrementing registration count', e);
+        } catch (e) {
+            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+            if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                continue;
+            }
+            console.error('Error incrementing registration count', e);
+            return;
+        }
     }
+    console.warn(`Не вдалося оновити лічильник у розкладі. Спробовано аркуші: ${SCHEDULE_SHEET_CANDIDATES.join(', ')}`);
 }
 
 // Фільтрувати та сортувати заходи
@@ -432,29 +444,22 @@ async function loadEventsFromSheet() {
 
     try {
         let rows = [];
-        // Попробуем сначала лист 'Розклад'
-        try {
-            const resp = await sheetsClient.spreadsheets.values.get({
-                spreadsheetId: SPREADSHEET_ID,
-                range: "Розклад!A:E"
-            });
-            rows = resp.data.values || [];
-            if (rows && rows.length) console.log('   Використано лист Розклад');
-        } catch (err) {
-            // не критично — попробуем альтернативы
-        }
-
-        // Если нет строк в "Розклад", попробуем альтернативные листы
-        if (!rows || rows.length === 0) {
+        for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
             try {
-                const alt = await sheetsClient.spreadsheets.values.get({
+                const resp = await sheetsClient.spreadsheets.values.get({
                     spreadsheetId: SPREADSHEET_ID,
-                    range: "Заходи!A:E"
+                    range: `${scheduleSheet}!A:E`
                 });
-                rows = alt.data.values || [];
-                if (rows && rows.length) console.log('   Використано лист Заходи');
+                rows = resp.data.values || [];
+                if (rows && rows.length) {
+                    console.log(`   Використано лист ${scheduleSheet}`);
+                    break;
+                }
             } catch (e) {
-                // игнорировать
+                const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+                if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                    continue;
+                }
             }
         }
 
@@ -654,19 +659,28 @@ async function getSeatsLeft(eventId) {
 
 async function appendEventToSheet(date, time, title, capacity) {
     if (!sheetsClient || !SPREADSHEET_ID) return;
-    try {
-        await sheetsClient.spreadsheets.values.append({
-            spreadsheetId: SPREADSHEET_ID,
-            range: "Заходи!A:D",
-            valueInputOption: "USER_ENTERED",
-            requestBody: {
-                values: [[date, time, title, capacity]]
+    for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
+        try {
+            await sheetsClient.spreadsheets.values.append({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `${scheduleSheet}!A:D`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: {
+                    values: [[date, time, title, capacity]]
+                }
+            });
+            console.log(`   ✅ Захід записано у Sheets (${scheduleSheet})`);
+            return;
+        } catch (e) {
+            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+            if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                continue;
             }
-        });
-        console.log('   ✅ Захід записано у Sheets');
-    } catch (e) {
-        console.error('   ❌ Помилка запису у Sheets:', e.message);
+            console.error('   ❌ Помилка запису у Sheets:', e.message);
+            return;
+        }
     }
+    console.error(`   ❌ Не знайдено аркуш для запису розкладу (${SCHEDULE_SHEET_CANDIDATES.join(', ')})`);
 }
 
 async function appendEventRegistration(eventId, userId) {

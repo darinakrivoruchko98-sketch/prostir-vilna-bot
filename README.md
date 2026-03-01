@@ -13,12 +13,14 @@ TOKEN=your_telegram_bot_token
 GROUP_ID=-1003282996506
 CHAT_ID=-1003282996506
 SPREADSHEET_ID=1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8
+SCHEDULE_SHEET_NAME=Розклад
 PERSONAL_DATA_SPREADSHEET_ID=1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE
 PERSONAL_DATA_SHEET_NAME=Березень
 GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
 ```
 
 Бот читає реєстрації з аркуша `Реєстрація` (або fallback `Реєстрації`) у таблиці `SPREADSHEET_ID`,
+розклад читає з аркуша `Розклад` (або значення `SCHEDULE_SHEET_NAME`) у таблиці `SPREADSHEET_ID`,
 а персональні дані записує в аркуш `Березень` (або значення `PERSONAL_DATA_SHEET_NAME`) у таблиці `PERSONAL_DATA_SPREADSHEET_ID`.
 
 ### 2. Google Service Account JSON
