@@ -204,6 +204,167 @@ function formatSheetTime(date) {
     return `${h}:${mi}`;
 }
 
+function normalizeTimeValue(rawTime) {
+    const value = String(rawTime || '').trim().replace('.', ':');
+    const match = value.match(/^(\d{1,2})[:](\d{1,2})$/);
+    if (!match) return null;
+    const hour = parseInt(match[1], 10);
+    const minute = parseInt(match[2], 10);
+    if (Number.isNaN(hour) || Number.isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        return null;
+    }
+    return { hour, minute, text: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` };
+}
+
+function parseDateValue(rawDate, yearHint) {
+    const source = String(rawDate || '').trim();
+    if (!source) return null;
+
+    const uaDate = source.match(/^(\d{1,2})\s+([А-Яа-яІіЇїЄєґҐ'’]+)\s+(\d{4})$/);
+    if (uaDate) {
+        const parsed = parseEventDate(source, '00:00');
+        if (parsed && !Number.isNaN(parsed.getTime())) {
+            parsed.setHours(0, 0, 0, 0);
+            return parsed;
+        }
+    }
+
+    const dmy = source.match(/^(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?$/);
+    if (dmy) {
+        const day = parseInt(dmy[1], 10);
+        const month = parseInt(dmy[2], 10) - 1;
+        const explicitYear = dmy[3] ? parseInt(dmy[3], 10) : null;
+        const year = explicitYear
+            ? (explicitYear < 100 ? 2000 + explicitYear : explicitYear)
+            : (yearHint || new Date().getFullYear());
+        const date = new Date(year, month, day, 0, 0, 0, 0);
+        if (!Number.isNaN(date.getTime())) return date;
+    }
+
+    const ymd = source.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (ymd) {
+        const year = parseInt(ymd[1], 10);
+        const month = parseInt(ymd[2], 10) - 1;
+        const day = parseInt(ymd[3], 10);
+        const date = new Date(year, month, day, 0, 0, 0, 0);
+        if (!Number.isNaN(date.getTime())) return date;
+    }
+
+    const asNumber = Number(source.replace(',', '.'));
+    if (Number.isFinite(asNumber) && asNumber > 20000 && asNumber < 60000) {
+        const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+        const date = new Date(excelEpoch.getTime() + asNumber * 86400000);
+        if (!Number.isNaN(date.getTime())) {
+            return new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0);
+        }
+    }
+
+    return null;
+}
+
+function normalizeTitle(value) {
+    return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function parseEventFromRow(row, currentDateContext) {
+    if (!row || row.length === 0) {
+        return { event: null, nextDateContext: currentDateContext };
+    }
+
+    const cells = row.map((cell) => String(cell || '').trim());
+    const nonEmpty = cells.filter(Boolean);
+    if (nonEmpty.length === 0) {
+        return { event: null, nextDateContext: currentDateContext };
+    }
+
+    const yearHint = currentDateContext ? currentDateContext.getFullYear() : new Date().getFullYear();
+    const dateIndex = cells.findIndex((cell) => parseDateValue(cell, yearHint));
+    const timeIndex = cells.findIndex((cell) => normalizeTimeValue(cell));
+
+    if (nonEmpty.length === 1 && dateIndex >= 0 && timeIndex === -1) {
+        return {
+            event: null,
+            nextDateContext: parseDateValue(cells[dateIndex], yearHint) || currentDateContext
+        };
+    }
+
+    const dateBase = dateIndex >= 0
+        ? parseDateValue(cells[dateIndex], yearHint)
+        : currentDateContext;
+
+    let time = timeIndex >= 0 ? normalizeTimeValue(cells[timeIndex]) : null;
+    let title = cells[2] ? String(cells[2]).trim() : '';
+    let seats = parseInt(cells[3], 10);
+    let registrations = parseInt(cells[4], 10);
+
+    if (!time) {
+        const line = nonEmpty.join(' ');
+        const lineTime = line.match(/(\d{1,2})[:.](\d{2})/);
+        if (lineTime) {
+            time = normalizeTimeValue(`${lineTime[1]}:${lineTime[2]}`);
+        }
+
+        if (!title) {
+            const pieces = line.split(/\s*[–-]\s*/).map((v) => v.trim()).filter(Boolean);
+            if (pieces.length >= 2) {
+                const start = pieces[0].match(/\d{1,2}[:.]\d{2}/) ? 1 : 0;
+                title = pieces.slice(start, pieces.length - 1).join(' – ').trim() || pieces[start] || '';
+                const seatFromTail = pieces[pieces.length - 1].match(/\d+/);
+                if (seatFromTail) seats = parseInt(seatFromTail[0], 10);
+            }
+        }
+    }
+
+    if (!title) {
+        title = cells.find((cell, idx) => {
+            if (!cell) return false;
+            if (idx === dateIndex || idx === timeIndex) return false;
+            if (/^\d+$/.test(cell)) return false;
+            if (parseDateValue(cell, yearHint)) return false;
+            if (normalizeTimeValue(cell)) return false;
+            return true;
+        }) || '';
+    }
+
+    if (!Number.isFinite(seats)) {
+        const seatCell = cells.find((cell, idx) => idx !== dateIndex && idx !== timeIndex && /\d+/.test(cell));
+        seats = seatCell ? parseInt((seatCell.match(/\d+/) || [0])[0], 10) : 0;
+    }
+
+    if (!Number.isFinite(registrations)) {
+        registrations = 0;
+    }
+
+    if (!dateBase || !time || !title) {
+        return { event: null, nextDateContext: dateBase || currentDateContext };
+    }
+
+    const eventDate = new Date(
+        dateBase.getFullYear(),
+        dateBase.getMonth(),
+        dateBase.getDate(),
+        time.hour,
+        time.minute,
+        0,
+        0
+    );
+
+    if (Number.isNaN(eventDate.getTime())) {
+        return { event: null, nextDateContext: dateBase || currentDateContext };
+    }
+
+    return {
+        event: {
+            id: `${title.replace(/\s+/g,'_')}_${formatSheetDate(eventDate)}_${formatSheetTime(eventDate)}`,
+            name: title,
+            date: eventDate,
+            seats: Number.isFinite(seats) ? seats : 0,
+            registrations: Number.isFinite(registrations) ? registrations : 0
+        },
+        nextDateContext: dateBase
+    };
+}
+
 async function incrementSheetRegistration(event) {
     if (!sheetsClient || !SPREADSHEET_ID) return;
     for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
@@ -212,13 +373,17 @@ async function incrementSheetRegistration(event) {
                 spreadsheetId: SPREADSHEET_ID,
                 range: `${scheduleSheet}!A:E`
             });
-        const rows = resp.data.values || [];
-        for (let i = 0; i < rows.length; i++) {
-            const row = rows[i];
-            const dateStr = (row[0] || '').toString().trim();
-            const timeStr = (row[1] || '').toString().trim();
-            const title = (row[2] || '').toString().trim();
-            if (dateStr === formatSheetDate(event.date) && timeStr === formatSheetTime(event.date) && title === event.name) {
+            const rows = resp.data.values || [];
+            for (let i = 0; i < rows.length; i++) {
+                const row = rows[i];
+                const parsed = parseEventFromRow(row, null);
+                const parsedEvent = parsed.event;
+                if (!parsedEvent) continue;
+
+                const sameTitle = normalizeTitle(parsedEvent.name) === normalizeTitle(event.name);
+                const sameMinute = Math.abs(parsedEvent.date.getTime() - event.date.getTime()) < 60 * 1000;
+
+                if (sameTitle && sameMinute) {
                 const currReg = parseInt(row[4] || '0', 10);
                 const newReg = currReg + 1;
                 const currCap = parseInt(row[3] || '0', 10);
@@ -232,7 +397,7 @@ async function incrementSheetRegistration(event) {
                 });
                 return;
             }
-        }
+            }
         } catch (e) {
             const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
             if (msg.includes('unable to parse range') || msg.includes('not found')) {
@@ -444,6 +609,7 @@ async function loadEventsFromSheet() {
 
     try {
         let rows = [];
+        const readErrors = [];
         for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
             try {
                 const resp = await sheetsClient.spreadsheets.values.get({
@@ -460,6 +626,7 @@ async function loadEventsFromSheet() {
                 if (msg.includes('unable to parse range') || msg.includes('not found')) {
                     continue;
                 }
+                readErrors.push({ sheet: scheduleSheet, message: e && e.message ? e.message : String(e) });
             }
         }
 
@@ -473,47 +640,46 @@ async function loadEventsFromSheet() {
                 rows = alt2.data.values || [];
                 if (rows && rows.length) console.log('   Використано діапазон A:E');
             } catch (e) {
-                // игнорировать
+                const msg = e && e.message ? e.message : String(e);
+                readErrors.push({ sheet: 'A:E', message: msg });
             }
+        }
+
+        if ((!rows || rows.length === 0) && readErrors.length > 0) {
+            const details = readErrors.map((entry) => `${entry.sheet}: ${entry.message}`).join(' | ');
+            throw new Error(`Не вдалося зчитати розклад із таблиці ${SPREADSHEET_ID}. ${details}`);
         }
 
         // Очистити поточні заходи перед завантаженням
         events = [];
         const seen = new Set();
+        let dateContext = null;
 
         for (const [i, row] of rows.entries()) {
-            // Пропускаємо заголовок
-            if (i === 0) continue;
-            if (!row || row.length < 4) continue;
-            const dateStr = row[0].trim();
-            const timeStr = row[1].trim().replace('.', ':');
-            const title = row[2].trim();
-            const seats = parseInt(row[3], 10) || 0;
-            const registrations = parseInt(row[4], 10) || 0;
+            const parsed = parseEventFromRow(row, dateContext);
+            dateContext = parsed.nextDateContext;
 
-            // Парсимо дату і час
-            const dateParts = dateStr.split('.');
-            if (dateParts.length !== 3) continue;
-            const day = parseInt(dateParts[0], 10);
-            const month = parseInt(dateParts[1], 10) - 1;
-            const year = parseInt(dateParts[2], 10);
-            const timeParts = timeStr.split(':');
-            if (timeParts.length !== 2) continue;
-            const hour = parseInt(timeParts[0], 10);
-            const minute = parseInt(timeParts[1], 10);
-            const eventDate = new Date(year, month, day, hour, minute, 0);
-            if (isNaN(eventDate.getTime())) continue;
+            if (!parsed.event) {
+                continue;
+            }
 
-            const id = `${title.replace(/\s+/g,'_')}_${dateStr}_${timeStr}`;
-            events.push({
-                id,
-                name: title,
-                date: eventDate,
-                seats,
-                registrations
-            });
+            const ev = parsed.event;
+
+            if (i === 0 && /дата|час|назва|захід/i.test(String((row || []).join(' ')))) {
+                continue;
+            }
+
+            if (seen.has(ev.id)) {
+                continue;
+            }
+
+            seen.add(ev.id);
+            events.push(ev);
         }
 
+        if (events.length === 0) {
+            console.warn(`⚠️ Розклад прочитано, але заходів не знайдено. Перевірте дані у листі ${SCHEDULE_SHEET_NAME}.`);
+        }
         console.log(`✅ Розклад завантажено з Sheets (${events.length} заходів)`);
 
     } catch (e) {
