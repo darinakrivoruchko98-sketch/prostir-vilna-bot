@@ -16,21 +16,21 @@ SPREADSHEET_ID=1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8
 SCHEDULE_SHEET_NAME=Розклад
 PERSONAL_DATA_SPREADSHEET_ID=1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE
 PERSONAL_DATA_SHEET_NAME=Березень
-GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
+GOOGLE_CLIENT_EMAIL=your-service-account@project-id.iam.gserviceaccount.com
+GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
 ```
 
 Бот читає реєстрації з аркуша `Реєстрація` (або fallback `Реєстрації`) у таблиці `SPREADSHEET_ID`,
 розклад читає з аркуша `Розклад` (або значення `SCHEDULE_SHEET_NAME`) у таблиці `SPREADSHEET_ID`,
 а персональні дані записує в аркуш `Березень` (або значення `PERSONAL_DATA_SHEET_NAME`) у таблиці `PERSONAL_DATA_SPREADSHEET_ID`.
 
-### 2. Google Service Account JSON
+### 2. Google Service Account (тільки через env)
 
-Для `GOOGLE_SERVICE_ACCOUNT_JSON` скопіюйте весь вміст файлу `vilna-bot-8e7e5cb23ce2.json` в одну лінію (як JSON string).
+Бот не читає локальні `*.json` ключі і не використовує `GOOGLE_APPLICATION_CREDENTIALS`.
 
-
-Альтернативи:
-- `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64` (base64 від JSON service account)
-- `GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json`
+Використовуйте лише:
+- `GOOGLE_CLIENT_EMAIL`
+- `GOOGLE_PRIVATE_KEY` (з `\\n` у значенні)
 
 ### 3. Деплой
 
@@ -43,12 +43,12 @@ Railway автоматично задеплоїть бот після пушу �
 TOKEN=your_token
 GROUP_ID=-1003282996506
 CHAT_ID=-1003282996506
-GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
+SPREADSHEET_ID=your_spreadsheet_id
+GOOGLE_CLIENT_EMAIL=your-service-account@project-id.iam.gserviceaccount.com
+GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
 ```
 
-2. Якщо не хочете зберігати JSON у `.env`, покладіть локальний файл `vilna-bot-*.json` у корінь проєкту.
-
-3. Запустіть:
+2. Запустіть:
 ```bash
 npm install
 npm start

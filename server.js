@@ -1,7 +1,5 @@
 require('dotenv').config();
 
-const fs = require("fs");
-const path = require("path");
 const TelegramBot = require("node-telegram-bot-api");
 const { google } = require("googleapis");
 
@@ -9,7 +7,7 @@ const TOKEN = process.env.TOKEN;
 const GROUP_ID = process.env.GROUP_ID;
 const CHAT_ID = process.env.CHAT_ID;
 // Таблиця для розкладу та реєстрацій на заходи
-const SPREADSHEET_ID = process.env.SPREADSHEET_ID || "1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8";
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || "Розклад";
 // Таблиця для персональних даних (ПІБ, телефон тощо)
 const PERSONAL_DATA_SPREADSHEET_ID = process.env.PERSONAL_DATA_SPREADSHEET_ID || "1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE";
@@ -22,7 +20,8 @@ const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
 
 
 if (!SPREADSHEET_ID) {
-    console.log("SPREADSHEET_ID не встановлений");
+    console.error("SPREADSHEET_ID не встановлений");
+    process.exit(1);
 }
 console.log("📋 Таблиця розкладу:", SPREADSHEET_ID);
 console.log("📄 Аркуш розкладу:", SCHEDULE_SHEET_NAME);
@@ -134,14 +133,22 @@ async function showDayAgenda(chatId, dayName) {
     }
     let msg = `📅 Заходи в ${dayName}:\n\n`;
     const buttons = [];
+    const eventButtonMap = {};
     for (const ev of dayEvents) {
         const seatsLeft = await getSeatsLeft(ev.id);
         const time = String(ev.date.getHours()).padStart(2,'0')+":"+String(ev.date.getMinutes()).padStart(2,'0');
         const seatsLabel = seatsLeft > 0 ? `💺 ${seatsLeft} місць` : `❌ закрито`;
         msg += `Назва: ${ev.name}\nЧас: ${time}\nМісць залишилось: ${seatsLabel}\n\n`;
-        buttons.push([{ text: `${ev.name} | ${time} | ${seatsLabel}` }]);
+        const buttonText = `${ev.name} | ${formatEventDate(ev.date)} | ${seatsLabel}`;
+        buttons.push([{ text: buttonText }]);
+        eventButtonMap[buttonText] = ev.id;
     }
     buttons.push([{ text: "Повернутися в меню" }]);
+
+    if (!users[chatId]) {
+        users[chatId] = { step: 0 };
+    }
+    users[chatId].eventButtonMap = eventButtonMap;
 
     bot.sendMessage(chatId, msg, {
         reply_markup: {
@@ -389,12 +396,14 @@ async function incrementSheetRegistration(event) {
                 const currCap = parseInt(row[3] || '0', 10);
                 const newCap = Math.max(0, currCap - 1);
                 const range = `${scheduleSheet}!D${i+1}:E${i+1}`;
+                console.log(`📈 Оновлюю лічильник реєстрацій: eventId=${event.id}, sheet=${scheduleSheet}, row=${i + 1}, seats ${currCap}->${newCap}, registrations ${currReg}->${newReg}`);
                 await sheetsClient.spreadsheets.values.update({
                     spreadsheetId: SPREADSHEET_ID,
                     range,
                     valueInputOption: 'USER_ENTERED',
                     requestBody: { values: [[newCap, newReg]] }
                 });
+                console.log(`✅ Лічильник реєстрацій оновлено: eventId=${event.id}, range=${range}`);
                 return;
             }
             }
@@ -407,7 +416,7 @@ async function incrementSheetRegistration(event) {
             return;
         }
     }
-    console.warn(`Не вдалося оновити лічильник у розкладі. Спробовано аркуші: ${SCHEDULE_SHEET_CANDIDATES.join(', ')}`);
+    console.warn(`Не вдалося оновити лічильник у розкладі для eventId=${event.id}. Спробовано аркуші: ${SCHEDULE_SHEET_CANDIDATES.join(', ')}`);
 }
 
 // Фільтрувати та сортувати заходи
@@ -458,54 +467,52 @@ function formatEventDate(date) {
     return `${d} ${m} | ${h}:${min}`;
 }
 
+function parseEventSelectionFromButtonText(buttonText) {
+    const parts = String(buttonText || '').split('|').map((part) => part.trim());
+    if (parts.length < 3) return null;
+
+    const rawName = parts[0] || '';
+    const eventName = rawName.replace(/^☐\s*/, '').trim();
+    const datePart = parts[1] || '';
+    const timePart = parts[2] || '';
+
+    if (!eventName) return null;
+
+    const dateMatch = datePart.match(/^(\d{1,2})\s+([А-Яа-яІіЇїЄєґҐ'’]+)$/);
+    const parsedTime = normalizeTimeValue(timePart);
+    if (!dateMatch || !parsedTime) return null;
+
+    const day = parseInt(dateMatch[1], 10);
+    const monthName = dateMatch[2].toLowerCase();
+    const month = monthsUa[monthName];
+    if (!Number.isFinite(day) || month === undefined) return null;
+
+    return {
+        eventName,
+        day,
+        month,
+        hour: parsedTime.hour,
+        minute: parsedTime.minute
+    };
+}
+
+function findEventByButtonText(buttonText, candidateEvents) {
+    const parsedSelection = parseEventSelectionFromButtonText(buttonText);
+    if (!parsedSelection) return null;
+
+    return candidateEvents.find((eventItem) => (
+        normalizeTitle(eventItem.name) === normalizeTitle(parsedSelection.eventName) &&
+        eventItem.date.getDate() === parsedSelection.day &&
+        eventItem.date.getMonth() === parsedSelection.month &&
+        eventItem.date.getHours() === parsedSelection.hour &&
+        eventItem.date.getMinutes() === parsedSelection.minute
+    )) || null;
+}
+
 /* ===== GOOGLE SHEETS ===== */
 
 let sheetsClient = null;
 let sheetsRefreshInterval = null;
-
-function normalizeCredentials(credentials) {
-    if (credentials && typeof credentials.private_key === "string") {
-        credentials.private_key = credentials.private_key.replace(/\\n/g, "\n");
-    }
-    return credentials;
-}
-
-function parseCredentialsFromEnv() {
-    const sources = [];
-
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-        try {
-            const parsed = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-            sources.push({
-                label: "GOOGLE_SERVICE_ACCOUNT_JSON",
-                authOptions: {
-                    credentials: normalizeCredentials(parsed),
-                    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-                }
-            });
-        } catch (error) {
-            console.error(`Невалідний GOOGLE_SERVICE_ACCOUNT_JSON: ${error.message}`);
-        }
-    }
-
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
-        try {
-            const decoded = Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64").toString("utf8");
-            const parsed = JSON.parse(decoded);
-            sources.push({
-                label: "GOOGLE_SERVICE_ACCOUNT_JSON_BASE64",
-                authOptions: {
-                    credentials: normalizeCredentials(parsed),
-                    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-                }
-            });
-        } catch (error) {
-            console.error(`Невалідний GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: ${error.message}`);
-        }
-    }
-
-    return sources;
-}
 
 function startPollingIfNeeded() {
     if (pollingStarted) return;
@@ -514,81 +521,31 @@ function startPollingIfNeeded() {
     console.log("🤖 Telegram polling запущено ✅");
 }
 
-function resolveGoogleAuthCandidates() {
-    const scopes = ["https://www.googleapis.com/auth/spreadsheets"];
-    const candidates = [];
-
-    const envCandidates = parseCredentialsFromEnv();
-    if (envCandidates.length > 0) {
-        candidates.push(...envCandidates);
-    }
-
-    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-        candidates.push({
-            label: `GOOGLE_APPLICATION_CREDENTIALS (${process.env.GOOGLE_APPLICATION_CREDENTIALS})`,
-            authOptions: {
-                keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-                scopes
-            }
-        });
-    }
-
-    const cwd = process.cwd();
-    const preferredFile = path.join(cwd, "vilna-bot-8e7e5cb23ce2.json");
-    if (fs.existsSync(preferredFile)) {
-        candidates.push({
-            label: "local file vilna-bot-8e7e5cb23ce2.json",
-            authOptions: {
-                keyFile: preferredFile,
-                scopes
-            }
-        });
-    }
-
-    const anyLocalCredentials = fs.readdirSync(cwd).filter((fileName) => /^vilna-bot-.*\.json$/.test(fileName));
-    for (const fileName of anyLocalCredentials) {
-        const filePath = path.join(cwd, fileName);
-        if (filePath === preferredFile) continue;
-        candidates.push({
-            label: `local file ${fileName}`,
-            authOptions: {
-                keyFile: filePath,
-                scopes
-            }
-        });
-    }
-
-    if (candidates.length === 0) {
-        throw new Error("Не знайдено Google credentials. Додайте GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, GOOGLE_APPLICATION_CREDENTIALS або файл vilna-bot-*.json");
-    }
-
-    return candidates;
-}
-
 async function createAuthorizedSheetsClient() {
-    const candidates = resolveGoogleAuthCandidates();
-    const errors = [];
+    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY;
 
-    for (const candidate of candidates) {
-        try {
-            console.log(`🔑 Перевіряю credentials: ${candidate.label}`);
-            const auth = new google.auth.GoogleAuth(candidate.authOptions);
-            const client = await auth.getClient();
-            await client.getAccessToken();
-
-            console.log(`🔐 Credentials валідні: ${candidate.label}`);
-            return google.sheets({
-                version: "v4",
-                auth: client
-            });
-        } catch (error) {
-            const msg = error && error.message ? error.message : String(error);
-            errors.push(`${candidate.label}: ${msg}`);
-            console.error(`❌ Credentials невалидні (${candidate.label}): ${msg}`);
-        }
+    if (!clientEmail || !privateKey) {
+        throw new Error("Не знайдено Google credentials у змінних середовища. Додайте GOOGLE_CLIENT_EMAIL та GOOGLE_PRIVATE_KEY");
     }
 
-    throw new Error(`Жодне джерело credentials не підійшло. ${errors.join(" | ")}`);
+    console.log("🔑 Перевіряю credentials: GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY");
+    const auth = new google.auth.GoogleAuth({
+        credentials: {
+            client_email: clientEmail,
+            private_key: privateKey.replace(/\\n/g, "\n")
+        },
+        scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+    });
+
+    const client = await auth.getClient();
+    await client.getAccessToken();
+    console.log("🔐 Credentials валідні: GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY");
+
+    return google.sheets({
+        version: "v4",
+        auth: client
+    });
 }
 
 async function initSheets() {
@@ -759,13 +716,27 @@ async function appendRegistrationRow(chatId, user) {
         }
 
         try {
-            await sheetsClient.spreadsheets.values.append({
+            // Знаходимо останній рядок з даними щоб писати у наступну пусту комірку
+            const resp = await sheetsClient.spreadsheets.values.get({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${PERSONAL_DATA_SHEET_NAME}!A:G`,
-                valueInputOption: "USER_ENTERED",
-                requestBody: { values: [values] }
+                range: `${PERSONAL_DATA_SHEET_NAME}!A:A`
             });
-            console.log(`Записано в таблицю ${PERSONAL_DATA_SHEET_NAME} ✅`);
+            const rows = resp.data.values || [];
+            const nextRow = rows.length + 1; // Наступний рядок після існуючих даних
+
+            // Пишемо у новий рядок
+            const range = `${PERSONAL_DATA_SHEET_NAME}!A${nextRow}`;
+            
+            await sheetsClient.spreadsheets.values.update({
+                spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                range: range,
+                valueInputOption: "USER_ENTERED",
+                requestBody: { 
+                    values: [values],
+                    majorDimension: "ROWS"
+                }
+            });
+            console.log(`Записано в таблицю ${PERSONAL_DATA_SHEET_NAME} (рядок ${nextRow}) ✅`);
             return;
         } catch (e) {
             lastErr = e;
@@ -777,22 +748,32 @@ async function appendRegistrationRow(chatId, user) {
                 console.error(`appendRegistrationRow attempt ${attempt} failed (unable to stringify error):`, e);
             }
 
-            // Если ошибка связана с неверным range (напр., листа "Березень" нет), пробуем fallback на общий диапазон листа
+            // Якщо помилка з листом — пробуємо перший лист як fallback
             const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
             if ((msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('sheet') ) && attempt === 1) {
                 try {
-                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:G (перший аркуш)');
-                    await sheetsClient.spreadsheets.values.append({
+                    console.warn('appendRegistrationRow: спробую fallback на перший аркуш');
+                    const respFallback = await sheetsClient.spreadsheets.values.get({
                         spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                        range: "A:G",
-                        valueInputOption: "USER_ENTERED",
-                        requestBody: { values: [values] }
+                        range: `A:A`
                     });
-                    console.log("Записано в таблицю (fallback A:G) ✅");
+                    const rowsFallback = respFallback.data.values || [];
+                    const nextRowFallback = rowsFallback.length + 1;
+                    
+                    await sheetsClient.spreadsheets.values.update({
+                        spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                        range: `A${nextRowFallback}`,
+                        valueInputOption: "USER_ENTERED",
+                        requestBody: { 
+                            values: [values],
+                            majorDimension: "ROWS"
+                        }
+                    });
+                    console.log("Записано в таблицю (fallback, рядок " + nextRowFallback + ") ✅");
                     return;
                 } catch (e2) {
                     lastErr = e2;
-                    console.error('Fallback append to A:G failed:', e2 && e2.message ? e2.message : e2);
+                    console.error('Fallback write failed:', e2 && e2.message ? e2.message : e2);
                 }
             }
 
@@ -1145,9 +1126,20 @@ bot.on('message', async (msg) => {
     }
 
     // Перевіряємо чи натиснута кнопка з заходом
-    const selectedEvent = getAllEvents().find(e => 
-        text.includes(e.name)
-    );
+    let selectedEvent = null;
+    if (user.eventButtonMap && user.eventButtonMap[text]) {
+        selectedEvent = getAllEvents().find((eventItem) => eventItem.id === user.eventButtonMap[text]) || null;
+    }
+
+    // Fallback для старих клавіатур без мапи (точне співпадіння назва+дата+час)
+    if (!selectedEvent) {
+        selectedEvent = findEventByButtonText(text, getAllEvents());
+    }
+
+    // Legacy fallback (залишаємо на крайній випадок)
+    if (!selectedEvent) {
+        selectedEvent = getAllEvents().find((eventItem) => text.includes(eventItem.name));
+    }
 
     if (selectedEvent) {
         // compute seats left asynchronously before replying
@@ -1226,6 +1218,7 @@ bot.on('message', async (msg) => {
         // Вернуться к списку доступних заходів (исключив те, на которые уже зарегистрировались)
         const allEvents = getAllEvents();
         const avail = [];
+        const eventButtonMap = {};
         const registeredIds = user.selectedEvents ? user.selectedEvents.map(e => e.id) : [];
         for (const ev of allEvents) {
             if (registeredIds.includes(ev.id)) continue; // пропустити вже вибрані
@@ -1241,7 +1234,12 @@ bot.on('message', async (msg) => {
             });
             return;
         }
-        const eventButtons = avail.map(event => [{ text: `☐ ${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}` }]);
+        const eventButtons = avail.map(event => {
+            const buttonText = `☐ ${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}`;
+            eventButtonMap[buttonText] = event.id;
+            return [{ text: buttonText }];
+        });
+        user.eventButtonMap = eventButtonMap;
         eventButtons.push([{ text: "✅ Завершити" }]);
         bot.sendMessage(chatId, "Натисніть на захід, на який бажаєте зареєструватись:", {
             reply_markup: {
@@ -1254,6 +1252,7 @@ bot.on('message', async (msg) => {
 
     if (text === "Назад") {
         delete user.selectedEventName;
+        delete user.eventButtonMap;
         user.context = null;
         bot.sendMessage(chatId, "Меню:", {
             reply_markup: {
@@ -1271,6 +1270,9 @@ bot.on('message', async (msg) => {
     }
 
     if (text === "Повернутися в меню") {
+        if (users[chatId]) {
+            delete users[chatId].eventButtonMap;
+        }
         delete users[chatId];
         bot.sendMessage(chatId, "Меню:", {
             reply_markup: {
@@ -1380,6 +1382,7 @@ bot.on('message', async (msg) => {
     if (user.step === 7 && text === "Далі") {
         const allEvents = getAllEvents();
         const avail = [];
+        const eventButtonMap = {};
         for (const ev of allEvents) {
             const seatsLeft = await getSeatsLeft(ev.id);
             if (seatsLeft > 0) avail.push(Object.assign({}, ev, { seatsLeft }));
@@ -1394,7 +1397,12 @@ bot.on('message', async (msg) => {
             delete users[chatId];
             return;
         }
-        const eventButtons = avail.map(event => [{ text: `☐ ${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}` }]);
+        const eventButtons = avail.map(event => {
+            const buttonText = `☐ ${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}`;
+            eventButtonMap[buttonText] = event.id;
+            return [{ text: buttonText }];
+        });
+        user.eventButtonMap = eventButtonMap;
         eventButtons.push([{ text: "✅ Завершити" }]);
         bot.sendMessage(chatId, "Натисніть на захід, на який бажаєте зареєструватись. Потім натисніть Завершити:", {
             reply_markup: {
@@ -1447,9 +1455,18 @@ bot.on('message', async (msg) => {
             if (seatsLeft > 0) avail.push(Object.assign({}, ev, { seatsLeft }));
         }
 
-        const selectedEvent = avail.find(e => 
-            text.includes(e.name)
-        );
+        let selectedEvent = null;
+        if (user.eventButtonMap && user.eventButtonMap[text]) {
+            selectedEvent = avail.find((eventItem) => eventItem.id === user.eventButtonMap[text]) || null;
+        }
+
+        if (!selectedEvent) {
+            selectedEvent = findEventByButtonText(text, avail);
+        }
+
+        if (!selectedEvent) {
+            selectedEvent = avail.find((eventItem) => text.includes(eventItem.name));
+        }
 
         if (selectedEvent) {
             // Показати деталі заходу з кнопкою реєстрації
@@ -1497,7 +1514,13 @@ bot.on('message', async (msg) => {
                 });
                 return;
             }
-            const eventButtons = availForList.map(event => [{ text: `${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}` }]);
+            const eventButtonMap = {};
+            const eventButtons = availForList.map(event => {
+                const buttonText = `${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}`;
+                eventButtonMap[buttonText] = event.id;
+                return [{ text: buttonText }];
+            });
+            user.eventButtonMap = eventButtonMap;
             eventButtons.push([{ text: "✅ Завершити" }]);
             bot.sendMessage(chatId, "Натисніть на захід, на який бажаєте зареєструватись:", {
                 reply_markup: {
