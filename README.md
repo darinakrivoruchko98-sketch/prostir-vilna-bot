@@ -21,6 +21,8 @@ GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
 
 Для `GOOGLE_SERVICE_ACCOUNT_JSON` скопіюйте весь вміст файлу `vilna-bot-8e7e5cb23ce2.json` в одну лінію (як JSON string).
 
+Альтернатива: можна вказати `GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json`.
+
 ### 3. Деплой
 
 Railway автоматично задеплоїть бот після пушу в `main` гілку.
@@ -35,7 +37,9 @@ CHAT_ID=-1003282996506
 GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
 ```
 
-2. Запустіть:
+2. Якщо не хочете зберігати JSON у `.env`, покладіть локальний файл `vilna-bot-*.json` у корінь проєкту.
+
+3. Запустіть:
 ```bash
 npm install
 npm start

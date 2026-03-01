@@ -1,5 +1,7 @@
 require('dotenv').config();
 
+const fs = require("fs");
+const path = require("path");
 const TelegramBot = require("node-telegram-bot-api");
 const { google } = require("googleapis");
 
@@ -280,18 +282,52 @@ function formatEventDate(date) {
 
 let sheetsClient = null;
 
+function resolveGoogleAuthOptions() {
+    const scopes = ["https://www.googleapis.com/auth/spreadsheets"];
+
+    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+        console.log("🔑 Використовую Google credentials зі змінної середовища GOOGLE_SERVICE_ACCOUNT_JSON");
+        return {
+            credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
+            scopes
+        };
+    }
+
+    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        console.log("🔑 Використовую Google credentials з шляху GOOGLE_APPLICATION_CREDENTIALS");
+        return {
+            keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+            scopes
+        };
+    }
+
+    const cwd = process.cwd();
+    const preferredFile = path.join(cwd, "vilna-bot-8e7e5cb23ce2.json");
+    if (fs.existsSync(preferredFile)) {
+        console.log("🔑 Використовую Google credentials з локального файлу vilna-bot-8e7e5cb23ce2.json");
+        return {
+            keyFile: preferredFile,
+            scopes
+        };
+    }
+
+    const anyLocalCredential = fs.readdirSync(cwd).find((fileName) => /^vilna-bot-.*\.json$/.test(fileName));
+    if (anyLocalCredential) {
+        const filePath = path.join(cwd, anyLocalCredential);
+        console.log(`🔑 Використовую Google credentials з локального файлу ${anyLocalCredential}`);
+        return {
+            keyFile: filePath,
+            scopes
+        };
+    }
+
+    throw new Error("Не знайдено Google credentials. Додайте GOOGLE_SERVICE_ACCOUNT_JSON або файл vilna-bot-*.json");
+}
+
 async function initSheets() {
     try {
-        if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-            throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON не встановлено");
-        }
-
-        console.log("🔑 Використовую Google credentials зі змінної середовища");
-        const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-        const auth = new google.auth.GoogleAuth({
-            credentials,
-            scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-        });
+        const authOptions = resolveGoogleAuthOptions();
+        const auth = new google.auth.GoogleAuth(authOptions);
 
         const client = await auth.getClient();
 
