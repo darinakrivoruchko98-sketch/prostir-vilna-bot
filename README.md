@@ -21,7 +21,10 @@ GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
 
 Для `GOOGLE_SERVICE_ACCOUNT_JSON` скопіюйте весь вміст файлу `vilna-bot-8e7e5cb23ce2.json` в одну лінію (як JSON string).
 
-Альтернатива: можна вказати `GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json`.
+
+Альтернативи:
+- `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64` (base64 від JSON service account)
+- `GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json`
 
 ### 3. Деплой
 
@@ -29,7 +32,7 @@ Railway автоматично задеплоїть бот після пушу �
 
 ## Локальна розробка
 
-1. Створіть `.env` файл:
+1. Створіть `.env` файл (можна взяти за основу `.env.example`):
 ```
 TOKEN=your_token
 GROUP_ID=-1003282996506

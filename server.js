@@ -28,7 +28,8 @@ if (!TOKEN) {
     process.exit(1);
 }
 
-const bot = new TelegramBot(TOKEN, { polling: true });
+const bot = new TelegramBot(TOKEN, { polling: false });
+let pollingStarted = false;
 
 // Логування налаштованих груп для налагодження
 if (typeof GROUP_ID !== 'undefined') {
@@ -281,14 +282,53 @@ function formatEventDate(date) {
 /* ===== GOOGLE SHEETS ===== */
 
 let sheetsClient = null;
+let sheetsRefreshInterval = null;
+
+function normalizeCredentials(credentials) {
+    if (credentials && typeof credentials.private_key === "string") {
+        credentials.private_key = credentials.private_key.replace(/\\n/g, "\n");
+    }
+    return credentials;
+}
+
+function parseCredentialsFromEnv() {
+    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+        try {
+            const parsed = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+            return normalizeCredentials(parsed);
+        } catch (error) {
+            throw new Error(`Невалідний GOOGLE_SERVICE_ACCOUNT_JSON: ${error.message}`);
+        }
+    }
+
+    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
+        try {
+            const decoded = Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64").toString("utf8");
+            const parsed = JSON.parse(decoded);
+            return normalizeCredentials(parsed);
+        } catch (error) {
+            throw new Error(`Невалідний GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: ${error.message}`);
+        }
+    }
+
+    return null;
+}
+
+function startPollingIfNeeded() {
+    if (pollingStarted) return;
+    bot.startPolling();
+    pollingStarted = true;
+    console.log("🤖 Telegram polling запущено ✅");
+}
 
 function resolveGoogleAuthOptions() {
     const scopes = ["https://www.googleapis.com/auth/spreadsheets"];
 
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-        console.log("🔑 Використовую Google credentials зі змінної середовища GOOGLE_SERVICE_ACCOUNT_JSON");
+    const credentials = parseCredentialsFromEnv();
+    if (credentials) {
+        console.log("🔑 Використовую Google credentials зі змінної середовища");
         return {
-            credentials: JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON),
+            credentials,
             scopes
         };
     }
@@ -321,7 +361,7 @@ function resolveGoogleAuthOptions() {
         };
     }
 
-    throw new Error("Не знайдено Google credentials. Додайте GOOGLE_SERVICE_ACCOUNT_JSON або файл vilna-bot-*.json");
+    throw new Error("Не знайдено Google credentials. Додайте GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, GOOGLE_APPLICATION_CREDENTIALS або файл vilna-bot-*.json");
 }
 
 async function initSheets() {
@@ -337,6 +377,7 @@ async function initSheets() {
         });
 
         console.log("Google Sheets підключено ✅");
+        startPollingIfNeeded();
 
         // Початкове завантаження розкладу та періодичне оновлення
         try {
@@ -344,12 +385,17 @@ async function initSheets() {
         } catch (e) {
             console.error('Initial loadEventsFromSheet failed', e);
         }
-        setInterval(() => {
+
+        if (sheetsRefreshInterval) {
+            clearInterval(sheetsRefreshInterval);
+        }
+        sheetsRefreshInterval = setInterval(() => {
             loadEventsFromSheet();
         }, 60000);
 
     } catch (err) {
-        console.error("Sheets error", err);
+        console.error("Sheets error", err && err.message ? err.message : err);
+        setTimeout(initSheets, 30000);
     }
 }
 
@@ -1221,6 +1267,6 @@ bot.on('message', async (msg) => {
 
 });
 
-console.log("✅ Бот запущено!");
+console.log("⏳ Бот ініціалізується. Telegram polling стартує після підключення до Google Sheets.");
 console.log("📋 Розклад:", SPREADSHEET_ID);
 console.log("👤 Персональні дані:", PERSONAL_DATA_SPREADSHEET_ID);
