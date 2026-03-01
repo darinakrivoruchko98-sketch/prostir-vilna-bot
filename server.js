@@ -12,6 +12,8 @@ const CHAT_ID = process.env.CHAT_ID;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || "1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8";
 // Таблиця для персональних даних (ПІБ, телефон тощо)
 const PERSONAL_DATA_SPREADSHEET_ID = process.env.PERSONAL_DATA_SPREADSHEET_ID || "1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE";
+const PERSONAL_DATA_SHEET_NAME = process.env.PERSONAL_DATA_SHEET_NAME || "Березень";
+const REGISTRATION_SHEET_CANDIDATES = ["Реєстрація", "Реєстрації"];
 
 // Таблиця розкладу: https://docs.google.com/spreadsheets/d/1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8/edit
 // Таблиця персональних даних: https://docs.google.com/spreadsheets/d/1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE/edit
@@ -477,9 +479,9 @@ async function loadEventsFromSheet() {
         for (const [i, row] of rows.entries()) {
             // Пропускаємо заголовок
             if (i === 0) continue;
-            if (!row || row.length < 5) continue;
+            if (!row || row.length < 4) continue;
             const dateStr = row[0].trim();
-            const timeStr = row[1].trim();
+            const timeStr = row[1].trim().replace('.', ':');
             const title = row[2].trim();
             const seats = parseInt(row[3], 10) || 0;
             const registrations = parseInt(row[4], 10) || 0;
@@ -532,7 +534,7 @@ async function appendRegistrationRow(chatId, user) {
         user.health || ""
     ];
 
-    console.log('appendRegistrationRow -> writing to Березень:', values);
+    console.log(`appendRegistrationRow -> writing to ${PERSONAL_DATA_SHEET_NAME}:`, values);
 
     // If sheetsClient not ready, retry a few times
     const maxTries = 3;
@@ -548,11 +550,11 @@ async function appendRegistrationRow(chatId, user) {
         try {
             await sheetsClient.spreadsheets.values.append({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range: "Березень!A:G",
+                range: `${PERSONAL_DATA_SHEET_NAME}!A:G`,
                 valueInputOption: "USER_ENTERED",
                 requestBody: { values: [values] }
             });
-            console.log("Записано в таблицю Березень ✅");
+            console.log(`Записано в таблицю ${PERSONAL_DATA_SHEET_NAME} ✅`);
             return;
         } catch (e) {
             lastErr = e;
@@ -599,33 +601,48 @@ async function appendRegistrationRow(chatId, user) {
 // додаткові допоміжні функції для реєстрацій на заходи
 async function getSeatRegistrations(eventId) {
     if (!sheetsClient || !SPREADSHEET_ID) return 0;
-    try {
-        const resp = await sheetsClient.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID,
-            range: "Реєстрація!A:E"
-        });
-        const rows = resp.data.values || [];
-        return rows.filter(r => r[0] === eventId).length;
-    } catch (e) {
-        console.error('Error reading registrations sheet', e);
-        return 0;
+    for (const sheetName of REGISTRATION_SHEET_CANDIDATES) {
+        try {
+            const resp = await sheetsClient.spreadsheets.values.get({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `${sheetName}!A:E`
+            });
+            const rows = resp.data.values || [];
+            return rows.filter(r => r[0] === eventId).length;
+        } catch (e) {
+            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+            if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                continue;
+            }
+            console.error('Error reading registrations sheet', e);
+            return 0;
+        }
     }
+    console.warn(`Не знайдено аркуш реєстрацій. Спробовано: ${REGISTRATION_SHEET_CANDIDATES.join(', ')}`);
+    return 0;
 }
 
 // повертає перелік eventId, на які userId зареєстрований
 async function getUserRegisteredEventIds(userId) {
     if (!sheetsClient || !SPREADSHEET_ID) return [];
-    try {
-        const resp = await sheetsClient.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID,
-            range: "Реєстрація!A:C"
-        });
-        const rows = resp.data.values || [];
-        return rows.filter(r=>r[1] === String(userId)).map(r=>r[0]);
-    } catch (e) {
-        console.error('Error reading registrations sheet', e);
-        return [];
+    for (const sheetName of REGISTRATION_SHEET_CANDIDATES) {
+        try {
+            const resp = await sheetsClient.spreadsheets.values.get({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `${sheetName}!A:C`
+            });
+            const rows = resp.data.values || [];
+            return rows.filter(r=>r[1] === String(userId)).map(r=>r[0]);
+        } catch (e) {
+            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+            if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                continue;
+            }
+            console.error('Error reading registrations sheet', e);
+            return [];
+        }
     }
+    return [];
 }
 
 async function getSeatsLeft(eventId) {
@@ -654,19 +671,28 @@ async function appendEventToSheet(date, time, title, capacity) {
 
 async function appendEventRegistration(eventId, userId) {
     if (!sheetsClient || !SPREADSHEET_ID) return;
-    try {
-        await sheetsClient.spreadsheets.values.append({
-            spreadsheetId: SPREADSHEET_ID,
-            range: "Реєстрація!A:C",
-            valueInputOption: "USER_ENTERED",
-            requestBody: {
-                values: [[eventId, userId.toString(), new Date().toISOString()]]
+    for (const sheetName of REGISTRATION_SHEET_CANDIDATES) {
+        try {
+            await sheetsClient.spreadsheets.values.append({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `${sheetName}!A:C`,
+                valueInputOption: "USER_ENTERED",
+                requestBody: {
+                    values: [[eventId, userId.toString(), new Date().toISOString()]]
+                }
+            });
+            console.log('Registration added for', userId, 'event', eventId, 'sheet', sheetName);
+            return;
+        } catch (e) {
+            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+            if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                continue;
             }
-        });
-        console.log('Registration added for', userId, 'event', eventId);
-    } catch (e) {
-        console.error('Error appending registration', e);
+            console.error('Error appending registration', e);
+            return;
+        }
     }
+    console.error(`Не вдалося записати реєстрацію: не знайдено аркуш (${REGISTRATION_SHEET_CANDIDATES.join(', ')})`);
 }
 
 /* === ОБРОБКА МАСИВУ РОЗПАРЕНИХ ЗАХОДІВ === */
