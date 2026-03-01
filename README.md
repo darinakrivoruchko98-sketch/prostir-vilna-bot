@@ -32,11 +32,10 @@ Railway автоматично задеплоїть бот після пушу �
 TOKEN=your_token
 GROUP_ID=-1003282996506
 CHAT_ID=-1003282996506
+GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account","project_id":"..."}
 ```
 
-2. Переконайтесь що є файл `vilna-bot-8e7e5cb23ce2.json`
-
-3. Запустіть:
+2. Запустіть:
 ```bash
 npm install
 npm start

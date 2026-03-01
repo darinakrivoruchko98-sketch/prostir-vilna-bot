@@ -282,24 +282,16 @@ let sheetsClient = null;
 
 async function initSheets() {
     try {
-        let auth;
-        
-        // Спробувати використати GOOGLE_SERVICE_ACCOUNT_JSON з environment (для Railway)
-        if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-            console.log("🔑 Використовую Google credentials зі змінної середовища");
-            const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-            auth = new google.auth.GoogleAuth({
-                credentials: credentials,
-                scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-            });
-        } else {
-            // Інакше використати файл (локально)
-            console.log("🔑 Використовую Google credentials з файлу");
-            auth = new google.auth.GoogleAuth({
-                keyFile: process.cwd() + "/vilna-bot-8e7e5cb23ce2.json",
-                scopes: ["https://www.googleapis.com/auth/spreadsheets"]
-            });
+        if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+            throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON не встановлено");
         }
+
+        console.log("🔑 Використовую Google credentials зі змінної середовища");
+        const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+        const auth = new google.auth.GoogleAuth({
+            credentials,
+            scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+        });
 
         const client = await auth.getClient();
 
