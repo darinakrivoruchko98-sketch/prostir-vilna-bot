@@ -471,12 +471,20 @@ function normalizeCredentials(credentials) {
 }
 
 function parseCredentialsFromEnv() {
+    const sources = [];
+
     if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
         try {
             const parsed = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-            return normalizeCredentials(parsed);
+            sources.push({
+                label: "GOOGLE_SERVICE_ACCOUNT_JSON",
+                authOptions: {
+                    credentials: normalizeCredentials(parsed),
+                    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+                }
+            });
         } catch (error) {
-            throw new Error(`Невалідний GOOGLE_SERVICE_ACCOUNT_JSON: ${error.message}`);
+            console.error(`Невалідний GOOGLE_SERVICE_ACCOUNT_JSON: ${error.message}`);
         }
     }
 
@@ -484,13 +492,19 @@ function parseCredentialsFromEnv() {
         try {
             const decoded = Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64").toString("utf8");
             const parsed = JSON.parse(decoded);
-            return normalizeCredentials(parsed);
+            sources.push({
+                label: "GOOGLE_SERVICE_ACCOUNT_JSON_BASE64",
+                authOptions: {
+                    credentials: normalizeCredentials(parsed),
+                    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+                }
+            });
         } catch (error) {
-            throw new Error(`Невалідний GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: ${error.message}`);
+            console.error(`Невалідний GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: ${error.message}`);
         }
     }
 
-    return null;
+    return sources;
 }
 
 function startPollingIfNeeded() {
@@ -500,60 +514,86 @@ function startPollingIfNeeded() {
     console.log("🤖 Telegram polling запущено ✅");
 }
 
-function resolveGoogleAuthOptions() {
+function resolveGoogleAuthCandidates() {
     const scopes = ["https://www.googleapis.com/auth/spreadsheets"];
+    const candidates = [];
 
-    const credentials = parseCredentialsFromEnv();
-    if (credentials) {
-        console.log("🔑 Використовую Google credentials зі змінної середовища");
-        return {
-            credentials,
-            scopes
-        };
+    const envCandidates = parseCredentialsFromEnv();
+    if (envCandidates.length > 0) {
+        candidates.push(...envCandidates);
     }
 
     if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-        console.log("🔑 Використовую Google credentials з шляху GOOGLE_APPLICATION_CREDENTIALS");
-        return {
-            keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-            scopes
-        };
+        candidates.push({
+            label: `GOOGLE_APPLICATION_CREDENTIALS (${process.env.GOOGLE_APPLICATION_CREDENTIALS})`,
+            authOptions: {
+                keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+                scopes
+            }
+        });
     }
 
     const cwd = process.cwd();
     const preferredFile = path.join(cwd, "vilna-bot-8e7e5cb23ce2.json");
     if (fs.existsSync(preferredFile)) {
-        console.log("🔑 Використовую Google credentials з локального файлу vilna-bot-8e7e5cb23ce2.json");
-        return {
-            keyFile: preferredFile,
-            scopes
-        };
+        candidates.push({
+            label: "local file vilna-bot-8e7e5cb23ce2.json",
+            authOptions: {
+                keyFile: preferredFile,
+                scopes
+            }
+        });
     }
 
-    const anyLocalCredential = fs.readdirSync(cwd).find((fileName) => /^vilna-bot-.*\.json$/.test(fileName));
-    if (anyLocalCredential) {
-        const filePath = path.join(cwd, anyLocalCredential);
-        console.log(`🔑 Використовую Google credentials з локального файлу ${anyLocalCredential}`);
-        return {
-            keyFile: filePath,
-            scopes
-        };
+    const anyLocalCredentials = fs.readdirSync(cwd).filter((fileName) => /^vilna-bot-.*\.json$/.test(fileName));
+    for (const fileName of anyLocalCredentials) {
+        const filePath = path.join(cwd, fileName);
+        if (filePath === preferredFile) continue;
+        candidates.push({
+            label: `local file ${fileName}`,
+            authOptions: {
+                keyFile: filePath,
+                scopes
+            }
+        });
     }
 
-    throw new Error("Не знайдено Google credentials. Додайте GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, GOOGLE_APPLICATION_CREDENTIALS або файл vilna-bot-*.json");
+    if (candidates.length === 0) {
+        throw new Error("Не знайдено Google credentials. Додайте GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, GOOGLE_APPLICATION_CREDENTIALS або файл vilna-bot-*.json");
+    }
+
+    return candidates;
+}
+
+async function createAuthorizedSheetsClient() {
+    const candidates = resolveGoogleAuthCandidates();
+    const errors = [];
+
+    for (const candidate of candidates) {
+        try {
+            console.log(`🔑 Перевіряю credentials: ${candidate.label}`);
+            const auth = new google.auth.GoogleAuth(candidate.authOptions);
+            const client = await auth.getClient();
+            await client.getAccessToken();
+
+            console.log(`🔐 Credentials валідні: ${candidate.label}`);
+            return google.sheets({
+                version: "v4",
+                auth: client
+            });
+        } catch (error) {
+            const msg = error && error.message ? error.message : String(error);
+            errors.push(`${candidate.label}: ${msg}`);
+            console.error(`❌ Credentials невалидні (${candidate.label}): ${msg}`);
+        }
+    }
+
+    throw new Error(`Жодне джерело credentials не підійшло. ${errors.join(" | ")}`);
 }
 
 async function initSheets() {
     try {
-        const authOptions = resolveGoogleAuthOptions();
-        const auth = new google.auth.GoogleAuth(authOptions);
-
-        const client = await auth.getClient();
-
-        sheetsClient = google.sheets({
-            version: "v4",
-            auth: client
-        });
+        sheetsClient = await createAuthorizedSheetsClient();
 
         console.log("Google Sheets підключено ✅");
         startPollingIfNeeded();
