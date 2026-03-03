@@ -484,10 +484,13 @@ function parseRegistrantsFromNote(noteText) {
     for (const line of lines) {
         const match = line.match(/^\s*\d+\.\s*(.*?)\s*—\s*(.*?)\s*$/);
         if (!match) continue;
+        const rawName = String(match[1] || '').trim();
+        const rawPhone = String(match[2] || '').trim();
+        const userMatch = rawName.match(/^user\s+(\d+)$/i);
         parsed.push({
-            userId: '',
-            name: String(match[1] || '').trim(),
-            phone: String(match[2] || '').trim()
+            userId: userMatch ? String(userMatch[1] || '').trim() : '',
+            name: userMatch ? '' : rawName,
+            phone: /^без\s+номера$/i.test(rawPhone) ? '' : rawPhone
         });
     }
     return parsed;
@@ -581,39 +584,11 @@ async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, exis
     const safeCount = Number.isFinite(Number(registrationsCount)) ? Number(registrationsCount) : 0;
     const displayCount = Math.max(safeCount, registrants.length);
 
-    const peopleMap = new Map();
-    try {
-        const peopleResp = await sheetsClient.spreadsheets.values.get({
-            spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-            range: `${PERSONAL_DATA_SHEET_NAME}!A:H`
-        });
-        const peopleRows = peopleResp.data.values || [];
-        for (const row of peopleRows) {
-            const chatId = String(row[7] || '').trim();
-            if (!chatId) continue;
-            peopleMap.set(chatId, {
-                name: String(row[1] || '').trim(),
-                phone: String(row[2] || '').trim()
-            });
-        }
-    } catch (e) {
-        const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-        if (!(msg.includes('unable to parse range') || msg.includes('not found'))) {
-            throw e;
-        }
-    }
-
-    const lines = registrants.slice(0, 100).map((item, index) => {
-        const person = peopleMap.get(item.userId);
-        const name = item.name || (person && person.name) || `user ${item.userId}`;
-        const phone = item.phone || (person && person.phone) || 'без номера';
+    const lines = registrants.map((item, index) => {
+        const name = item.name || `user ${item.userId}`;
+        const phone = item.phone || 'без номера';
         return `${index + 1}. ${name} — ${phone}`;
     });
-
-    const hiddenCount = registrants.length - lines.length;
-    if (hiddenCount > 0) {
-        lines.push(`... та ще ${hiddenCount}`);
-    }
 
     return `Зареєстровано: ${displayCount}\n\n${lines.join('\n')}`;
 }
@@ -985,9 +960,24 @@ async function appendRegistrationRow(chatId, user) {
         user.birth || "",
         user.visited || "",
         user.status || "",
-        user.health || "",
-        String(chatId || "")
+        user.health || ""
     ];
+
+    const findFirstFreeRow = (rows) => {
+        const searchStartIndex = 1;
+        let targetRow = Math.max(2, rows.length + 1);
+
+        for (let i = searchStartIndex; i < rows.length; i++) {
+            const row = rows[i] || [];
+            const personalDataHasValues = [1, 2, 3, 4, 5, 6].some((idx) => String(row[idx] || '').trim() !== '');
+            if (!personalDataHasValues) {
+                targetRow = i + 1;
+                break;
+            }
+        }
+
+        return targetRow;
+    };
 
     console.log(`appendRegistrationRow -> writing to ${PERSONAL_DATA_SHEET_NAME}:`, values);
 
@@ -1005,28 +995,14 @@ async function appendRegistrationRow(chatId, user) {
         try {
             const existingResp = await sheetsClient.spreadsheets.values.get({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${PERSONAL_DATA_SHEET_NAME}!A:H`,
+                range: `${PERSONAL_DATA_SHEET_NAME}!A:G`,
             });
             const rows = existingResp.data.values || [];
-            const searchStartIndex = 1;
-            let targetRow = rows.length + 1;
-
-            if (targetRow < 2) {
-                targetRow = 2;
-            }
-
-            for (let i = searchStartIndex; i < rows.length; i++) {
-                const row = rows[i] || [];
-                const hasData = row.some((cell) => String(cell || '').trim() !== '');
-                if (!hasData) {
-                    targetRow = i + 1;
-                    break;
-                }
-            }
+            const targetRow = findFirstFreeRow(rows);
 
             await sheetsClient.spreadsheets.values.update({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${PERSONAL_DATA_SHEET_NAME}!A${targetRow}:H${targetRow}`,
+                range: `${PERSONAL_DATA_SHEET_NAME}!A${targetRow}:G${targetRow}`,
                 valueInputOption: "RAW",
                 requestBody: { values: [values] }
             });
@@ -1046,40 +1022,26 @@ async function appendRegistrationRow(chatId, user) {
             const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
             if ((msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('sheet') ) && attempt === 1) {
                 try {
-                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:H (перший аркуш)');
+                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:G (перший аркуш)');
 
                     const existingResp = await sheetsClient.spreadsheets.values.get({
                         spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                        range: "A:H",
+                        range: "A:G",
                     });
                     const rows = existingResp.data.values || [];
-                    const searchStartIndex = 1;
-                    let targetRow = rows.length + 1;
-
-                    if (targetRow < 2) {
-                        targetRow = 2;
-                    }
-
-                    for (let i = searchStartIndex; i < rows.length; i++) {
-                        const row = rows[i] || [];
-                        const hasData = row.some((cell) => String(cell || '').trim() !== '');
-                        if (!hasData) {
-                            targetRow = i + 1;
-                            break;
-                        }
-                    }
+                    const targetRow = findFirstFreeRow(rows);
 
                     await sheetsClient.spreadsheets.values.update({
                         spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                        range: `A${targetRow}:H${targetRow}`,
+                        range: `A${targetRow}:G${targetRow}`,
                         valueInputOption: "RAW",
                         requestBody: { values: [values] }
                     });
-                    console.log(`Записано в таблицю (fallback A:H, рядок ${targetRow}) ✅`);
+                    console.log(`Записано в таблицю (fallback A:G, рядок ${targetRow}) ✅`);
                     return;
                 } catch (e2) {
                     lastErr = e2;
-                    console.error('Fallback append to A:H failed:', e2 && e2.message ? e2.message : e2);
+                    console.error('Fallback append to A:G failed:', e2 && e2.message ? e2.message : e2);
                 }
             }
 
@@ -1096,46 +1058,18 @@ async function appendRegistrationRow(chatId, user) {
     throw lastErr || new Error('Unknown error writing to sheet');
 }
 
-async function resolveRegistrantProfile(chatId, providedName, providedPhone) {
+async function resolveRegistrantProfile(chatId, user, providedName, providedPhone) {
     const resolved = {
         userId: String(chatId || ''),
         name: String(providedName || '').trim(),
         phone: String(providedPhone || '').trim()
     };
 
-    if ((!resolved.name || !resolved.phone) && sheetsClient && PERSONAL_DATA_SPREADSHEET_ID) {
-        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:H`, 'A:H'];
-        for (const range of rangesToTry) {
-            try {
-                const resp = await sheetsClient.spreadsheets.values.get({
-                    spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                    range
-                });
-                const rows = resp.data.values || [];
-                for (let i = rows.length - 1; i >= 0; i--) {
-                    const row = rows[i] || [];
-                    const rowChatId = String(row[7] || '').trim();
-                    if (!rowChatId || rowChatId !== resolved.userId) continue;
-
-                    if (!resolved.name) {
-                        resolved.name = String(row[1] || '').trim();
-                    }
-                    if (!resolved.phone) {
-                        resolved.phone = String(row[2] || '').trim();
-                    }
-
-                    if (resolved.name && resolved.phone) {
-                        return resolved;
-                    }
-                }
-            } catch (e) {
-                const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-                if (msg.includes('unable to parse range') || msg.includes('not found')) {
-                    continue;
-                }
-                break;
-            }
-        }
+    if (!resolved.name) {
+        resolved.name = String((user && user.name) || '').trim();
+    }
+    if (!resolved.phone) {
+        resolved.phone = String((user && user.phone) || '').trim();
     }
 
     return resolved;
@@ -1157,7 +1091,11 @@ async function resolveRegistrantFormData(chatId, user) {
         return resolved;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:H`, 'A:H'];
+    const normalizePhone = (value) => String(value || '').replace(/\D/g, '');
+    const inputPhone = normalizePhone(resolved.phone);
+    const inputName = String(resolved.name || '').trim().toLowerCase();
+
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:G`, 'A:G'];
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -1167,8 +1105,14 @@ async function resolveRegistrantFormData(chatId, user) {
             const rows = resp.data.values || [];
             for (let i = rows.length - 1; i >= 0; i--) {
                 const row = rows[i] || [];
-                const rowChatId = String(row[7] || '').trim();
-                if (!rowChatId || rowChatId !== resolved.userId) continue;
+                const rowName = String(row[1] || '').trim();
+                const rowPhone = String(row[2] || '').trim();
+                const rowPhoneNormalized = normalizePhone(rowPhone);
+                const rowNameLower = rowName.toLowerCase();
+
+                const phoneMatch = inputPhone && rowPhoneNormalized && inputPhone === rowPhoneNormalized;
+                const nameMatch = !inputPhone && inputName && rowNameLower === inputName;
+                if (!phoneMatch && !nameMatch) continue;
 
                 if (!resolved.name) resolved.name = String(row[1] || '').trim();
                 if (!resolved.phone) resolved.phone = String(row[2] || '').trim();
@@ -1203,7 +1147,7 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
         return { status: 'no-seats' };
     }
 
-    const registrantProfile = await resolveRegistrantProfile(chatId, providedName || '', providedPhone || '');
+    const registrantProfile = await resolveRegistrantProfile(chatId, user, providedName || '', providedPhone || '');
 
     const evObj = events.find(e => e.id === eventId);
     if (evObj) {
