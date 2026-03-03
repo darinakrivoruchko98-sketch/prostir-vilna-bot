@@ -20,9 +20,8 @@ GOOGLE_CLIENT_EMAIL=your-service-account@project-id.iam.gserviceaccount.com
 GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
 ```
 
-Бот читає реєстрації з аркуша `Реєстрація` (або fallback `Реєстрації`) у таблиці `SPREADSHEET_ID`,
-розклад читає з аркуша `Розклад` (або значення `SCHEDULE_SHEET_NAME`) у таблиці `SPREADSHEET_ID`,
-а персональні дані записує в аркуш `Березень` (або значення `PERSONAL_DATA_SHEET_NAME`) у таблиці `PERSONAL_DATA_SPREADSHEET_ID`.
+Розклад читається з аркуша `Розклад` (або значення `SCHEDULE_SHEET_NAME`) у таблиці `SPREADSHEET_ID`,
+а персональні дані записуються в аркуш `Березень` (або значення `PERSONAL_DATA_SHEET_NAME`) у таблиці `PERSONAL_DATA_SPREADSHEET_ID`.
 
 ### 2. Google Service Account (тільки через env)
 

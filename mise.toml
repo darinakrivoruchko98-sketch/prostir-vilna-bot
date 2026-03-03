@@ -1,0 +1,19 @@
+[tools]
+node = "latest"
+
+[tasks.start]
+run = "node server.js"
+description = "Start the Telegram bot"
+
+[tasks.install]
+run = "npm install"
+description = "Install dependencies"
+
+[tasks.zip]
+run = """
+version=$(cat VERSION | tr -d '[:space:]')
+filename="vilna-bot-${version}.zip"
+zip -r "$filename" server.js package.json package-lock.json nixpacks.toml src/
+echo "Created $filename"
+"""
+description = "Zip files for Dokploy deployment"
