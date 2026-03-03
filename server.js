@@ -14,7 +14,6 @@ const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || "Розклад";
 // Таблиця для персональних даних (ПІБ, телефон тощо)
 const PERSONAL_DATA_SPREADSHEET_ID = process.env.PERSONAL_DATA_SPREADSHEET_ID || "1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE";
 const PERSONAL_DATA_SHEET_NAME = process.env.PERSONAL_DATA_SHEET_NAME || "Березень";
-const REGISTRATION_SHEET_CANDIDATES = ["Реєстрація", "Реєстрації"];
 const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
 
 // Таблиця розкладу: https://docs.google.com/spreadsheets/d/1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8/edit
@@ -108,8 +107,37 @@ function formatEventDetails(event) {
     return `Назва: ${event.name}\nЧас: ${time}\nМісць залишилось: ${seatsLabel}`;
 }
 
+function getAfishaDaysKeyboard() {
+    return [
+        [{ text: "Середа" }],
+        [{ text: "Четвер" }],
+        [{ text: "П’ятниця" }],
+        [{ text: "Субота" }],
+        [{ text: "Неділя" }],
+        [{ text: "Повернутися в меню" }]
+    ];
+}
+
+function showAfishaDaysMenu(chatId) {
+    if (!users[chatId]) {
+        users[chatId] = { step: 0 };
+    }
+    users[chatId].context = 'afisha';
+    return bot.sendMessage(chatId, "Оберіть день:", {
+        reply_markup: {
+            keyboard: getAfishaDaysKeyboard(),
+            resize_keyboard: true
+        }
+    });
+}
+
 // Відображає афішу для конкретного дня
 async function showDayAgenda(chatId, dayName) {
+    if (!users[chatId]) {
+        users[chatId] = { step: 0 };
+    }
+    users[chatId].context = 'afisha';
+
     const weekdays = { 'Неділя':0, 'Середа':3, 'Четвер':4, 'П’ятниця':5, 'Субота':6 };
     const dayNum = weekdays[dayName];
     const dayEvents = getEventsForDay(dayNum);
@@ -126,7 +154,10 @@ async function showDayAgenda(chatId, dayName) {
 
         bot.sendMessage(chatId, `На ${dayForms[dayName] || dayName} немає заходів.`, {
             reply_markup: {
-                keyboard: [[{ text: "Повернутися в меню" }]],
+                keyboard: [
+                    [{ text: "Назад" }],
+                    [{ text: "Повернутися в меню" }]
+                ],
                 resize_keyboard: true
             }
         });
@@ -134,14 +165,23 @@ async function showDayAgenda(chatId, dayName) {
     }
     let msg = `📅 Заходи в ${dayName}:\n\n`;
     const buttons = [];
+    const eventButtonMap = {};
     for (const ev of dayEvents) {
         const seatsLeft = await getSeatsLeft(ev.id);
         const time = String(ev.date.getHours()).padStart(2,'0')+":"+String(ev.date.getMinutes()).padStart(2,'0');
         const seatsLabel = seatsLeft > 0 ? `💺 ${seatsLeft} місць` : `❌ закрито`;
         msg += `Назва: ${ev.name}\nЧас: ${time}\nМісць залишилось: ${seatsLabel}\n\n`;
-        buttons.push([{ text: `${ev.name} | ${time} | ${seatsLabel}` }]);
+        const buttonText = `${ev.name} | ${time} | ${seatsLabel}`;
+        buttons.push([{ text: buttonText }]);
+        eventButtonMap[buttonText] = ev.id;
     }
+    buttons.push([{ text: "Назад" }]);
     buttons.push([{ text: "Повернутися в меню" }]);
+
+    if (!users[chatId]) {
+        users[chatId] = { step: 0 };
+    }
+    users[chatId].eventButtonMap = eventButtonMap;
 
     bot.sendMessage(chatId, msg, {
         reply_markup: {
@@ -365,7 +405,7 @@ function parseEventFromRow(row, currentDateContext) {
     };
 }
 
-async function incrementSheetRegistration(event) {
+async function incrementSheetRegistration(event, fallbackRegistrant) {
     if (!sheetsClient || !SPREADSHEET_ID) return;
     for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
         try {
@@ -395,6 +435,20 @@ async function incrementSheetRegistration(event) {
                     valueInputOption: 'USER_ENTERED',
                     requestBody: { values: [[newCap, newReg]] }
                 });
+
+                try {
+                    await updateScheduleRegistrationNote({
+                        scheduleSheet,
+                        rowIndex: i,
+                        registrationsCount: newReg,
+                        fallbackRegistrant
+                    });
+                } catch (noteErr) {
+                    console.error('Не вдалося оновити нотатку реєстрацій', noteErr && noteErr.message ? noteErr.message : noteErr);
+                }
+
+                event.seats = newCap;
+                event.registrations = newReg;
                 return;
             }
             }
@@ -408,6 +462,195 @@ async function incrementSheetRegistration(event) {
         }
     }
     console.warn(`Не вдалося оновити лічильник у розкладі. Спробовано аркуші: ${SCHEDULE_SHEET_CANDIDATES.join(', ')}`);
+}
+
+async function getSheetIdByTitle(spreadsheetId, sheetTitle) {
+    const meta = await sheetsClient.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets.properties'
+    });
+    const sheets = (meta.data && meta.data.sheets) || [];
+    const found = sheets.find((sheetItem) => {
+        const title = sheetItem && sheetItem.properties && sheetItem.properties.title;
+        return title === sheetTitle;
+    });
+    return found && found.properties ? found.properties.sheetId : null;
+}
+
+function parseRegistrantsFromNote(noteText) {
+    if (!noteText) return [];
+    const lines = String(noteText).split('\n');
+    const parsed = [];
+    for (const line of lines) {
+        const match = line.match(/^\s*\d+\.\s*(.*?)\s*—\s*(.*?)\s*$/);
+        if (!match) continue;
+        parsed.push({
+            userId: '',
+            name: String(match[1] || '').trim(),
+            phone: String(match[2] || '').trim()
+        });
+    }
+    return parsed;
+}
+
+function normalizeRegistrantName(value) {
+    return String(value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function normalizeRegistrantPhone(value) {
+    return String(value || '').replace(/\D+/g, '');
+}
+
+async function isRegistrantAlreadyInEventNote(event, registrantProfile) {
+    if (!event || !registrantProfile || !sheetsClient || !SPREADSHEET_ID) return false;
+
+    const profileName = normalizeRegistrantName(registrantProfile.name);
+    const profilePhone = normalizeRegistrantPhone(registrantProfile.phone);
+    if (!profileName || !profilePhone) return false;
+
+    for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
+        try {
+            const resp = await sheetsClient.spreadsheets.values.get({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `${scheduleSheet}!A:E`
+            });
+            const rows = resp.data.values || [];
+            for (let i = 0; i < rows.length; i++) {
+                const parsedEvent = parseEventFromRow(rows[i], null).event;
+                if (!parsedEvent) continue;
+
+                const sameTitle = normalizeTitle(parsedEvent.name) === normalizeTitle(event.name);
+                const sameMinute = Math.abs(parsedEvent.date.getTime() - event.date.getTime()) < 60 * 1000;
+                if (!sameTitle || !sameMinute) continue;
+
+                const noteText = await getScheduleCellNote(scheduleSheet, i);
+                const registrants = parseRegistrantsFromNote(noteText);
+                return registrants.some((item) => {
+                    const itemName = normalizeRegistrantName(item.name);
+                    const itemPhone = normalizeRegistrantPhone(item.phone);
+                    return itemName === profileName && itemPhone === profilePhone;
+                });
+            }
+        } catch (e) {
+            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+            if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                continue;
+            }
+            return false;
+        }
+    }
+
+    return false;
+}
+
+async function getScheduleCellNote(scheduleSheet, rowIndex) {
+    const resp = await sheetsClient.spreadsheets.get({
+        spreadsheetId: SPREADSHEET_ID,
+        ranges: [`${scheduleSheet}!E${rowIndex + 1}`],
+        includeGridData: true,
+        fields: 'sheets.data.rowData.values.note'
+    });
+
+    const sheets = (resp.data && resp.data.sheets) || [];
+    const rowData = sheets[0] && sheets[0].data && sheets[0].data[0] && sheets[0].data[0].rowData;
+    const cell = rowData && rowData[0] && rowData[0].values && rowData[0].values[0];
+    return (cell && typeof cell.note === 'string') ? cell.note : '';
+}
+
+async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, existingNote) {
+    const registrants = parseRegistrantsFromNote(existingNote);
+    if (fallbackRegistrant) {
+        const fallbackUserId = String(fallbackRegistrant.userId || '').trim();
+        const fallbackName = String(fallbackRegistrant.name || '').trim();
+        const fallbackPhone = String(fallbackRegistrant.phone || '').trim();
+
+        if (fallbackName || fallbackPhone || fallbackUserId) {
+            registrants.push({
+                userId: fallbackUserId,
+                name: fallbackName,
+                phone: fallbackPhone
+            });
+        }
+    }
+
+    if (registrants.length === 0) {
+        const safeCount = Number.isFinite(Number(registrationsCount)) ? Number(registrationsCount) : 0;
+        return `Зареєстровано: ${safeCount}\n\nСписок порожній`;
+    }
+
+    const safeCount = Number.isFinite(Number(registrationsCount)) ? Number(registrationsCount) : 0;
+    const displayCount = Math.max(safeCount, registrants.length);
+
+    const peopleMap = new Map();
+    try {
+        const peopleResp = await sheetsClient.spreadsheets.values.get({
+            spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+            range: `${PERSONAL_DATA_SHEET_NAME}!A:H`
+        });
+        const peopleRows = peopleResp.data.values || [];
+        for (const row of peopleRows) {
+            const chatId = String(row[7] || '').trim();
+            if (!chatId) continue;
+            peopleMap.set(chatId, {
+                name: String(row[1] || '').trim(),
+                phone: String(row[2] || '').trim()
+            });
+        }
+    } catch (e) {
+        const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+        if (!(msg.includes('unable to parse range') || msg.includes('not found'))) {
+            throw e;
+        }
+    }
+
+    const lines = registrants.slice(0, 100).map((item, index) => {
+        const person = peopleMap.get(item.userId);
+        const name = item.name || (person && person.name) || `user ${item.userId}`;
+        const phone = item.phone || (person && person.phone) || 'без номера';
+        return `${index + 1}. ${name} — ${phone}`;
+    });
+
+    const hiddenCount = registrants.length - lines.length;
+    if (hiddenCount > 0) {
+        lines.push(`... та ще ${hiddenCount}`);
+    }
+
+    return `Зареєстровано: ${displayCount}\n\n${lines.join('\n')}`;
+}
+
+async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registrationsCount, fallbackRegistrant }) {
+    if (!sheetsClient || !SPREADSHEET_ID) return;
+    const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, scheduleSheet);
+    if (sheetId === null || sheetId === undefined) return;
+
+    let existingNote = '';
+    try {
+        existingNote = await getScheduleCellNote(scheduleSheet, rowIndex);
+    } catch (e) {
+        existingNote = '';
+    }
+    const noteText = await buildRegistrantsNote(registrationsCount, fallbackRegistrant, existingNote);
+
+    await sheetsClient.spreadsheets.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: {
+            requests: [{
+                repeatCell: {
+                    range: {
+                        sheetId,
+                        startRowIndex: rowIndex,
+                        endRowIndex: rowIndex + 1,
+                        startColumnIndex: 4,
+                        endColumnIndex: 5
+                    },
+                    cell: {
+                        note: noteText
+                    },
+                    fields: 'note'
+                }
+            }]
+        }
+    });
 }
 
 // Фільтрувати та сортувати заходи
@@ -742,7 +985,8 @@ async function appendRegistrationRow(chatId, user) {
         user.birth || "",
         user.visited || "",
         user.status || "",
-        user.health || ""
+        user.health || "",
+        String(chatId || "")
     ];
 
     console.log(`appendRegistrationRow -> writing to ${PERSONAL_DATA_SHEET_NAME}:`, values);
@@ -759,13 +1003,34 @@ async function appendRegistrationRow(chatId, user) {
         }
 
         try {
-            await sheetsClient.spreadsheets.values.append({
+            const existingResp = await sheetsClient.spreadsheets.values.get({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${PERSONAL_DATA_SHEET_NAME}!A:G`,
-                valueInputOption: "USER_ENTERED",
+                range: `${PERSONAL_DATA_SHEET_NAME}!A:H`,
+            });
+            const rows = existingResp.data.values || [];
+            const searchStartIndex = 1;
+            let targetRow = rows.length + 1;
+
+            if (targetRow < 2) {
+                targetRow = 2;
+            }
+
+            for (let i = searchStartIndex; i < rows.length; i++) {
+                const row = rows[i] || [];
+                const hasData = row.some((cell) => String(cell || '').trim() !== '');
+                if (!hasData) {
+                    targetRow = i + 1;
+                    break;
+                }
+            }
+
+            await sheetsClient.spreadsheets.values.update({
+                spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                range: `${PERSONAL_DATA_SHEET_NAME}!A${targetRow}:H${targetRow}`,
+                valueInputOption: "RAW",
                 requestBody: { values: [values] }
             });
-            console.log(`Записано в таблицю ${PERSONAL_DATA_SHEET_NAME} ✅`);
+            console.log(`Записано в таблицю ${PERSONAL_DATA_SHEET_NAME} (рядок ${targetRow}) ✅`);
             return;
         } catch (e) {
             lastErr = e;
@@ -781,18 +1046,40 @@ async function appendRegistrationRow(chatId, user) {
             const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
             if ((msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('sheet') ) && attempt === 1) {
                 try {
-                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:G (перший аркуш)');
-                    await sheetsClient.spreadsheets.values.append({
+                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:H (перший аркуш)');
+
+                    const existingResp = await sheetsClient.spreadsheets.values.get({
                         spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                        range: "A:G",
-                        valueInputOption: "USER_ENTERED",
+                        range: "A:H",
+                    });
+                    const rows = existingResp.data.values || [];
+                    const searchStartIndex = 1;
+                    let targetRow = rows.length + 1;
+
+                    if (targetRow < 2) {
+                        targetRow = 2;
+                    }
+
+                    for (let i = searchStartIndex; i < rows.length; i++) {
+                        const row = rows[i] || [];
+                        const hasData = row.some((cell) => String(cell || '').trim() !== '');
+                        if (!hasData) {
+                            targetRow = i + 1;
+                            break;
+                        }
+                    }
+
+                    await sheetsClient.spreadsheets.values.update({
+                        spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                        range: `A${targetRow}:H${targetRow}`,
+                        valueInputOption: "RAW",
                         requestBody: { values: [values] }
                     });
-                    console.log("Записано в таблицю (fallback A:G) ✅");
+                    console.log(`Записано в таблицю (fallback A:H, рядок ${targetRow}) ✅`);
                     return;
                 } catch (e2) {
                     lastErr = e2;
-                    console.error('Fallback append to A:G failed:', e2 && e2.message ? e2.message : e2);
+                    console.error('Fallback append to A:H failed:', e2 && e2.message ? e2.message : e2);
                 }
             }
 
@@ -809,58 +1096,168 @@ async function appendRegistrationRow(chatId, user) {
     throw lastErr || new Error('Unknown error writing to sheet');
 }
 
-// додаткові допоміжні функції для реєстрацій на заходи
-async function getSeatRegistrations(eventId) {
-    if (!sheetsClient || !SPREADSHEET_ID) return 0;
-    for (const sheetName of REGISTRATION_SHEET_CANDIDATES) {
+async function resolveRegistrantProfile(chatId, providedName, providedPhone) {
+    const resolved = {
+        userId: String(chatId || ''),
+        name: String(providedName || '').trim(),
+        phone: String(providedPhone || '').trim()
+    };
+
+    if ((!resolved.name || !resolved.phone) && sheetsClient && PERSONAL_DATA_SPREADSHEET_ID) {
+        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:H`, 'A:H'];
+        for (const range of rangesToTry) {
+            try {
+                const resp = await sheetsClient.spreadsheets.values.get({
+                    spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                    range
+                });
+                const rows = resp.data.values || [];
+                for (let i = rows.length - 1; i >= 0; i--) {
+                    const row = rows[i] || [];
+                    const rowChatId = String(row[7] || '').trim();
+                    if (!rowChatId || rowChatId !== resolved.userId) continue;
+
+                    if (!resolved.name) {
+                        resolved.name = String(row[1] || '').trim();
+                    }
+                    if (!resolved.phone) {
+                        resolved.phone = String(row[2] || '').trim();
+                    }
+
+                    if (resolved.name && resolved.phone) {
+                        return resolved;
+                    }
+                }
+            } catch (e) {
+                const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+                if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+
+    return resolved;
+}
+
+async function resolveRegistrantFormData(chatId, user) {
+    const resolved = {
+        userId: String(chatId || ''),
+        name: String((user && user.name) || '').trim(),
+        phone: String((user && user.phone) || '').trim(),
+        birth: String((user && user.birth) || '').trim(),
+        visited: String((user && user.visited) || '').trim(),
+        status: String((user && user.status) || '').trim(),
+        health: String((user && user.health) || '').trim()
+    };
+
+    const hasAll = resolved.name && resolved.phone && resolved.birth && resolved.visited && resolved.status && resolved.health;
+    if (hasAll || !sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID) {
+        return resolved;
+    }
+
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:H`, 'A:H'];
+    for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
-                spreadsheetId: SPREADSHEET_ID,
-                range: `${sheetName}!A:E`
+                spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                range
             });
             const rows = resp.data.values || [];
-            return rows.filter(r => r[0] === eventId).length;
+            for (let i = rows.length - 1; i >= 0; i--) {
+                const row = rows[i] || [];
+                const rowChatId = String(row[7] || '').trim();
+                if (!rowChatId || rowChatId !== resolved.userId) continue;
+
+                if (!resolved.name) resolved.name = String(row[1] || '').trim();
+                if (!resolved.phone) resolved.phone = String(row[2] || '').trim();
+                if (!resolved.birth) resolved.birth = String(row[3] || '').trim();
+                if (!resolved.visited) resolved.visited = String(row[4] || '').trim();
+                if (!resolved.status) resolved.status = String(row[5] || '').trim();
+                if (!resolved.health) resolved.health = String(row[6] || '').trim();
+
+                return resolved;
+            }
         } catch (e) {
             const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
             if (msg.includes('unable to parse range') || msg.includes('not found')) {
                 continue;
             }
-            console.error('Error reading registrations sheet', e);
-            return 0;
+            break;
         }
     }
-    console.warn(`Не знайдено аркуш реєстрацій. Спробовано: ${REGISTRATION_SHEET_CANDIDATES.join(', ')}`);
-    return 0;
+
+    return resolved;
+}
+
+async function registerForSelectedEvent(chatId, user, providedName, providedPhone) {
+    const eventId = user.selectedEventId;
+    const eventName = user.selectedEventName;
+    if (!eventId || !eventName) {
+        return { status: 'no-selection' };
+    }
+
+    const seatsLeft = await getSeatsLeft(eventId);
+    if (seatsLeft <= 0) {
+        return { status: 'no-seats' };
+    }
+
+    const registrantProfile = await resolveRegistrantProfile(chatId, providedName || '', providedPhone || '');
+
+    const evObj = events.find(e => e.id === eventId);
+    if (evObj) {
+        const alreadyRegistered = await isRegistrantAlreadyInEventNote(evObj, registrantProfile);
+        if (alreadyRegistered) {
+            return { status: 'already-registered' };
+        }
+    }
+
+    await appendEventRegistration(eventId, chatId, {
+        name: registrantProfile.name,
+        phone: registrantProfile.phone
+    });
+
+    if (evObj) {
+        await incrementSheetRegistration(evObj, {
+            userId: registrantProfile.userId,
+            name: registrantProfile.name,
+            phone: registrantProfile.phone
+        });
+        evObj.registrations = (evObj.registrations || 0) + 1;
+        if (typeof evObj.seats === 'number') evObj.seats = Math.max(0, evObj.seats - 1);
+    }
+
+    if (user.step === 7) {
+        if (!user.selectedEvents) user.selectedEvents = [];
+        user.selectedEvents.push({ id: eventId, name: eventName });
+    }
+
+    delete user.selectedEventName;
+    delete user.selectedEventId;
+    delete user.afishaFullRegistration;
+    delete user.afishaPendingEventId;
+    delete user.afishaPendingEventName;
+
+    return { status: 'ok' };
+}
+
+// додаткові допоміжні функції для реєстрацій на заходи
+async function getSeatRegistrations(eventId) {
+    const event = events.find(e => e.id === eventId);
+    if (!event) return 0;
+    return Number.isFinite(event.registrations) ? event.registrations : 0;
 }
 
 // повертає перелік eventId, на які userId зареєстрований
 async function getUserRegisteredEventIds(userId) {
-    if (!sheetsClient || !SPREADSHEET_ID) return [];
-    for (const sheetName of REGISTRATION_SHEET_CANDIDATES) {
-        try {
-            const resp = await sheetsClient.spreadsheets.values.get({
-                spreadsheetId: SPREADSHEET_ID,
-                range: `${sheetName}!A:C`
-            });
-            const rows = resp.data.values || [];
-            return rows.filter(r=>r[1] === String(userId)).map(r=>r[0]);
-        } catch (e) {
-            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-            if (msg.includes('unable to parse range') || msg.includes('not found')) {
-                continue;
-            }
-            console.error('Error reading registrations sheet', e);
-            return [];
-        }
-    }
     return [];
 }
 
 async function getSeatsLeft(eventId) {
     const event = events.find(e => e.id === eventId);
     if (!event) return 0;
-    const used = await getSeatRegistrations(eventId);
-    return event.seats - used;
+    return Math.max(0, Number(event.seats) || 0);
 }
 
 async function appendEventToSheet(date, time, title, capacity) {
@@ -889,30 +1286,8 @@ async function appendEventToSheet(date, time, title, capacity) {
     console.error(`   ❌ Не знайдено аркуш для запису розкладу (${SCHEDULE_SHEET_CANDIDATES.join(', ')})`);
 }
 
-async function appendEventRegistration(eventId, userId) {
-    if (!sheetsClient || !SPREADSHEET_ID) return;
-    for (const sheetName of REGISTRATION_SHEET_CANDIDATES) {
-        try {
-            await sheetsClient.spreadsheets.values.append({
-                spreadsheetId: SPREADSHEET_ID,
-                range: `${sheetName}!A:C`,
-                valueInputOption: "USER_ENTERED",
-                requestBody: {
-                    values: [[eventId, userId.toString(), new Date().toISOString()]]
-                }
-            });
-            console.log('Registration added for', userId, 'event', eventId, 'sheet', sheetName);
-            return;
-        } catch (e) {
-            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-            if (msg.includes('unable to parse range') || msg.includes('not found')) {
-                continue;
-            }
-            console.error('Error appending registration', e);
-            return;
-        }
-    }
-    console.error(`Не вдалося записати реєстрацію: не знайдено аркуш (${REGISTRATION_SHEET_CANDIDATES.join(', ')})`);
+async function appendEventRegistration(eventId, userId, registrantInfo) {
+    return true;
 }
 
 /* === ОБРОБКА МАСИВУ РОЗПАРЕНИХ ЗАХОДІВ === */
@@ -1087,26 +1462,14 @@ bot.on('message', async (msg) => {
     if (text === "Реєстрація") {
         // Спочатку запитуємо особисті дані
         user.step = 1;
-        bot.sendMessage(chatId, "Введіть ПІБ");
+        bot.sendMessage(chatId, "Прізвище Ім'я По-батькові");
         return;
     }
 
     if (text === "Афіша заходів") {
         // покажемо меню днів тижня
         user.context = 'afisha';
-        bot.sendMessage(chatId, "Оберіть день:", {
-            reply_markup: {
-                keyboard: [
-                    [{ text: "Середа" }],
-                    [{ text: "Четвер" }],
-                    [{ text: "П’ятниця" }],
-                    [{ text: "Субота" }],
-                    [{ text: "Неділя" }],
-                    [{ text: "Повернутися в меню" }]
-                ],
-                resize_keyboard: true
-            }
-        });
+        await showAfishaDaysMenu(chatId);
         return;
     }
 
@@ -1114,17 +1477,31 @@ bot.on('message', async (msg) => {
         const contactsMessage = `
 🤍 <b>Простір «Вільна»</b>
 
-📍 <b>Де знаходиться:</b>
-вул. Дмитра Донцова, 4
+«Вільна» — це безпечний жіночий простір підтримки, прийняття та відновлення.
+Ми створили місце, де можна бути собою, говорити відкрито, отримувати фахову допомогу та відчувати опору.
 
-👩‍💼 <b>Менеджерка:</b>
-<a href="https://t.me/devohka_bonda">@devohka_bonda</a>
+🕐 <b>Графік роботи:</b> 11:00 – 20:00 (середа–неділя)
 
-👩‍💼 <b>Соціальна фахівчиня:</b>
-<a href="https://t.me/DarynaVilna">@DarynaVilna</a>
+📍 <b>Адреса:</b>
+м. Дніпро, вул. Дмитра Донцова, 4
 
-👩‍⚕️ <b>Психологиня:</b>
-<a href="https://t.me/luidmila_psi">@luidmila_psi</a>
+💬 <b>Наша Telegram-група:</b>
+<a href="https://t.me/vilna_dnipro">https://t.me/vilna_dnipro</a>
+
+💌 <b>Наша команда:</b>
+
+👩🏻 <b>Менеджерка Бондаренко Христина</b> 🪻
+допоможе з організаційними питаннями, записом на заходи, реєстрацією, розкладом та зорієнтує щодо можливостей простору.
+
+👩🏻 <b>Соціальна фахівчиня Дарина Криворучко</b> 🌷
+надає соціальні консультації, здійснює супровід у складних життєвих обставинах та допомагає знайти необхідні ресурси й підтримку.
+
+👩🏻 <b>Психологиня Людмила Вознюк</b> 🌹
+проводить індивідуальні консультації та групи підтримки, допомагає впоратися з тривогою, емоційним виснаженням, переживаннями та кризовими станами.
+
+📩 Ви можете написати напряму фахівчині або залишити звернення через цей чат-бот — ми обов’язково зв’яжемося з вами.
+
+Ми поруч. Ви не одна 🤍
         `;
         
         bot.sendMessage(chatId, contactsMessage, {
@@ -1145,9 +1522,13 @@ bot.on('message', async (msg) => {
     }
 
     // Перевіряємо чи натиснута кнопка з заходом
-    const selectedEvent = getAllEvents().find(e => 
-        text.includes(e.name)
-    );
+    let selectedEvent = null;
+    if (user.eventButtonMap && user.eventButtonMap[text]) {
+        selectedEvent = getAllEvents().find((eventItem) => eventItem.id === user.eventButtonMap[text]) || null;
+    }
+    if (!selectedEvent) {
+        selectedEvent = getAllEvents().find((eventItem) => text.includes(eventItem.name));
+    }
 
     if (selectedEvent) {
         // compute seats left asynchronously before replying
@@ -1158,12 +1539,10 @@ bot.on('message', async (msg) => {
         
         // build keyboard options
         const buttons = [];
-        if (user.context !== 'afisha') {
-            if (seatsLeft > 0) {
-                buttons.push([{ text: "Реєструватися" }]);
-            } else {
-                buttons.push([{ text: "Місць немає" }]);
-            }
+        if (seatsLeft > 0) {
+            buttons.push([{ text: "Реєструватися" }]);
+        } else {
+            buttons.push([{ text: "Місць немає" }]);
         }
         buttons.push([{ text: "Назад" }]);
 
@@ -1184,30 +1563,98 @@ bot.on('message', async (msg) => {
 
     // Обробка реєстрації на захід
     if (text === "Реєструватися") {
-        const eventId = user.selectedEventId;
-        const eventName = user.selectedEventName;
-        if (!eventId || !eventName) return;
-        const seatsLeft = await getSeatsLeft(eventId);
-        if (seatsLeft <= 0) {
-            bot.sendMessage(chatId, "❌ Вибачте, місця закінчилися.");
+        try {
+            const registrantData = await resolveRegistrantFormData(chatId, user);
+
+            const missingStep = !registrantData.name ? 1
+                : !registrantData.phone ? 2
+                : !registrantData.birth ? 3
+                : !registrantData.visited ? 4
+                : !registrantData.status ? 5
+                : !registrantData.health ? 6
+                : 0;
+
+            if (missingStep > 0) {
+                user.afishaFullRegistration = true;
+                user.afishaPendingEventId = user.selectedEventId;
+                user.afishaPendingEventName = user.selectedEventName;
+
+                user.name = registrantData.name;
+                user.phone = registrantData.phone;
+                user.birth = registrantData.birth;
+                user.visited = registrantData.visited;
+                user.status = registrantData.status;
+                user.health = registrantData.health;
+                user.step = missingStep;
+
+                if (missingStep === 1) {
+                    bot.sendMessage(chatId, "Прізвище Ім'я По-батькові");
+                } else if (missingStep === 2) {
+                    bot.sendMessage(chatId, "Телефон (380...)");
+                } else if (missingStep === 3) {
+                    bot.sendMessage(chatId, "Дата народження");
+                } else if (missingStep === 4) {
+                    bot.sendMessage(chatId, "Чи відвідували Простір раніше?", {
+                        reply_markup: {
+                            keyboard: [[{ text: "Так" }, { text: "Ні" }]],
+                            resize_keyboard: true
+                        }
+                    });
+                } else if (missingStep === 5) {
+                    bot.sendMessage(chatId, "ВПО/МО:", {
+                        reply_markup: {
+                            keyboard: [[{ text: "ВПО" }, { text: "Місцева" }]],
+                            resize_keyboard: true
+                        }
+                    });
+                } else if (missingStep === 6) {
+                    bot.sendMessage(chatId, "Інвалідність/суттєві проблеми:", {
+                        reply_markup: {
+                            keyboard: [
+                                [{ text: "Інвалідність" }],
+                                [{ text: "Суттєві проблеми" }],
+                                [{ text: "Немає" }]
+                            ],
+                            resize_keyboard: true
+                        }
+                    });
+                }
+                return;
+            }
+
+            if (user.context === 'afisha') {
+                user.name = registrantData.name;
+                user.phone = registrantData.phone;
+                user.birth = registrantData.birth;
+                user.visited = registrantData.visited;
+                user.status = registrantData.status;
+                user.health = registrantData.health;
+
+                await appendRegistrationRow(chatId, user);
+            }
+
+            const result = await registerForSelectedEvent(chatId, user, registrantData.name, registrantData.phone);
+
+            if (result.status === 'no-selection') {
+                bot.sendMessage(chatId, "Спочатку оберіть захід.");
+                return;
+            }
+
+            if (result.status === 'no-seats') {
+                bot.sendMessage(chatId, "❌ Вибачте, місця закінчилися.");
+                return;
+            }
+
+            if (result.status === 'already-registered') {
+                bot.sendMessage(chatId, "ℹ️ Ви вже зареєстровані на цей захід.");
+                return;
+            }
+        } catch (registrationError) {
+            console.error('Error during event registration flow', registrationError && registrationError.message ? registrationError.message : registrationError);
+            bot.sendMessage(chatId, "Помилка при записі реєстрації в таблицю. Спробуйте ще раз.");
             return;
         }
-        await appendEventRegistration(eventId, chatId);
-        // update count in schedule sheet
-        const evObj = events.find(e => e.id === eventId);
-        if (evObj) {
-            await incrementSheetRegistration(evObj);
-            evObj.registrations = (evObj.registrations || 0) + 1;
-            // reduce local seats count as well
-            if (typeof evObj.seats === 'number') evObj.seats = Math.max(0, evObj.seats - 1);
-        }
-        
-        // Додати в selectedEvents для step 7
-        if (user.step === 7) {
-            if (!user.selectedEvents) user.selectedEvents = [];
-            user.selectedEvents.push({ id: eventId, name: eventName });
-        }
-        
+
         bot.sendMessage(chatId, "✅ Ви успішно зареєстровані на захід!", {
             reply_markup: {
                 keyboard: [
@@ -1217,8 +1664,6 @@ bot.on('message', async (msg) => {
                 resize_keyboard: true
             }
         });
-        delete user.selectedEventName;
-        delete user.selectedEventId;
         return;
     }
 
@@ -1226,6 +1671,7 @@ bot.on('message', async (msg) => {
         // Вернуться к списку доступних заходів (исключив те, на которые уже зарегистрировались)
         const allEvents = getAllEvents();
         const avail = [];
+        const eventButtonMap = {};
         const registeredIds = user.selectedEvents ? user.selectedEvents.map(e => e.id) : [];
         for (const ev of allEvents) {
             if (registeredIds.includes(ev.id)) continue; // пропустити вже вибрані
@@ -1241,7 +1687,12 @@ bot.on('message', async (msg) => {
             });
             return;
         }
-        const eventButtons = avail.map(event => [{ text: `☐ ${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}` }]);
+        const eventButtons = avail.map(event => {
+            const buttonText = `${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}`;
+            eventButtonMap[buttonText] = event.id;
+            return [{ text: buttonText }];
+        });
+        user.eventButtonMap = eventButtonMap;
         eventButtons.push([{ text: "✅ Завершити" }]);
         bot.sendMessage(chatId, "Натисніть на захід, на який бажаєте зареєструватись:", {
             reply_markup: {
@@ -1253,7 +1704,20 @@ bot.on('message', async (msg) => {
     }
 
     if (text === "Назад") {
+        delete user.afishaFullRegistration;
+        delete user.afishaPendingEventId;
+        delete user.afishaPendingEventName;
+
+        if (user.context === 'afisha') {
+            delete user.selectedEventName;
+            delete user.selectedEventId;
+            delete user.eventButtonMap;
+            await showAfishaDaysMenu(chatId);
+            return;
+        }
+
         delete user.selectedEventName;
+        delete user.eventButtonMap;
         user.context = null;
         bot.sendMessage(chatId, "Меню:", {
             reply_markup: {
@@ -1271,6 +1735,12 @@ bot.on('message', async (msg) => {
     }
 
     if (text === "Повернутися в меню") {
+        if (users[chatId]) {
+            delete users[chatId].eventButtonMap;
+            delete users[chatId].afishaFullRegistration;
+            delete users[chatId].afishaPendingEventId;
+            delete users[chatId].afishaPendingEventName;
+        }
         delete users[chatId];
         bot.sendMessage(chatId, "Меню:", {
             reply_markup: {
@@ -1321,7 +1791,7 @@ bot.on('message', async (msg) => {
         user.step = 5;
 
         // step 5: status buttons
-        bot.sendMessage(chatId, "Ваш статус:", {
+        bot.sendMessage(chatId, "ВПО/МО:", {
             reply_markup: {
                 keyboard: [[{ text: "ВПО" }, { text: "Місцева" }]],
                 resize_keyboard: true
@@ -1335,7 +1805,7 @@ bot.on('message', async (msg) => {
         user.step = 6;
 
         // step 6: health buttons
-        bot.sendMessage(chatId, "Проблеми зі здоров’ям:", {
+        bot.sendMessage(chatId, "Інвалідність/суттєві проблеми:", {
             reply_markup: {
                 keyboard: [
                     [{ text: "Інвалідність" }],
@@ -1354,6 +1824,38 @@ bot.on('message', async (msg) => {
 
         try {
             await appendRegistrationRow(chatId, user);
+
+            if (user.afishaFullRegistration) {
+                user.selectedEventId = user.afishaPendingEventId;
+                user.selectedEventName = user.afishaPendingEventName;
+
+                const result = await registerForSelectedEvent(chatId, user, user.name || '', user.phone || '');
+                if (result.status === 'no-selection') {
+                    bot.sendMessage(chatId, "Спочатку оберіть захід.");
+                    return;
+                }
+                if (result.status === 'no-seats') {
+                    bot.sendMessage(chatId, "❌ Вибачте, місця закінчилися.");
+                    return;
+                }
+
+                if (result.status === 'already-registered') {
+                    bot.sendMessage(chatId, "ℹ️ Ви вже зареєстровані на цей захід.");
+                    return;
+                }
+
+                bot.sendMessage(chatId, "✅ Ви успішно зареєстровані на захід!", {
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "Назад" }],
+                            [{ text: "Повернутися в меню" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
             bot.sendMessage(chatId, "✅ Ваші дані збережено!", {
                 reply_markup: {
                     keyboard: [[{ text: "Далі" }]],
@@ -1380,6 +1882,7 @@ bot.on('message', async (msg) => {
     if (user.step === 7 && text === "Далі") {
         const allEvents = getAllEvents();
         const avail = [];
+        const eventButtonMap = {};
         for (const ev of allEvents) {
             const seatsLeft = await getSeatsLeft(ev.id);
             if (seatsLeft > 0) avail.push(Object.assign({}, ev, { seatsLeft }));
@@ -1394,7 +1897,12 @@ bot.on('message', async (msg) => {
             delete users[chatId];
             return;
         }
-        const eventButtons = avail.map(event => [{ text: `☐ ${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}` }]);
+        const eventButtons = avail.map(event => {
+            const buttonText = `${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}`;
+            eventButtonMap[buttonText] = event.id;
+            return [{ text: buttonText }];
+        });
+        user.eventButtonMap = eventButtonMap;
         eventButtons.push([{ text: "✅ Завершити" }]);
         bot.sendMessage(chatId, "Натисніть на захід, на який бажаєте зареєструватись. Потім натисніть Завершити:", {
             reply_markup: {
@@ -1447,9 +1955,13 @@ bot.on('message', async (msg) => {
             if (seatsLeft > 0) avail.push(Object.assign({}, ev, { seatsLeft }));
         }
 
-        const selectedEvent = avail.find(e => 
-            text.includes(e.name)
-        );
+        let selectedEvent = null;
+        if (user.eventButtonMap && user.eventButtonMap[text]) {
+            selectedEvent = avail.find((eventItem) => eventItem.id === user.eventButtonMap[text]) || null;
+        }
+        if (!selectedEvent) {
+            selectedEvent = avail.find((eventItem) => text.includes(eventItem.name));
+        }
 
         if (selectedEvent) {
             // Показати деталі заходу з кнопкою реєстрації
@@ -1497,7 +2009,13 @@ bot.on('message', async (msg) => {
                 });
                 return;
             }
-            const eventButtons = availForList.map(event => [{ text: `${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}` }]);
+            const eventButtonMap = {};
+            const eventButtons = availForList.map(event => {
+                const buttonText = `${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}`;
+                eventButtonMap[buttonText] = event.id;
+                return [{ text: buttonText }];
+            });
+            user.eventButtonMap = eventButtonMap;
             eventButtons.push([{ text: "✅ Завершити" }]);
             bot.sendMessage(chatId, "Натисніть на захід, на який бажаєте зареєструватись:", {
                 reply_markup: {
