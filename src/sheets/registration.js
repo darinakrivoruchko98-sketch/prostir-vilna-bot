@@ -8,7 +8,7 @@ async function getSeatsLeft(eventId) {
     return event.seats;
 }
 
-async function appendEventRegistration(user, event) {
+async function appendEventRegistration(user, event, registrantInfo) {
     if (!state.sheetsClient) {
         console.warn('appendEventRegistration: sheetsClient not ready');
         return;
@@ -18,10 +18,13 @@ async function appendEventRegistration(user, event) {
         return;
     }
 
+    const name = (registrantInfo && registrantInfo.name) || user.name || '';
+    const phone = (registrantInfo && registrantInfo.phone) || user.phone || '';
+
     const values = [
         new Date().toISOString(),
-        user.name || '',
-        user.phone || '',
+        name,
+        phone,
         event.name || '',
         formatEventDate(event.date),
     ];

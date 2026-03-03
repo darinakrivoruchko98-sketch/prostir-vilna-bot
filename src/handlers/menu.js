@@ -22,6 +22,9 @@ function handleBack(bot, chatId) {
     if (user) {
         delete user.selectedEventName;
         delete user.eventButtonMap;
+        delete user.afishaFullRegistration;
+        delete user.afishaPendingEventId;
+        delete user.afishaPendingEventName;
         user.context = null;
     }
     bot.sendMessage(chatId, "Меню:", {
@@ -33,6 +36,9 @@ function handleBack(bot, chatId) {
 function handleReturnToMenu(bot, chatId) {
     if (state.users[chatId]) {
         delete state.users[chatId].eventButtonMap;
+        delete state.users[chatId].afishaFullRegistration;
+        delete state.users[chatId].afishaPendingEventId;
+        delete state.users[chatId].afishaPendingEventName;
     }
     delete state.users[chatId];
     bot.sendMessage(chatId, "Меню:", {

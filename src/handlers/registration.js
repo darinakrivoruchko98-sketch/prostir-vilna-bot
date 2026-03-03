@@ -1,10 +1,11 @@
 const state = require('../state');
 const { appendRegistrationRow } = require('../sheets/personal-data');
+const { registerForSelectedEvent } = require('./event-selection');
 
 function handleRegistrationStart(bot, chatId, user) {
     // Спочатку запитуємо особисті дані
     user.step = 1;
-    bot.sendMessage(chatId, "Введіть ПІБ");
+    bot.sendMessage(chatId, "Прізвище Ім'я По-батькові");
 }
 
 async function handlePersonalDataStep(bot, chatId, text, user) {
@@ -39,7 +40,7 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
         user.visited = text;
         user.step = 5;
         // step 5: status buttons
-        bot.sendMessage(chatId, "Ваш статус:", {
+        bot.sendMessage(chatId, "ВПО/МО:", {
             reply_markup: {
                 keyboard: [[{ text: "ВПО" }, { text: "Місцева" }]],
                 resize_keyboard: true
@@ -52,7 +53,7 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
         user.status = text;
         user.step = 6;
         // step 6: health buttons
-        bot.sendMessage(chatId, "Проблеми зі здоров'ям:", {
+        bot.sendMessage(chatId, "Інвалідність/суттєві проблеми:", {
             reply_markup: {
                 keyboard: [
                     [{ text: "Інвалідність" }],
@@ -79,6 +80,38 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
                 status: user.status,
                 health: user.health,
             };
+
+            // If came from afisha with pending event, auto-register
+            if (user.afishaFullRegistration) {
+                user.selectedEventId = user.afishaPendingEventId;
+                user.selectedEventName = user.afishaPendingEventName;
+
+                const result = await registerForSelectedEvent(chatId, user, user.name || '', user.phone || '');
+                if (result.status === 'no-selection') {
+                    bot.sendMessage(chatId, "Спочатку оберіть захід.");
+                    return true;
+                }
+                if (result.status === 'no-seats') {
+                    bot.sendMessage(chatId, "❌ Вибачте, місця закінчилися.");
+                    return true;
+                }
+                if (result.status === 'already-registered') {
+                    bot.sendMessage(chatId, "ℹ️ Ви вже зареєстровані на цей захід.");
+                    return true;
+                }
+
+                bot.sendMessage(chatId, "✅ Ви успішно зареєстровані на захід!", {
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "Назад" }],
+                            [{ text: "Повернутися в меню" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                return true;
+            }
+
             bot.sendMessage(chatId, "✅ Ваші дані збережено!", {
                 reply_markup: {
                     keyboard: [[{ text: "Далі" }]],

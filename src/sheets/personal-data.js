@@ -17,6 +17,22 @@ async function appendRegistrationRow(chatId, user) {
         user.health || ""
     ];
 
+    const findFirstFreeRow = (rows) => {
+        const searchStartIndex = 1;
+        let targetRow = Math.max(2, rows.length + 1);
+
+        for (let i = searchStartIndex; i < rows.length; i++) {
+            const row = rows[i] || [];
+            const personalDataHasValues = [1, 2, 3, 4, 5, 6].some((idx) => String(row[idx] || '').trim() !== '');
+            if (!personalDataHasValues) {
+                targetRow = i + 1;
+                break;
+            }
+        }
+
+        return targetRow;
+    };
+
     console.log(`appendRegistrationRow -> writing to ${config.PERSONAL_DATA_SHEET_NAME}:`, values);
 
     // If sheetsClient not ready, retry a few times
@@ -31,38 +47,30 @@ async function appendRegistrationRow(chatId, user) {
         }
 
         try {
-            // Знаходимо останній рядок з даними щоб писати у наступну пусту комірку
-            const resp = await state.sheetsClient.spreadsheets.values.get({
+            const existingResp = await state.sheetsClient.spreadsheets.values.get({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${config.PERSONAL_DATA_SHEET_NAME}!A:A`
+                range: `${config.PERSONAL_DATA_SHEET_NAME}!A:I`
             });
-            const rows = resp.data.values || [];
-            const nextRow = rows.length + 1; // Наступний рядок після існуючих даних
-
-            // Пишемо у новий рядок
-            const range = `${config.PERSONAL_DATA_SHEET_NAME}!A${nextRow}`;
+            const rows = existingResp.data.values || [];
+            const targetRow = findFirstFreeRow(rows);
 
             await state.sheetsClient.spreadsheets.values.update({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range: range,
-                valueInputOption: "USER_ENTERED",
-                requestBody: {
-                    values: [values],
-                    majorDimension: "ROWS"
-                }
+                range: `${config.PERSONAL_DATA_SHEET_NAME}!A${targetRow}:G${targetRow}`,
+                valueInputOption: "RAW",
+                requestBody: { values: [values] }
             });
             // Write chatId to column I separately to not overwrite column H
             await state.sheetsClient.spreadsheets.values.update({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${config.PERSONAL_DATA_SHEET_NAME}!I${nextRow}`,
-                valueInputOption: "USER_ENTERED",
+                range: `${config.PERSONAL_DATA_SHEET_NAME}!I${targetRow}`,
+                valueInputOption: "RAW",
                 requestBody: { values: [[String(chatId)]] }
             });
-            console.log(`Записано в таблицю ${config.PERSONAL_DATA_SHEET_NAME} (рядок ${nextRow}) ✅`);
+            console.log(`Записано в таблицю ${config.PERSONAL_DATA_SHEET_NAME} (рядок ${targetRow}) ✅`);
             return;
         } catch (e) {
             lastErr = e;
-            // Более подробное логирование ошибки от Google API (если есть)
             try {
                 const apiInfo = e && e.response && e.response.data ? JSON.stringify(e.response.data) : null;
                 console.error(`appendRegistrationRow attempt ${attempt} failed:`, e && e.message ? e.message : e, apiInfo ? `| api: ${apiInfo}` : '');
@@ -74,34 +82,26 @@ async function appendRegistrationRow(chatId, user) {
             const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
             if ((msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('sheet') ) && attempt === 1) {
                 try {
-                    console.warn('appendRegistrationRow: спробую fallback на перший аркуш');
-                    const respFallback = await state.sheetsClient.spreadsheets.values.get({
+                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:G (перший аркуш)');
+
+                    const existingResp = await state.sheetsClient.spreadsheets.values.get({
                         spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                        range: `A:A`
+                        range: "A:G",
                     });
-                    const rowsFallback = respFallback.data.values || [];
-                    const nextRowFallback = rowsFallback.length + 1;
+                    const rows = existingResp.data.values || [];
+                    const targetRow = findFirstFreeRow(rows);
 
                     await state.sheetsClient.spreadsheets.values.update({
                         spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                        range: `A${nextRowFallback}`,
-                        valueInputOption: "USER_ENTERED",
-                        requestBody: {
-                            values: [values],
-                            majorDimension: "ROWS"
-                        }
+                        range: `A${targetRow}:G${targetRow}`,
+                        valueInputOption: "RAW",
+                        requestBody: { values: [values] }
                     });
-                    await state.sheetsClient.spreadsheets.values.update({
-                        spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                        range: `I${nextRowFallback}`,
-                        valueInputOption: "USER_ENTERED",
-                        requestBody: { values: [[String(chatId)]] }
-                    });
-                    console.log("Записано в таблицю (fallback, рядок " + nextRowFallback + ") ✅");
+                    console.log(`Записано в таблицю (fallback A:G, рядок ${targetRow}) ✅`);
                     return;
                 } catch (e2) {
                     lastErr = e2;
-                    console.error('Fallback write failed:', e2 && e2.message ? e2.message : e2);
+                    console.error('Fallback append to A:G failed:', e2 && e2.message ? e2.message : e2);
                 }
             }
 

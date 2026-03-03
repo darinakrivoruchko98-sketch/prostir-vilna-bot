@@ -3,7 +3,7 @@ const { getAllEvents } = require('../events/store');
 const { findEventByButtonText } = require('../events/parser');
 const { appendEventRegistration, getSeatsLeft } = require('../sheets/registration');
 const { findUserByChatId } = require('../sheets/personal-data');
-const { incrementSheetRegistration } = require('../sheets/schedule');
+const { incrementSheetRegistration, isRegistrantAlreadyInEventNote } = require('../sheets/schedule');
 const { formatEventDate } = require('../utils/date');
 const { pluralizeEvents } = require('../utils/text');
 
@@ -37,20 +37,10 @@ async function showEventDetails(bot, chatId, selectedEvent, user) {
 
     // build keyboard options
     const buttons = [];
-    let isKnownUser = !!(state.knownUsers && state.knownUsers[chatId]);
-    if (!isKnownUser && user.context === 'afisha') {
-        const found = await findUserByChatId(chatId);
-        if (found) {
-            state.knownUsers[chatId] = found;
-            isKnownUser = true;
-        }
-    }
-    if (user.context !== 'afisha' || isKnownUser) {
-        if (seatsLeft > 0) {
-            buttons.push([{ text: "Реєструватися" }]);
-        } else {
-            buttons.push([{ text: "Місць немає" }]);
-        }
+    if (seatsLeft > 0) {
+        buttons.push([{ text: "Реєструватися" }]);
+    } else {
+        buttons.push([{ text: "Місць немає" }]);
     }
     buttons.push([{ text: "Назад" }]);
 
@@ -64,6 +54,74 @@ async function showEventDetails(bot, chatId, selectedEvent, user) {
     // Зберігаємо вибраний захід для наступного кроку
     user.selectedEventName = selectedEvent.name;
     user.selectedEventId = selectedEvent.id;
+}
+
+function resolveRegistrantProfile(chatId, user, providedName, providedPhone) {
+    const resolved = {
+        userId: String(chatId || ''),
+        name: String(providedName || '').trim(),
+        phone: String(providedPhone || '').trim()
+    };
+
+    if (!resolved.name) {
+        resolved.name = String((user && user.name) || '').trim();
+    }
+    if (!resolved.phone) {
+        resolved.phone = String((user && user.phone) || '').trim();
+    }
+
+    return resolved;
+}
+
+async function registerForSelectedEvent(chatId, user, providedName, providedPhone) {
+    const eventId = user.selectedEventId;
+    const eventName = user.selectedEventName;
+    if (!eventId || !eventName) {
+        return { status: 'no-selection' };
+    }
+
+    const seatsLeft = await getSeatsLeft(eventId);
+    if (seatsLeft <= 0) {
+        return { status: 'no-seats' };
+    }
+
+    const registrantProfile = resolveRegistrantProfile(chatId, user, providedName || '', providedPhone || '');
+
+    const evObj = state.events.find(e => e.id === eventId);
+    if (evObj) {
+        const alreadyRegistered = await isRegistrantAlreadyInEventNote(evObj, registrantProfile);
+        if (alreadyRegistered) {
+            return { status: 'already-registered' };
+        }
+    }
+
+    await appendEventRegistration(user, evObj || { name: eventName, date: new Date() }, {
+        name: registrantProfile.name,
+        phone: registrantProfile.phone
+    });
+
+    if (evObj) {
+        await incrementSheetRegistration(evObj, {
+            userId: registrantProfile.userId,
+            name: registrantProfile.name,
+            phone: registrantProfile.phone
+        });
+        evObj.registrations = (evObj.registrations || 0) + 1;
+        if (typeof evObj.seats === 'number') evObj.seats = Math.max(0, evObj.seats - 1);
+    }
+
+    if (user.step === 7) {
+        if (!user.selectedEvents) user.selectedEvents = [];
+        user.selectedEvents.push({ id: eventId, name: eventName });
+    }
+
+    delete user.selectedEventName;
+    delete user.selectedEventId;
+    delete user.afishaFullRegistration;
+    delete user.afishaPendingEventId;
+    delete user.afishaPendingEventName;
+
+    return { status: 'ok' };
 }
 
 async function handleRegister(bot, chatId, user) {
@@ -85,24 +143,37 @@ async function handleRegister(bot, chatId, user) {
         }
     }
 
-    const seatsLeft = await getSeatsLeft(eventId);
-    if (seatsLeft <= 0) {
-        bot.sendMessage(chatId, "❌ Вибачте, місця закінчилися.");
+    // If in afisha context and user data is not available, redirect to registration
+    if (user.context === 'afisha' && !user.name) {
+        user.afishaFullRegistration = true;
+        user.afishaPendingEventId = eventId;
+        user.afishaPendingEventName = eventName;
+        user.step = 1;
+        bot.sendMessage(chatId, "Прізвище Ім'я По-батькові");
         return;
     }
-    const evObj = state.events.find(e => e.id === eventId);
-    await appendEventRegistration(user, evObj || { name: eventName, date: new Date() });
-    if (evObj) {
-        await incrementSheetRegistration(evObj);
-        evObj.registrations = (evObj.registrations || 0) + 1;
-        // reduce local seats count as well
-        if (typeof evObj.seats === 'number') evObj.seats = Math.max(0, evObj.seats - 1);
-    }
 
-    // Додати в selectedEvents для step 7
-    if (user.step === 7) {
-        if (!user.selectedEvents) user.selectedEvents = [];
-        user.selectedEvents.push({ id: eventId, name: eventName });
+    try {
+        const result = await registerForSelectedEvent(chatId, user, user.name || '', user.phone || '');
+
+        if (result.status === 'no-selection') {
+            bot.sendMessage(chatId, "Спочатку оберіть захід.");
+            return;
+        }
+
+        if (result.status === 'no-seats') {
+            bot.sendMessage(chatId, "❌ Вибачте, місця закінчилися.");
+            return;
+        }
+
+        if (result.status === 'already-registered') {
+            bot.sendMessage(chatId, "ℹ️ Ви вже зареєстровані на цей захід.");
+            return;
+        }
+    } catch (registrationError) {
+        console.error('Error during event registration flow', registrationError && registrationError.message ? registrationError.message : registrationError);
+        bot.sendMessage(chatId, "Помилка при записі реєстрації в таблицю. Спробуйте ще раз.");
+        return;
     }
 
     if (user.context === 'afisha') {
@@ -123,8 +194,6 @@ async function handleRegister(bot, chatId, user) {
             }
         });
     }
-    delete user.selectedEventName;
-    delete user.selectedEventId;
 }
 
 async function handleChooseMore(bot, chatId, user) {
@@ -148,7 +217,7 @@ async function handleChooseMore(bot, chatId, user) {
         return;
     }
     const eventButtons = avail.map(event => {
-        const buttonText = `☐ ${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}`;
+        const buttonText = `${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}`;
         eventButtonMap[buttonText] = event.id;
         return [{ text: buttonText }];
     });
@@ -181,7 +250,7 @@ async function handleDali(bot, chatId, user) {
         return;
     }
     const eventButtons = avail.map(event => {
-        const buttonText = `☐ ${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}`;
+        const buttonText = `${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}`;
         eventButtonMap[buttonText] = event.id;
         return [{ text: buttonText }];
     });
@@ -321,4 +390,5 @@ module.exports = {
     handleFinish,
     handleStep7EventClick,
     handleBackToList,
+    registerForSelectedEvent,
 };
