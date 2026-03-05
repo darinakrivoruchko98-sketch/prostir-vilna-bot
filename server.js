@@ -152,6 +152,12 @@ async function checkAndSendReminders() {
     const now = new Date();
     
     for (const chatId in userEventRegistrations) {
+        // Перевіряємо чи оробимнику нагадування
+        if (users[chatId] && users[chatId].remindersEnabled === false) {
+            console.log(`ℹ️ Нагадування вимкнені для ${chatId}, пропускаємо`);
+            continue;
+        }
+        
         const registrations = userEventRegistrations[chatId];
         
         for (const reg of registrations) {
@@ -1975,10 +1981,17 @@ bot.on('message', async (msg) => {
         message += "• За 2 години до заходу\n\n";
         message += "Ми обов'язково нагадаємо вам! 🩵";
         
-        bot.sendMessage(chatId, message, {
+        // Отримуємо налаштування користувача
+        if (!users[chatId]) users[chatId] = { step: 0 };
+        const remindersEnabled = users[chatId].remindersEnabled !== false; // за замовчуванням вмикнено
+        
+        let settingsStatus = remindersEnabled ? "✅ Нагадування увімкнені" : "❌ Нагадування вимкнені";
+        
+        bot.sendMessage(chatId, message + `\n\n${settingsStatus}`, {
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: [
+                    [{ text: "⚙️ Налаштування нагадувань" }],
                     [{ text: "Повернутися в меню" }]
                 ],
                 resize_keyboard: true
@@ -2292,6 +2305,76 @@ bot.on('message', async (msg) => {
             }
         });
         delete users[chatId];
+        return;
+    }
+
+    // Налаштування нагадувань
+    if (text === "⚙️ Налаштування нагадувань") {
+        if (!users[chatId]) users[chatId] = { step: 0 };
+        
+        const remindersEnabled = users[chatId].remindersEnabled !== false;
+        const statusText = remindersEnabled ? "✅ увімкнені" : "❌ вимкнені";
+        
+        const settingsMsg = `⚙️ <b>Налаштування нагадувань про заходи</b>\n\n` +
+            `Поточний статус: ${statusText}\n\n` +
+            `<b>Оберіть дію:</b>`;
+        
+        const buttons = remindersEnabled 
+            ? [
+                [{ text: "🔔 Вимкнути нагадування" }],
+                [{ text: "Повернутися в меню" }]
+            ]
+            : [
+                [{ text: "🔊 Увімкнути нагадування" }],
+                [{ text: "Повернутися в меню" }]
+            ];
+        
+        bot.sendMessage(chatId, settingsMsg, {
+            parse_mode: 'HTML',
+            reply_markup: { keyboard: buttons, resize_keyboard: true }
+        });
+        return;
+    }
+
+    // Вмикаємо нагадування
+    if (text === "🔊 Увімкнути нагадування") {
+        if (!users[chatId]) users[chatId] = { step: 0 };
+        users[chatId].remindersEnabled = true;
+        
+        bot.sendMessage(chatId, 
+            "✅ <b>Нагадування увімкнені!</b>\n\n" +
+            "Ви будете отримувати сповіщення за 24 години та за 2 години до кожного заходу.\n\n" +
+            "Дякуємо! 🩵", {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: "Нагадування" }],
+                    [{ text: "Повернутися в меню" }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
+    // Вимикаємо нагадування
+    if (text === "🔔 Вимкнути нагадування") {
+        if (!users[chatId]) users[chatId] = { step: 0 };
+        users[chatId].remindersEnabled = false;
+        
+        bot.sendMessage(chatId, 
+            "❌ <b>Нагадування вимкнені</b>\n\n" +
+            "Ви більше не будете отримувати сповіщення про заходи.\n\n" +
+            "Ви можете увімкнути їх в будь-який час через меню «Нагадування». 🩵", {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: "Нагадування" }],
+                    [{ text: "Повернутися в меню" }]
+                ],
+                resize_keyboard: true
+            }
+        });
         return;
     }
 
