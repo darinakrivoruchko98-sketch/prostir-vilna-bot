@@ -1270,7 +1270,7 @@ async function appendRegistrationRow(chatId, user) {
     }
 
     const values = [
-        String(chatId || ''),
+        String((user && user.username) || ''),
         user.name || "",
         user.phone || "",
         user.birth || "",
@@ -1285,7 +1285,7 @@ async function appendRegistrationRow(chatId, user) {
 
         for (let i = searchStartIndex; i < rows.length; i++) {
             const row = rows[i] || [];
-            const personalDataHasValues = [1, 2, 3, 4, 5, 6].some((idx) => String(row[idx] || '').trim() !== '');
+            const personalDataHasValues = [0, 1, 2, 3, 4, 5, 6].some((idx) => String(row[idx] || '').trim() !== '');
             if (!personalDataHasValues) {
                 targetRow = i + 1;
                 break;
@@ -1463,40 +1463,8 @@ async function loadKnownUserByChatId(chatId) {
         return null;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:G`, 'A:G'];
-    for (const range of rangesToTry) {
-        try {
-            const resp = await sheetsClient.spreadsheets.values.get({
-                spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range
-            });
-            const rows = resp.data.values || [];
-            for (let i = rows.length - 1; i >= 0; i--) {
-                const row = rows[i] || [];
-                const rowChatId = String(row[0] || '').trim();
-                if (rowChatId !== chatIdStr) continue;
-
-                const restored = {
-                    name: String(row[1] || '').trim(),
-                    phone: String(row[2] || '').trim(),
-                    birth: String(row[3] || '').trim(),
-                    visited: String(row[4] || '').trim(),
-                    status: String(row[5] || '').trim(),
-                    health: String(row[6] || '').trim()
-                };
-
-                knownUsers[chatId] = restored;
-                return restored;
-            }
-        } catch (e) {
-            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-            if (msg.includes('unable to parse range') || msg.includes('not found')) {
-                continue;
-            }
-            break;
-        }
-    }
-
+    // У новій схемі таблиці chatId не зберігається окремою колонкою.
+    // Пошук виконується по username/phone у відповідних функціях.
     return null;
 }
 
@@ -1509,7 +1477,7 @@ async function loadKnownUserByPhone(phone) {
         return null;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:H`, 'A:H'];
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:G`, 'A:G'];
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -1529,8 +1497,7 @@ async function loadKnownUserByPhone(phone) {
                     visited: String(row[4] || '').trim(),
                     status: String(row[5] || '').trim(),
                     health: String(row[6] || '').trim(),
-                    username: String(row[7] || '').trim(),
-                    foundChatId: String(row[0] || '').trim()
+                    username: String(row[0] || '').trim()
                 };
 
                 return restored;
@@ -1556,7 +1523,7 @@ async function loadKnownUserByUsername(username) {
         return null;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:H`, 'A:H'];
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:G`, 'A:G'];
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -1566,10 +1533,9 @@ async function loadKnownUserByUsername(username) {
             const rows = resp.data.values || [];
             for (let i = rows.length - 1; i >= 0; i--) {
                 const row = rows[i] || [];
-                const rowUsername = String(row[7] || '').trim().toLowerCase(); // Column H (index 7)
+                const rowUsername = String(row[0] || '').trim().toLowerCase(); // Column A (index 0)
                 if (rowUsername !== usernameStr && !rowUsername.endsWith(usernameStr.replace('@', ''))) continue;
 
-                const chatId = String(row[0] || '').trim();
                 const restored = {
                     name: String(row[1] || '').trim(),
                     phone: String(row[2] || '').trim(),
@@ -1577,8 +1543,7 @@ async function loadKnownUserByUsername(username) {
                     visited: String(row[4] || '').trim(),
                     status: String(row[5] || '').trim(),
                     health: String(row[6] || '').trim(),
-                    username: String(row[7] || '').trim(),
-                    foundChatId: chatId
+                    username: String(row[0] || '').trim()
                 };
 
                 return restored;
@@ -1948,9 +1913,15 @@ bot.on('message', async (msg) => {
     if (text === '/start') {
         if (!users[chatId]) users[chatId] = { step: 0 };
         const user = users[chatId];
+        if (msg.from && msg.from.username) {
+            user.username = String(msg.from.username).trim();
+        }
         
-        // Шукаємо профіль по chatId БЕЗ попереднього повідомлення
-        const foundProfile = await loadKnownUserByChatId(chatId);
+        // Шукаємо профіль по chatId, а якщо не знайдено — по username
+        let foundProfile = await loadKnownUserByChatId(chatId);
+        if (!foundProfile && msg.from && msg.from.username) {
+            foundProfile = await loadKnownUserByUsername(msg.from.username);
+        }
         
         if (foundProfile && foundProfile.name && foundProfile.phone) {
             // Профіль знайдено — логінимо користувача
@@ -2180,11 +2151,17 @@ bot.on('message', async (msg) => {
     }
 
     let user = users[chatId];
+    if (msg.from && msg.from.username) {
+        user.username = String(msg.from.username).trim();
+    }
 
     // (Старий код waitingForLogin видалено - тепер /start автоматично обробляє профіль)
 
     if (!user.profileHydrated) {
-        const restoredProfile = await loadKnownUserByChatId(chatId);
+        let restoredProfile = await loadKnownUserByChatId(chatId);
+        if (!restoredProfile && msg.from && msg.from.username) {
+            restoredProfile = await loadKnownUserByUsername(msg.from.username);
+        }
         if (restoredProfile) {
             Object.assign(user, restoredProfile);
         } else if (knownUsers[chatId]) {
@@ -3005,7 +2982,8 @@ bot.on('message', async (msg) => {
             birth: user.birth,
             visited: user.visited,
             status: user.status,
-            health: user.health
+            health: user.health,
+            username: user.username || ""
         };
 
         delete user.afishaMultiRegistration;
