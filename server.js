@@ -1576,6 +1576,7 @@ function showAfishaRegistrationForm(chatId, user) {
     }
 
     user.afishaFullRegistration = true;
+    user.registrationMode = true;
     const step = user.step && user.step > 0 ? user.step : 1;
     user.step = step;
 
@@ -2417,6 +2418,59 @@ bot.on('message', async (msg) => {
                     username: user.username || ""
                 };
 
+                if (user.afishaMultiRegistration && user.selectedEventsList && user.selectedEventsList.length > 0) {
+                    let successCount = 0;
+                    let failureCount = 0;
+                    const registrationResults = [];
+
+                    for (const event of user.selectedEventsList) {
+                        user.selectedEventId = event.id;
+                        user.selectedEventName = event.name;
+
+                        const result = await registerForSelectedEvent(chatId, user, user.name, user.phone);
+                        if (result.status === 'success' || result.status === 'ok') {
+                            successCount += 1;
+                            registrationResults.push(`✅ ${event.name}`);
+                        } else if (result.status === 'already-registered') {
+                            failureCount += 1;
+                            registrationResults.push(`ℹ️ ${event.name} - вже зареєстровані`);
+                        } else if (result.status === 'no-seats') {
+                            failureCount += 1;
+                            registrationResults.push(`❌ ${event.name} - місця закінчилися`);
+                        } else {
+                            failureCount += 1;
+                            registrationResults.push(`❌ ${event.name} - помилка`);
+                        }
+                    }
+
+                    let message = `📝 <b>Результати реєстрації:</b>\n\n`;
+                    registrationResults.forEach((item) => {
+                        message += `${item}\n`;
+                    });
+                    message += `\n✅ Успішно: ${successCount}\n❌ Помилок: ${failureCount}`;
+
+                    await bot.sendMessage(chatId, message, {
+                        parse_mode: 'HTML',
+                        reply_markup: {
+                            keyboard: [[{ text: "Повернутися в меню" }]],
+                            resize_keyboard: true
+                        }
+                    });
+
+                    delete user.afishaMultiRegistration;
+                    delete user.afishaEventIndex;
+                    delete user.currentMultiEventId;
+                    delete user.currentMultiEventName;
+                    delete user.selectedEventsList;
+                    delete user.currentSelectedEventName;
+                    delete user.currentSelectedEventId;
+                    delete user.selectedEventId;
+                    delete user.selectedEventName;
+                    user.step = 0;
+                    user.registrationMode = false;
+                    return;
+                }
+
                 // Показуємо меню з кнопками
                 await bot.sendMessage(chatId, "✅ <b>Реєстрація завершена!</b>\n\n👤 " + user.name + "\n📱 " + user.phone + "\n\nТепер вибери, що далі:", {
                     parse_mode: 'HTML',
@@ -2869,6 +2923,7 @@ bot.on('message', async (msg) => {
 
         if (missingStep > 0) {
             user.step = missingStep;
+            user.registrationMode = true;
             showAfishaRegistrationForm(chatId, user);
             return;
         }
