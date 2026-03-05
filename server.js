@@ -1899,14 +1899,7 @@ bot.on('message', async (msg) => {
         if (!users[chatId]) users[chatId] = { step: 0 };
         const user = users[chatId];
         
-        // Показати початкове повідомлення
-        await bot.sendMessage(chatId, `🔄 Завантаження вашого профілю Вільна...`, {
-            reply_markup: {
-                remove_keyboard: true
-            }
-        });
-        
-        // Шукаємо профіль по chatId
+        // Шукаємо профіль по chatId БЕЗ попереднього повідомлення
         const foundProfile = await loadKnownUserByChatId(chatId);
         
         if (foundProfile && foundProfile.name && foundProfile.phone) {
@@ -1931,7 +1924,7 @@ bot.on('message', async (msg) => {
             
             greeting += `Оберіть дію:`;
             
-            bot.sendMessage(chatId, greeting, {
+            await bot.sendMessage(chatId, greeting, {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -1951,7 +1944,7 @@ bot.on('message', async (msg) => {
                 chatId: String(chatId)
             };
             
-            bot.sendMessage(chatId, "Профіль не знайдено. 😔\n\nРозпочинаємо реєстрацію...\n\n📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
+            await bot.sendMessage(chatId, "Профіль не знайдено. 😔\n\nРозпочинаємо реєстрацію...\n\n📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -2403,7 +2396,7 @@ bot.on('message', async (msg) => {
                 };
 
                 // Показуємо меню з кнопками
-                bot.sendMessage(chatId, "✅ <b>Реєстрація завершена!</b>\n\n👤 " + user.name + "\n📱 " + user.phone + "\n\nТепер вибери, що далі:", {
+                await bot.sendMessage(chatId, "✅ <b>Реєстрація завершена!</b>\n\n👤 " + user.name + "\n📱 " + user.phone + "\n\nТепер вибери, що далі:", {
                     parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [
