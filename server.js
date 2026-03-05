@@ -1537,56 +1537,20 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // === ОБРОБКА КРОКІВ ЗВЕРНЕННЯ ===
-    
-    // Крок 1: Збір імені
+    // === ОБРОБКА ЗВЕРНЕННЯ - ОДРАЗУ ТЕКСТ ===
     if (user.context === 'appeal' && user.step === 1) {
-        const suggestedUsername = user.appealData?.suggestedUsername;
-        
-        if (suggestedUsername && text === `Використати ${suggestedUsername}`) {
-            user.appealData.name = suggestedUsername;
-        } else {
-            user.appealData.name = text.trim();
-        }
-        
-        user.step = 2;
-        bot.sendMessage(chatId, `<b>Крок 2 з 3: Номер телефону</b>\n\nНапишіть ваш номер телефону для зв'язку:\n(Наприклад: +380123456789)`, {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [[{ text: "Скасувати" }]],
-                resize_keyboard: true
-            }
-        });
-        return;
-    }
-    
-    // Крок 2: Збір телефону
-    if (user.context === 'appeal' && user.step === 2) {
-        user.appealData.phone = text.trim();
-        user.step = 3;
-        
-        const appealInstructions = `<b>Крок 3 з 3: Текст звернення</b>\n\nВи можете написати нам про:\n• Питання, що вас цікавлять\n• Пропозиції та ідеї\n• Проблеми, які потребують рішення\n• Ваші враження від відвідування\n\nВаше звернення буде передане безпосередньо команді "Вільної", яка обов'язково його прочитає та зв'яжеться з вами якомога швидше. 🤝\n\n⬇️ <b>Напишіть текст звернення нижче</b> (або натисніть "Скасувати")`;
-        
-        bot.sendMessage(chatId, appealInstructions, {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [[{ text: "Скасувати" }]],
-                resize_keyboard: true
-            }
-        });
-        return;
-    }
-    
-    // Крок 3: Збір тексту і відправка
-    if (user.context === 'appeal' && user.step === 3) {
         console.log(`\n========== ЗВЕРНЕННЯ ==========`);
         console.log(`ChatID: ${chatId}`);
-        console.log(`Name: ${user.appealData.name}`);
-        console.log(`Phone: ${user.appealData.phone}`);
         console.log(`Text: "${text.substring(0, 100)}"`);
         
-        const userName = user.appealData.name;
-        const userPhone = user.appealData.phone;
+        // Автоматично беремо дані з реєстрації або Telegram профілю
+        const userName = knownUsers[chatId]?.name || 
+                        msg.from.first_name || 
+                        (msg.from.username ? `@${msg.from.username}` : `користувач ${chatId}`);
+        const userPhone = knownUsers[chatId]?.phone || 'не вказаний';
+        
+        console.log(`Auto Name: ${userName}`);
+        console.log(`Auto Phone: ${userPhone}`);
         
         // Форматуємо дату та час
         const now = new Date();
@@ -1626,7 +1590,6 @@ bot.on('message', async (msg) => {
                 });
                 user.step = 0;
                 user.context = null;
-                delete user.appealData;
             } catch (error) {
                 console.error(`❌ ПОМИЛКА при відправці:`);
                 console.error(`Код: ${error.code}`);
@@ -1641,7 +1604,6 @@ bot.on('message', async (msg) => {
                 });
                 user.step = 0;
                 user.context = null;
-                delete user.appealData;
             }
         } else {
             console.error(`❌ APPEALS_GROUP_ID НЕ ВСТАНОВЛЕНО!`);
@@ -1654,7 +1616,6 @@ bot.on('message', async (msg) => {
             });
             user.step = 0;
             user.context = null;
-            delete user.appealData;
         }
         return;
     }
@@ -1724,29 +1685,22 @@ bot.on('message', async (msg) => {
     if (text === "Написати звернення") {
         user.context = 'appeal';
         user.step = 1;
-        user.appealData = {}; // Ініціалізуємо об'єкт для збору даних
         
-        // Пропонуємо використати Telegram username якщо є
-        const telegramUsername = msg.from.username ? `@${msg.from.username}` : null;
-        
-        let namePrompt = `📝 <b>Написати звернення</b>
+        const appealInstructions = `📝 <b>Написати звернення</b>
 
-<b>Крок 1 з 3: Як до вас звертатись?</b>
+Ви можете написати нам про:
+• Питання, що вас цікавлять
+• Пропозиції та ідеї
+• Проблеми, які потребують рішення
+• Ваші враження від відвідування
 
-Напишіть ваше ім'я або оберіть один з варіантів:`;
-        
-        const nameKeyboard = [[{ text: "Скасувати" }]];
-        
-        if (telegramUsername) {
-            user.appealData.suggestedUsername = telegramUsername;
-            nameKeyboard.unshift([{ text: `Використати ${telegramUsername}` }]);
-        }
-        
-        const appealInstructions = namePrompt;
+Ваше звернення буде передане безпосередньо команді "Вільної", яка обов'язково його прочитає та зв'яжеться з вами якомога швидше. 🤝
+
+⬇️ <b>Напишіть текст звернення нижче</b> (або натисніть "Скасувати")`;
         bot.sendMessage(chatId, appealInstructions, {
             parse_mode: 'HTML',
             reply_markup: {
-                keyboard: nameKeyboard,
+                keyboard: [[{ text: "Скасувати" }]],
                 resize_keyboard: true
             }
         });
