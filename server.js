@@ -8,7 +8,7 @@ const TelegramBot = require("node-telegram-bot-api");
 const { google } = require("googleapis");
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 const GROUP_ID = process.env.GROUP_ID || config.GROUP_ID;
 const CHAT_ID = process.env.CHAT_ID || config.CHAT_ID;
 // Таблиця для розкладу та реєстрацій на заходи
