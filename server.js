@@ -708,6 +708,7 @@ function normalizeCredentials(credentials) {
 
 function parseCredentialsFromEnv() {
     const sources = [];
+    const sheetsScopes = ["https://www.googleapis.com/auth/spreadsheets"];
 
     if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
         try {
@@ -716,7 +717,7 @@ function parseCredentialsFromEnv() {
                 label: "GOOGLE_SERVICE_ACCOUNT_JSON",
                 authOptions: {
                     credentials: normalizeCredentials(parsed),
-                    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+                    scopes: sheetsScopes
                 }
             });
         } catch (error) {
@@ -732,12 +733,43 @@ function parseCredentialsFromEnv() {
                 label: "GOOGLE_SERVICE_ACCOUNT_JSON_BASE64",
                 authOptions: {
                     credentials: normalizeCredentials(parsed),
-                    scopes: ["https://www.googleapis.com/auth/spreadsheets"]
+                    scopes: sheetsScopes
                 }
             });
         } catch (error) {
             console.error(`Невалідний GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: ${error.message}`);
         }
+    }
+
+    // Backward-compatible alias used in older deployments/docs
+    if (process.env.GOOGLE_CREDENTIALS) {
+        try {
+            const decoded = Buffer.from(process.env.GOOGLE_CREDENTIALS, "base64").toString("utf8");
+            const parsed = JSON.parse(decoded);
+            sources.push({
+                label: "GOOGLE_CREDENTIALS",
+                authOptions: {
+                    credentials: normalizeCredentials(parsed),
+                    scopes: sheetsScopes
+                }
+            });
+        } catch (error) {
+            console.error(`Невалідний GOOGLE_CREDENTIALS: ${error.message}`);
+        }
+    }
+
+    // Env-only service account fields (common on Railway)
+    if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
+        sources.push({
+            label: "GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY",
+            authOptions: {
+                credentials: normalizeCredentials({
+                    client_email: process.env.GOOGLE_CLIENT_EMAIL,
+                    private_key: process.env.GOOGLE_PRIVATE_KEY,
+                }),
+                scopes: sheetsScopes
+            }
+        });
     }
 
     return sources;
@@ -795,7 +827,7 @@ function resolveGoogleAuthCandidates() {
     }
 
     if (candidates.length === 0) {
-        throw new Error("Не знайдено Google credentials. Додайте GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, GOOGLE_APPLICATION_CREDENTIALS або файл vilna-bot-*.json");
+        throw new Error("Не знайдено Google credentials. Додайте GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, GOOGLE_CREDENTIALS, GOOGLE_CLIENT_EMAIL+GOOGLE_PRIVATE_KEY, GOOGLE_APPLICATION_CREDENTIALS або файл vilna-bot-*.json");
     }
 
     return candidates;

@@ -15,7 +15,49 @@ function loadGoogleCredentials() {
         } catch {}
     }
 
-    // 2. Local key file (for local dev — gitignored)
+    // 2. GOOGLE_SERVICE_ACCOUNT_JSON (raw JSON string)
+    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+        try {
+            const creds = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+            if (creds.client_email && creds.private_key) {
+                console.log("🔑 Credentials: GOOGLE_SERVICE_ACCOUNT_JSON env var");
+                return creds;
+            }
+        } catch {}
+    }
+
+    // 3. GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 (base64-encoded JSON)
+    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
+        try {
+            const creds = JSON.parse(Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64").toString());
+            if (creds.client_email && creds.private_key) {
+                console.log("🔑 Credentials: GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 env var");
+                return creds;
+            }
+        } catch {}
+    }
+
+    // 4. Split env fields (common on Railway)
+    if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
+        console.log("🔑 Credentials: GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY env vars");
+        return {
+            client_email: process.env.GOOGLE_CLIENT_EMAIL,
+            private_key: process.env.GOOGLE_PRIVATE_KEY,
+        };
+    }
+
+    // 5. Explicit key file path
+    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        try {
+            const fileCreds = JSON.parse(fs.readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, "utf8"));
+            if (fileCreds.client_email && fileCreds.private_key) {
+                console.log(`🔑 Credentials: GOOGLE_APPLICATION_CREDENTIALS (${process.env.GOOGLE_APPLICATION_CREDENTIALS})`);
+                return fileCreds;
+            }
+        } catch {}
+    }
+
+    // 6. Local key file (for local dev — gitignored)
     const files = fs.readdirSync(".").filter(f => /^vilna-bot-.*\.json$/.test(f));
     for (const f of files) {
         try {
@@ -34,8 +76,8 @@ async function createAuthorizedSheetsClient() {
     const creds = loadGoogleCredentials();
     if (!creds) {
         throw new Error(
-            "Не знайдено Google credentials. Задайте GOOGLE_CREDENTIALS (base64 JSON сервісного акаунту: base64 -w0 keyfile.json) " +
-            "або покладіть vilna-bot-*.json у кореневу папку"
+            "Не знайдено Google credentials. Задайте GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, GOOGLE_CREDENTIALS, " +
+            "GOOGLE_CLIENT_EMAIL+GOOGLE_PRIVATE_KEY, GOOGLE_APPLICATION_CREDENTIALS або покладіть vilna-bot-*.json у кореневу папку"
         );
     }
 
