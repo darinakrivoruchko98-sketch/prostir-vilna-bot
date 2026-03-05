@@ -79,15 +79,15 @@ function parseEventFromRow(row, currentDateContext) {
         return { event: null, nextDateContext: dateBase || currentDateContext };
     }
 
-    const eventDate = new Date(
-        dateBase.getFullYear(),
-        dateBase.getMonth(),
-        dateBase.getDate(),
+    const eventDate = new Date(Date.UTC(
+        dateBase.getUTCFullYear(),
+        dateBase.getUTCMonth(),
+        dateBase.getUTCDate(),
         time.hour,
         time.minute,
         0,
         0
-    );
+    ));
 
     if (Number.isNaN(eventDate.getTime())) {
         return { event: null, nextDateContext: dateBase || currentDateContext };

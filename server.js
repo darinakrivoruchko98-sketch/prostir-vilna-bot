@@ -230,7 +230,7 @@ function getAllEvents() {
 // Фільтрує заходи за номером дня (0-6)
 function getEventsForDay(dayNum) {
     const allEvents = getAllEvents();
-    const dayEvents = allEvents.filter(e => e.date.getDay() === dayNum);
+    const dayEvents = allEvents.filter(e => e.date.getUTCDay() === dayNum);
     console.log(`📊 getEventsForDay(${dayNum}): знайдено ${dayEvents.length} заходів з ${allEvents.length}`);
     if (dayEvents.length > 0) {
         dayEvents.forEach(e => console.log(`   - ${e.name} на ${e.date}`));
@@ -296,14 +296,14 @@ async function showDayAgenda(chatId, dayName) {
     }
     users[chatId].context = 'afisha';
 
-    const weekdays = { 'Неділя':0, 'Середа':3, 'Четвер':4, 'П’ятниця':5, 'Субота':6 };
-    const dayNum = weekdays[dayName];
-    
+    const normalizedDay = normalizeText(dayName).toLowerCase();
+    const weekdays = { "неділя":0, "понеділок":1, "вівторок":2, "середа":3, "четвер":4, "п'ятниця":5, "субота":6 };
+    const dayNum = weekdays[normalizedDay];
     // ДІАГНОСТИКА
-    console.log(`\n🔍 showDayAgenda("${dayName}"): dayNum=${dayNum}`);
+    console.log(`\n🔍 showDayAgenda("${dayName}"): normalized="${normalizedDay}", dayNum=${dayNum}`);
     const allEvents = getAllEvents();
     console.log(`   Всього майбутніх заходів: ${allEvents.length}`);
-    allEvents.forEach(e => console.log(`   - ${e.name}: ${e.date.toISOString()} (getDay=${e.date.getDay()})`));
+    allEvents.forEach(e => console.log(`   - ${e.name}: ${e.date.toISOString()} (getUTCDay=${e.date.getDay()})`));
     
     const dayEvents = getEventsForDay(dayNum);
     console.log(`   ✅ Знайдено на день ${dayNum}: ${dayEvents.length} заходів`);
@@ -311,15 +311,17 @@ async function showDayAgenda(chatId, dayName) {
     dayEvents.sort((a,b)=>a.date-b.date);
     
     const dayForms = {
-        'Середа': { lower: 'середу', upper: 'Середу' },
-        'Четвер': { lower: 'четвер', upper: 'Четвер' },
-        'П’ятниця': { lower: 'п’ятницю', upper: 'П’ятницю' },
-        'Субота': { lower: 'суботу', upper: 'Суботу' },
-        'Неділя': { lower: 'неділю', upper: 'Неділю' }
+        "неділя": { lower: "неділю", upper: "Неділю" },
+        "понеділок": { lower: "понеділок", upper: "Понеділок" },
+        "вівторок": { lower: "вівторок", upper: "Вівторок" },
+        "середа": { lower: "середу", upper: "Середу" },
+        "четвер": { lower: "четвер", upper: "Четвер" },
+        "п'ятниця": { lower: "п'ятницю", upper: "П'ятницю" },
+        "субота": { lower: "суботу", upper: "Суботу" }
     };
 
     if (dayEvents.length === 0) {
-        bot.sendMessage(chatId, `На ${dayForms[dayName]?.lower || dayName} немає заходів.`, {
+        bot.sendMessage(chatId, `На ${dayForms[normalizedDay]?.lower || dayName} немає заходів.`, {
             reply_markup: {
                 keyboard: [
                     [{ text: "Назад до вибору днів" }],
@@ -330,7 +332,7 @@ async function showDayAgenda(chatId, dayName) {
         });
         return;
     }
-    let msg = `📅 Заходи у ${dayForms[dayName]?.upper || dayName}:\n\n`;
+    let msg = `📅 Заходи у ${dayForms[normalizedDay]?.upper || dayName}:\n\n`;
     const buttons = [];
     const eventButtonMap = {};
     for (const ev of dayEvents) {
