@@ -108,6 +108,11 @@ let userEventRegistrations = {}; // Мапа: chatId → [{eventId, eventName, e
 
 /* ===== HELPER FUNCTIONS ===== */
 
+// Повертає всі заходи з памяті
+function getAllEvents() {
+    return events || [];
+}
+
 // Нормалізація тексту - замінюємо різні апострофи на один стандартний
 function normalizeText(text) {
     if (!text) return text;
