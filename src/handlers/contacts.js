@@ -35,7 +35,10 @@ function handleContacts(bot, chatId) {
     bot.sendMessage(chatId, contactsMessage, {
         parse_mode: 'HTML',
         reply_markup: {
-            keyboard: [[{ text: "Повернутися в меню" }]],
+            keyboard: [
+                [{ text: "Написати звернуння" }],
+                [{ text: "Повернутися в меню" }]
+            ],
             resize_keyboard: true
         }
     });

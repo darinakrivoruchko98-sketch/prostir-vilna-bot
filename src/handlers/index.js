@@ -1,12 +1,13 @@
 const state = require('../state');
 const { handleStart, handleBack, handleReturnToMenu } = require('./menu');
 const { handleContacts } = require('./contacts');
+const { handleAppealStart, handleAppealText } = require('./appeal');
 const { WEEKDAYS, handleAfishaMenu, showDayAgenda } = require('./afisha');
 const { handleRegistrationStart, handlePersonalDataStep } = require('./registration');
 const { handleEventClick, showEventDetails, handleRegister, handleChooseMore, handleDali, handleFinish, handleStep7EventClick, handleBackToList } = require('./event-selection');
 const { handleGroupMessage } = require('./group-message');
 
-function registerHandlers(bot) {
+function registerHandlers(bot, GROUP_ID) {
     bot.on('message', async (msg) => {
         const chatId = msg.chat.id;
         const text = msg.text || msg.caption || "";
@@ -43,6 +44,24 @@ function registerHandlers(bot) {
 
         if (text === "Контакти") {
             handleContacts(bot, chatId);
+            return;
+        }
+
+        if (text === "Написати звернуння") {
+            handleAppealStart(bot, chatId, user);
+            return;
+        }
+
+        // === ОБРОБКА ЗВЕРНЕНЬ ===
+        if (user.context === 'appeal' && user.step === 1 && text !== "Скасувати") {
+            await handleAppealText(bot, chatId, text, user, GROUP_ID);
+            return;
+        }
+
+        if (text === "Скасувати" && user.context === 'appeal') {
+            user.context = null;
+            user.step = 0;
+            handleStart(bot, chatId);
             return;
         }
 
