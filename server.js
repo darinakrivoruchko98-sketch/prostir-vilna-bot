@@ -1516,14 +1516,11 @@ bot.on('message', async (msg) => {
     }
 
     let user = users[chatId];
-    console.log(`📨 Повідомлення від ${chatId}: text="${text.substring(0, 30)}", context="${user.context}", step=${user.step}`);
 
     // === ОБРОБКА ЗВЕРНЕНЬ - ПЕРЕВІРЯЄМО ПЕРШИМ ===
     if (text === "Скасувати" && user.context === 'appeal') {
-        console.log(`🔙 Скасування звернення для ${chatId}: context=${user.context}`);
         user.context = null;
         user.step = 0;
-        console.log(`✅ Повернення до меню`);
         bot.sendMessage(chatId, "Меню:", {
             reply_markup: {
                 keyboard: [
@@ -1540,7 +1537,6 @@ bot.on('message', async (msg) => {
 
     // Якщо користувач в режимі звернень - обробляємо його текст ДО всього іншого
     if (user.context === 'appeal' && user.step === 1) {
-        console.log(`🔍 Детектовано звернення: context=${user.context}, step=${user.step}, text="${text.substring(0, 30)}"`);
         const userName = knownUsers[chatId]?.name || `користувач ${chatId}`;
         const userPhone = knownUsers[chatId]?.phone || 'не вказаний';
         
@@ -1566,15 +1562,11 @@ bot.on('message', async (msg) => {
         `;
 
         // Відправляємо звернення в групу "Відгуки"
-        console.log(`📬 Обробка звернення від ${chatId}: "${text.substring(0, 50)}..."`);
-        console.log(`🔗 APPEALS_GROUP_ID = ${APPEALS_GROUP_ID} (тип: ${typeof APPEALS_GROUP_ID})`);
         if (APPEALS_GROUP_ID) {
             try {
-                console.log(`⏳ Надсилаю звернення в групу ${APPEALS_GROUP_ID}...`);
                 await bot.sendMessage(APPEALS_GROUP_ID, appealMessage, {
                     parse_mode: 'HTML'
                 });
-                console.log(`✅ Звернення успішно відправлено в групу ${APPEALS_GROUP_ID}`);
                 bot.sendMessage(chatId, "✅ Дякуємо! Ваше звернення надіслано.\n\nНаша команда обов'язково його прочитає і зв'яжеться з вами якомога швидше. 🩵", {
                     reply_markup: {
                         keyboard: [[{ text: "Повернутися в меню" }]],
@@ -1584,7 +1576,7 @@ bot.on('message', async (msg) => {
                 user.step = 0;
                 user.context = null;
             } catch (error) {
-                console.error('❌ Помилка при відправці звернення:', error);
+                console.error('❌ Помилка при відправці звернення:', error.message);
                 bot.sendMessage(chatId, "❌ Виникла помилка. Спробуйте пізніше.", {
                     reply_markup: {
                         keyboard: [[{ text: "Повернутися в меню" }]],
@@ -1595,7 +1587,6 @@ bot.on('message', async (msg) => {
                 user.context = null;
             }
         } else {
-            console.error('⚠️ APPEALS_GROUP_ID не встановлено!');
             bot.sendMessage(chatId, "⚠️ Групу не налаштовано. Спробуйте написати напряму фахівцям.", {
                 reply_markup: {
                     keyboard: [[{ text: "Повернутися в меню" }]],
@@ -1671,10 +1662,8 @@ bot.on('message', async (msg) => {
     }
 
     if (text === "Написати звернення") {
-        console.log(`ℹ️ Користувач ${chatId} обрав "Написати звернення"`);
         user.context = 'appeal';
         user.step = 1;
-        console.log(`✅ Встановлено режим appeal для ${chatId}: context=${user.context}, step=${user.step}`);
         const appealInstructions = `
 📝 <b>Напишіть своє звернення</b>
 
