@@ -4,7 +4,8 @@ const TOKEN = process.env.TOKEN;
 const GROUP_ID = process.env.GROUP_ID;
 const CHAT_ID = process.env.CHAT_ID;
 // Таблиця для розкладу та реєстрацій на заходи
-const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+const DEFAULT_SCHEDULE_SPREADSHEET_ID = "1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8";
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID || DEFAULT_SCHEDULE_SPREADSHEET_ID;
 const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || "Розклад";
 // Таблиця для персональних даних (ПІБ, телефон тощо)
 const PERSONAL_DATA_SPREADSHEET_ID = process.env.PERSONAL_DATA_SPREADSHEET_ID || "1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE";
@@ -15,9 +16,8 @@ const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
 // Таблиця розкладу: https://docs.google.com/spreadsheets/d/1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8/edit
 // Таблиця персональних даних: https://docs.google.com/spreadsheets/d/1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE/edit
 
-if (!SPREADSHEET_ID) {
-    console.error("SPREADSHEET_ID не встановлений");
-    process.exit(1);
+if (!process.env.SPREADSHEET_ID) {
+    console.warn(`SPREADSHEET_ID не встановлений, використовую значення за замовчуванням: ${DEFAULT_SCHEDULE_SPREADSHEET_ID}`);
 }
 console.log("📋 Таблиця розкладу:", SPREADSHEET_ID);
 console.log("📄 Аркуш розкладу:", SCHEDULE_SHEET_NAME);
