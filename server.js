@@ -147,6 +147,14 @@ function normalizeText(text) {
     return text.replace(/[''ʼ]/g, "'");
 }
 
+function isLikelyFullName(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return false;
+    const parts = raw.split(/\s+/).filter(Boolean);
+    if (parts.length < 2) return false;
+    return parts.every((part) => /^[A-Za-zА-Яа-яІіЇїЄєҐґ'`-]+$/.test(part));
+}
+
 // Правильна граматика для множини заходів
 function pluralizeEvents(count) {
     if (count === 1) return "захід";
@@ -2764,6 +2772,25 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    // Якщо стан кроку загубився (перезапуск/конфлікт polling), але користувач ввів ПІБ,
+    // підхоплюємо як крок 1, щоб одразу перейти до кроку 2.
+    if (!user.registrationMode && Number(user.step || 0) === 0 && isLikelyFullName(text)) {
+        user.registrationMode = true;
+        user.step = 2;
+        user.name = text;
+
+        await bot.sendMessage(chatId, "📝 <b>Крок 2/6:</b> Введіть ваш <b>номер телефону</b> (формат: 380...)", {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: "❌ Скасувати реєстрацію" }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
     // якщо натиснутий день тижня, делегуємо показ загального меню на відповідну функцію
     const normalizedText = normalizeWeekdayKey(text);
     const weekdays = { 'неділя':0, 'понеділок':1, 'вівторок':2, 'середа':3, 'четвер':4, "п'ятниця":5, 'субота':6 };
@@ -3135,7 +3162,8 @@ bot.on('message', async (msg) => {
                 resize_keyboard: true
             }
         });
-        delete users[chatId];
+        user.step = 0;
+        user.registrationMode = false;
         return;
     }
 
@@ -3215,9 +3243,15 @@ bot.on('message', async (msg) => {
             delete users[chatId].afishaFullRegistration;
             delete users[chatId].afishaPendingEventId;
             delete users[chatId].afishaPendingEventName;
+            delete users[chatId].afishaMultiRegistration;
+            delete users[chatId].selectedEventsList;
+            delete users[chatId].selectedEventId;
+            delete users[chatId].selectedEventName;
+            users[chatId].step = 0;
+            users[chatId].registrationMode = false;
+            users[chatId].context = null;
         }
-        delete users[chatId];
-        bot.sendMessage(chatId, "Меню: оберыть потрібний розділ", {
+        bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
             reply_markup: {
                 keyboard: [
                     [{ text: "Реєстрація" }],
