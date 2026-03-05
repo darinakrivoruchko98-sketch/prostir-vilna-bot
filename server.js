@@ -104,7 +104,7 @@ let users = {};
 let knownUsers = {}; // Кеш з персональними даними користувачів (ім'я, телефон)
 let appealMessagesMap = {}; // Мапа: message_id звернення в групі → chatId користувача
 let events = []; // масив для зберігання заходів
-// reminders feature removed per request
+let userEventRegistrations = {}; // Мапа: chatId → [{eventId, eventName, eventDate, reminded24h: false, reminded2h: false}]
 
 /* ===== HELPER FUNCTIONS ===== */
 
@@ -128,6 +128,83 @@ function cleanupPastEvents() {
     
     if (events.length < initialCount) {
         console.log(`🧹 Видалено ${initialCount - events.length} минулих заходів`);
+    }
+    
+    // Також видаляємо минулі реєстрації
+    for (const chatId in userEventRegistrations) {
+        const before = userEventRegistrations[chatId].length;
+        userEventRegistrations[chatId] = userEventRegistrations[chatId].filter(reg => reg.eventDate > now);
+        if (userEventRegistrations[chatId].length === 0) {
+            delete userEventRegistrations[chatId];
+        }
+    }
+}
+
+// Перевірка та відправка нагадувань про заходи
+async function checkAndSendReminders() {
+    const now = new Date();
+    
+    for (const chatId in userEventRegistrations) {
+        const registrations = userEventRegistrations[chatId];
+        
+        for (const reg of registrations) {
+            const timeUntilEvent = reg.eventDate - now;
+            const hoursUntilEvent = timeUntilEvent / (1000 * 60 * 60);
+            
+            // Нагадування за 24 години (від 23.5 до 24.5 годин)
+            if (!reg.reminded24h && hoursUntilEvent <= 24.5 && hoursUntilEvent >= 23.5) {
+                try {
+                    const dateStr = reg.eventDate.toLocaleDateString('uk-UA', { 
+                        weekday: 'long', 
+                        day: 'numeric', 
+                        month: 'long' 
+                    });
+                    const timeStr = reg.eventDate.toLocaleTimeString('uk-UA', { 
+                        hour: '2-digit', 
+                        minute: '2-digit' 
+                    });
+                    
+                    await bot.sendMessage(chatId, 
+                        `⏰ <b>Нагадування</b>\n\n` +
+                        `Завтра у вас захід:\n` +
+                        `📅 ${reg.eventName}\n` +
+                        `🕐 ${dateStr} о ${timeStr}\n\n` +
+                        `Чекаємо на вас у Просторі «Вільна»! 🩵`,
+                        { parse_mode: 'HTML' }
+                    );
+                    
+                    reg.reminded24h = true;
+                    console.log(`⏰ Відправлено нагадування (24 год) для ${chatId} про "${reg.eventName}"`);
+                } catch (error) {
+                    console.error(`❌ Помилка відправки нагадування (24 год) для ${chatId}:`, error);
+                }
+            }
+            
+            // Нагадування за 2 години (від 1.5 до 2.5 годин)
+            if (!reg.reminded2h && hoursUntilEvent <= 2.5 && hoursUntilEvent >= 1.5) {
+                try {
+                    const timeStr = reg.eventDate.toLocaleTimeString('uk-UA', { 
+                        hour: '2-digit', 
+                        minute: '2-digit' 
+                    });
+                    
+                    await bot.sendMessage(chatId, 
+                        `⏰ <b>Нагадування</b>\n\n` +
+                        `Через 2 години у вас захід:\n` +
+                        `📅 ${reg.eventName}\n` +
+                        `🕐 Сьогодні о ${timeStr}\n\n` +
+                        `Не забудьте! Чекаємо на вас 🩵\n\n` +
+                        `📍 м. Дніпро, вул. Дмитра Донцова, 4`,
+                        { parse_mode: 'HTML' }
+                    );
+                    
+                    reg.reminded2h = true;
+                    console.log(`⏰ Відправлено нагадування (2 год) для ${chatId} про "${reg.eventName}"`);
+                } catch (error) {
+                    console.error(`❌ Помилка відправки нагадування (2 год) для ${chatId}:`, error);
+                }
+            }
+        }
     }
 }
 
@@ -927,6 +1004,13 @@ async function initSheets() {
         sheetsRefreshInterval = setInterval(() => {
             loadEventsFromSheet();
         }, 60000);
+        
+        // Запускаємо перевірку нагадувань кожні 15 хвилин
+        setInterval(() => {
+            checkAndSendReminders();
+        }, 15 * 60 * 1000); // 15 хвилин
+        
+        console.log('⏰ Система нагадувань активована (перевірка кожні 15 хв)');
 
     } catch (err) {
         console.error("❌ Google Sheets не підключено:", err && err.message ? err.message : err);
@@ -1295,6 +1379,26 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
     if (user.step === 7) {
         if (!user.selectedEvents) user.selectedEvents = [];
         user.selectedEvents.push({ id: eventId, name: eventName });
+    }
+    
+    // Зберігаємо реєстрацію для нагадувань
+    if (evObj && evObj.date) {
+        if (!userEventRegistrations[chatId]) {
+            userEventRegistrations[chatId] = [];
+        }
+        
+        // Перевіряємо чи вже не додано
+        const alreadyAdded = userEventRegistrations[chatId].some(r => r.eventId === eventId);
+        if (!alreadyAdded) {
+            userEventRegistrations[chatId].push({
+                eventId: eventId,
+                eventName: eventName,
+                eventDate: evObj.date,
+                reminded24h: false,
+                reminded2h: false
+            });
+            console.log(`📝 Збережено реєстрацію для нагадувань: ${chatId} → ${eventName} (${evObj.date})`);
+        }
     }
 
     delete user.selectedEventName;
