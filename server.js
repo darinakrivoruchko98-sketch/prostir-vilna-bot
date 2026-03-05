@@ -97,6 +97,7 @@ if (APPEALS_GROUP_ID) {
 }
 
 let users = {};
+let knownUsers = {}; // Кеш з персональними даними користувачів (ім'я, телефон)
 let events = []; // масив для зберігання заходів
 // reminders feature removed per request
 
@@ -2020,6 +2021,16 @@ bot.on('message', async (msg) => {
 
         try {
             await appendRegistrationRow(chatId, user);
+
+            // Зберігаємо дані користувача для швидкого доступу (звернення та ін.)
+            knownUsers[chatId] = {
+                name: user.name,
+                phone: user.phone,
+                birth: user.birth,
+                visited: user.visited,
+                status: user.status,
+                health: user.health
+            };
 
             if (user.afishaFullRegistration) {
                 user.selectedEventId = user.afishaPendingEventId;
