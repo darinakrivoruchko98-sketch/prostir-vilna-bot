@@ -1,12 +1,12 @@
 nohup: ignoring input
-[dotenv@17.3.1] injecting env (7) from .env -- tip: ⚙️  suppress all logs with { quiet: true }
+[dotenv@17.3.1] injecting env (7) from .env -- tip: ⚡️ secrets for agents: https://dotenvx.com/as2
 📋 Таблиця розкладу: 1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8
 📄 Аркуш розкладу: Розклад
 👤 Таблиця персональних даних: 1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE
 📄 Аркуш персональних даних: Березень
 ✅ GROUP_ID встановлено: -1003282996506
 ✅ CHAT_ID встановлено: -1003282996506
-[dotenv@17.3.1] injecting env (0) from .env -- tip: ⚙️  write to custom object with { processEnv: myObject }
+[dotenv@17.3.1] injecting env (0) from .env -- tip: 🔐 prevent building .env in docker: https://dotenvx.com/prebuild
 📋 Таблиця розкладу: 1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8
 📄 Аркуш розкладу: Розклад
 👤 Таблиця персональних даних: 1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE
@@ -51,7 +51,882 @@ Google Sheets підключено ✅
    📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
    📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
 ✅ Розклад завантажено з Sheets (14 заходів)
-   📊 Поточний час: 05.03.2026, 14:32:41
+   📊 Поточний час: 05.03.2026, 14:36:08
    📊 Майбутніх заходів: 11 з 14
 ⏰ Система нагадувань активована (перевірка щохвилини)
 error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:37:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:38:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:39:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:40:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:41:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:42:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:43:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:44:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:45:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:46:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:47:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:48:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:49:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:50:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:51:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:52:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:53:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🔍 Перевірка дня: text="Криворучко Дарина Миколаївна" → normalized="криворучко дарина миколаївна"
+⚠️ День не знайдено. Доступні ключі: [
+  'неділя',
+  'понеділок',
+  'вівторок',
+  'середа',
+  'четвер',
+  "п'ятниця",
+  'субота'
+]
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:54:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🔍 Перевірка дня: text="380682676706" → normalized="380682676706"
+⚠️ День не знайдено. Доступні ключі: [
+  'неділя',
+  'понеділок',
+  'вівторок',
+  'середа',
+  'четвер',
+  "п'ятниця",
+  'субота'
+]
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:55:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:56:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:57:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🔍 Перевірка дня: text="29.03.1998" → normalized="29.03.1998"
+⚠️ День не знайдено. Доступні ключі: [
+  'неділя',
+  'понеділок',
+  'вівторок',
+  'середа',
+  'четвер',
+  "п'ятниця",
+  'субота'
+]
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🔍 Перевірка дня: text="Ні" → normalized="ні"
+⚠️ День не знайдено. Доступні ключі: [
+  'неділя',
+  'понеділок',
+  'вівторок',
+  'середа',
+  'четвер',
+  "п'ятниця",
+  'субота'
+]
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:58:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 3 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 14:59:08
+   📊 Майбутніх заходів: 11 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+🧹 Видалено 4 минулих заходів
+   Використано лист Розклад
+
+🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):
+   Рядок 0: ["Дата","Час","Назва","Кількість місць","Кількість зареєстрованих"]
+   Рядок 1: ["05.03.2026","12:00","Група підтримки для дружин ветеранів «Після повернення»","10","0"]
+   Рядок 2: ["05.03.2026","13:00","FitMix з елементами самооборони","2","8"]
+   Рядок 3: ["05.03.2026","14:00","«Моя цінність не має меж»","7","3"]
+   Рядок 4: ["05.03.2026","15:00","Вільне звучання у колі","6","9"]
+   📅 Завантажено: Група підтримки для дружин ветеранів «Після повернення» | 05.03.2026 12:00 | 10 місць
+   📅 Завантажено: FitMix з елементами самооборони | 05.03.2026 13:00 | 2 місць
+   📅 Завантажено: «Моя цінність не має меж» | 05.03.2026 14:00 | 7 місць
+   📅 Завантажено: Вільне звучання у колі | 05.03.2026 15:00 | 6 місць
+   📅 Завантажено: Група підтримки для жінок «Втрата» | 06.03.2026 12:00 | 10 місць
+   📅 Завантажено: «Нейрографіка мого внутрішнього світу» | 06.03.2026 13:00 | 8 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 06.03.2026 15:00 | 0 місць
+   📅 Завантажено: Карʼєрне навчання та можливості працевлаштування у сфері креативних індустрій (hand made, петриківський розпис) | 07.03.2026 12:00 | 14 місць
+   📅 Завантажено: Звичка бути здоровою: швидка ефірна допомога | 07.03.2026 14:00 | 13 місць
+   📅 Завантажено: Майстер-клас «Коли емоції зашкалюють» | 07.03.2026 15:30 | 0 місць
+   📅 Завантажено: FitMix з елементами самооборони | 07.03.2026 17:00 | 0 місць
+   📅 Завантажено: Англомовний клуб «Вільна англійська» (1 група) | 07.03.2026 18:00 | 1 місць
+   📅 Завантажено: Захід-виїзд у благодійний фонд «RAZOM з тобою» | 08.03.2026 11:00 | 0 місць
+   📅 Завантажено: Спортивні заняття (закрита група) | 08.03.2026 13:00 | 0 місць
+✅ Розклад завантажено з Sheets (14 заходів)
+   📊 Поточний час: 05.03.2026, 15:00:08
+   📊 Майбутніх заходів: 10 з 14
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+error: [polling_error] {"code":"ETELEGRAM","message":"ETELEGRAM: 409 Conflict: terminated by other getUpdates request; make sure that only one bot instance is running"}
+SIGTERM signal received: closing HTTP server
+HTTP server closed

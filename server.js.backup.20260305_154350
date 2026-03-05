@@ -1524,40 +1524,6 @@ async function getUserRegisteredEventIds(userId) {
     return [];
 }
 
-// Функція для відписання від заходу
-async function unregisterFromEvent(chatId, eventId) {
-    if (!userEventRegistrations[chatId]) {
-        return { status: 'not-registered' };
-    }
-
-    // Шукаємо реєстрацію
-    const regIndex = userEventRegistrations[chatId].findIndex(r => r.eventId === eventId);
-    if (regIndex === -1) {
-        return { status: 'not-found' };
-    }
-
-    // Видаляємо з пам'яті користувача
-    const registration = userEventRegistrations[chatId][regIndex];
-    userEventRegistrations[chatId].splice(regIndex, 1);
-
-    // Очищаємо пустий масив
-    if (userEventRegistrations[chatId].length === 0) {
-        delete userEventRegistrations[chatId];
-    }
-
-    // Оновлюємо коунтери в пам'яті (звільнюємо місце)
-    const event = events.find(e => e.id === eventId);
-    if (event) {
-        event.registrations = Math.max(0, (event.registrations || 1) - 1);
-        if (typeof event.seats === 'number') {
-            event.seats = event.seats + 1;
-        }
-        console.log(`📝 Користувач ${chatId} відписаний від "${registration.eventName}" (місць +1)`);
-    }
-
-    return { status: 'ok', eventName: registration.eventName };
-}
-
 // Отримує заходи користувача на цьому тижні
 async function getUserWeeklyEvents(chatId, userProfile) {
     const userRegistrations = userEventRegistrations[chatId] || [];
@@ -2633,7 +2599,6 @@ bot.on('message', async (msg) => {
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: [
-                    [{ text: "❌ Відписатись від заходу" }],
                     [{ text: "⚙️ Налаштування нагадувань" }],
                     [{ text: "Повернутися в меню" }]
                 ],
@@ -3090,151 +3055,6 @@ bot.on('message', async (msg) => {
         });
         user.step = 0;
         user.registrationMode = false;
-        return;
-    }
-
-    // Кнопка відписання від заходу
-    if (text === "❌ Відписатись від заходу") {
-        const userRegistrations = userEventRegistrations[chatId] || [];
-        
-        if (userRegistrations.length === 0) {
-            bot.sendMessage(chatId, "📅 У вас немає запланованих заходів для відписання.", {
-                reply_markup: {
-                    keyboard: [
-                        [{ text: "Нагадування" }],
-                        [{ text: "Повернутися в меню" }]
-                    ],
-                    resize_keyboard: true
-                }
-            });
-            return;
-        }
-        
-        // Показуємо список заходів для відписання
-        const unregButtonMap = {};
-        const buttons = userRegistrations.map((reg, index) => {
-            const dateStr = reg.eventDate.toLocaleDateString('uk-UA', { 
-                day: '2-digit', 
-                month: '2-digit' 
-            });
-            const timeStr = reg.eventDate.toLocaleTimeString('uk-UA', { 
-                hour: '2-digit', 
-                minute: '2-digit' 
-            });
-            const buttonText = `${index + 1}. ${reg.eventName} (${dateStr} ${timeStr})`;
-            unregButtonMap[buttonText] = reg.eventId;
-            return [{ text: buttonText }];
-        });
-        
-        user.unregButtonMap = unregButtonMap;
-        user.context = 'unregister';
-        
-        buttons.push([{ text: "❌ Скасувати" }]);
-        
-        bot.sendMessage(chatId, "🔴 <b>Виберіть захід для відписання:</b>", {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: buttons,
-                resize_keyboard: true
-            }
-        });
-        return;
-    }
-
-    // Обробка вибору заходу для відписання
-    if (user.context === 'unregister' && user.unregButtonMap && user.unregButtonMap[text]) {
-        const eventId = user.unregButtonMap[text];
-        
-        // Знаходимо інформацію про захід
-        const regIndex = (userEventRegistrations[chatId] || []).findIndex(r => r.eventId === eventId);
-        if (regIndex === -1) {
-            bot.sendMessage(chatId, "❌ Захід не знайдено.", {
-                reply_markup: {
-                    keyboard: [[{ text: "Нагадування" }], [{ text: "Повернутися в меню" }]],
-                    resize_keyboard: true
-                }
-            });
-            delete user.unregButtonMap;
-            user.context = null;
-            return;
-        }
-        
-        const eventName = userEventRegistrations[chatId][regIndex].eventName;
-        
-        // Підтвердження
-        user.pendingUnregEventId = eventId;
-        user.pendingUnregEventName = eventName;
-        
-        const confirmMsg = `❓ <b>Ви впевнені, що хочете відписатись від цього заходу?</b>\n\n📌 <b>${eventName}</b>\n\nДані про вас залишаться в базі, maar місце звільниться для інших учасників.`;
-        
-        bot.sendMessage(chatId, confirmMsg, {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [
-                    [{ text: "✅ Так, відписатись" }],
-                    [{ text: "❌ Скасувати" }]
-                ],
-                resize_keyboard: true
-            }
-        });
-        return;
-    }
-
-    // Потвердження відписання
-    if (text === "✅ Так, відписатись" && user.pendingUnregEventId) {
-        const eventId = user.pendingUnregEventId;
-        const eventName = user.pendingUnregEventName;
-        
-        const result = await unregisterFromEvent(chatId, eventId);
-        
-        if (result.status === 'ok') {
-            bot.sendMessage(chatId, 
-                `✅ <b>Ви успішно відписались від заходу!</b>\n\n📌 ${eventName}\n\nМісто звільнено для інших учасників. 🩵`, {
-                parse_mode: 'HTML',
-                reply_markup: {
-                    keyboard: [
-                        [{ text: "Нагадування" }],
-                        [{ text: "Повернутися в меню" }]
-                    ],
-                    resize_keyboard: true
-                }
-            });
-        } else {
-            bot.sendMessage(chatId, "❌ Помилка при відписанні. Спробуйте ще раз.", {
-                reply_markup: {
-                    keyboard: [[{ text: "Нагадування" }], [{ text: "Повернутися в меню" }]],
-                    resize_keyboard: true
-                }
-            });
-        }
-        
-        delete user.pendingUnregEventId;
-        delete user.pendingUnregEventName;
-        delete user.unregButtonMap;
-        user.context = null;
-        return;
-    }
-
-    // Скасування під час вибору для відписання
-    if ((text === "❌ Скасувати" && user.context === 'unregister') || 
-        (text === "❌ Скасувати" && user.pendingUnregEventId)) {
-        delete user.unregButtonMap;
-        delete user.pendingUnregEventId;
-        delete user.pendingUnregEventName;
-        user.context = null;
-        
-        bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
-            reply_markup: {
-                keyboard: [
-                    [{ text: "Реєстрація" }],
-                    [{ text: "Афіша заходів" }],
-                    [{ text: "Нагадування" }],
-                    [{ text: "Контакти" }],
-                    [{ text: "Назад" }]
-                ],
-                resize_keyboard: true
-            }
-        });
         return;
     }
 
