@@ -1539,16 +1539,26 @@ bot.on('message', async (msg) => {
     if (user.context === 'appeal' && user.step === 1) {
         const userName = knownUsers[chatId]?.name || `користувач ${chatId}`;
         const userPhone = knownUsers[chatId]?.phone || 'не вказаний';
+        
+        // Форматуємо дату та час
+        const now = new Date();
+        const dateStr = now.toLocaleDateString('uk-UA');
+        const timeStr = now.toLocaleTimeString('uk-UA');
 
         const appealMessage = `
 📬 <b>Нове звернення</b>
 
-👤 <b>Ім'я:</b> ${userName}
+👤 <b>Від кого:</b> ${userName}
 📱 <b>Телефон:</b> ${userPhone}
-🔗 <b>Telegram ID:</b> ${chatId}
+🔗 <b>Telegram ID:</b> <code>${chatId}</code>
+
+📅 <b>Дата і час:</b> ${dateStr} о ${timeStr}
 
 📝 <b>Текст звернення:</b>
-${text}
+<code>${text}</code>
+
+━━━━━━━━━━━━━━━━━━━━━
+📲 Відповідь: натисніть на повідомлення → Reply
         `;
 
         // Відправляємо звернення в групу "Відгуки"
@@ -1559,7 +1569,7 @@ ${text}
                     parse_mode: 'HTML'
                 });
                 console.log(`✅ Звернення відправлено в групу ${APPEALS_GROUP_ID}`);
-                bot.sendMessage(chatId, "✅ Дякуємо! Ваше звернення надіслано. Ми обов'язково зв'яжемося з вами.", {
+                bot.sendMessage(chatId, "✅ Дякуємо! Ваше звернення надіслано.\n\nНаша команда обов'язково його прочитає і зв'яжеться з вами якомога швидше. 🩵", {
                     reply_markup: {
                         keyboard: [[{ text: "Повернутися в меню" }]],
                         resize_keyboard: true
@@ -1654,10 +1664,24 @@ ${text}
         return;
     }
 
-    if (text === "Написати звернуння") {
+    if (text === "Написати звернення") {
         user.context = 'appeal';
         user.step = 1;
-        bot.sendMessage(chatId, "📝 Напишіть своє звернення. Ми обов'язково його прочитаємо та зв'яжемося з вами.", {
+        const appealInstructions = `
+📝 <b>Напишіть своє звернення</b>
+
+Ви можете написати нам про:
+• Питання, що вас цікавлять
+• Пропозиції та ідеї
+• Проблеми, які потребують рішення
+• Ваші враження від відвідування
+
+Ваше звернення буде передане безпосередньо команді "Вільної", яка обов'язково його прочитає та зв'яжеться з вами якомога швидше. 🤝
+
+⬇️ <b>Напишіть текст звернення нижче</b> (або натисніть "Скасувати")
+        `;
+        bot.sendMessage(chatId, appealInstructions, {
+            parse_mode: 'HTML',
             reply_markup: {
                 keyboard: [[{ text: "Скасувати" }]],
                 resize_keyboard: true
