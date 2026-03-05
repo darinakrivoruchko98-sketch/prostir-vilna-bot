@@ -2988,107 +2988,133 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    if (user.step === 1) {
-        user.name = text;
-        user.step = 2;
+    // === ОБРОБКА РЕЄСТРАЦІЙНОЇ ФОРМИ (КРОКИ 1-6) ===
+    if (user.registrationMode) {
+        if (user.step === 1) {
+            user.name = text;
+            user.step = 2;
 
-        bot.sendMessage(chatId, "Телефон (380...)");
-        return;
-    }
-
-    if (user.step === 2) {
-        user.phone = text;
-        user.step = 3;
-
-        bot.sendMessage(chatId, "Дата народження");
-        return;
-    }
-
-    if (user.step === 3) {
-        user.birth = text;
-        user.step = 4;
-
-        // step 4: ask visited with buttons
-        bot.sendMessage(chatId, "Чи відвідували Простір раніше?", {
-            reply_markup: {
-                keyboard: [[{ text: "Так" }, { text: "Ні" }]],
-                resize_keyboard: true
-            }
-        });
-        return;
-    }
-
-    if (user.step === 4) {
-        user.visited = text;
-        user.step = 5;
-
-        // step 5: status buttons
-        bot.sendMessage(chatId, "ВПО/МО:", {
-            reply_markup: {
-                keyboard: [[{ text: "ВПО" }, { text: "Місцева" }]],
-                resize_keyboard: true
-            }
-        });
-        return;
-    }
-
-    if (user.step === 5) {
-        user.status = text;
-        user.step = 6;
-
-        // step 6: health buttons
-        bot.sendMessage(chatId, "Інвалідність/суттєві проблеми:", {
-            reply_markup: {
-                keyboard: [
-                    [{ text: "Інвалідність" }],
-                    [{ text: "Суттєві проблеми" }],
-                    [{ text: "Немає" }]
-                ],
-                resize_keyboard: true
-            }
-        });
-        return;
-    }
-
-    if (user.step === 6) {
-        user.health = text;
-
-        try {
-            // Записуємо дані прямо в таблицю без пункту username
-            await appendRegistrationRow(chatId, user);
-
-            // Зберігаємо дані користувача для швидкого доступу 
-            knownUsers[chatId] = {
-                name: user.name,
-                phone: user.phone,
-                birth: user.birth,
-                visited: user.visited,
-                status: user.status,
-                health: user.health,
-                username: user.username || ""
-            };
-
-            // Показуємо меню з кнопками
-            bot.sendMessage(chatId, "✅ <b>Реєстрація завершена!</b>\n\n👤 " + user.name + "\n📱 " + user.phone + "\n\nТепер вибери, що далі:", {
+            bot.sendMessage(chatId, "📝 <b>Крок 2/6:</b> Введіть ваш <b>номер телефону</b> (формат: 380...)", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
-                        [{ text: "Афіша заходів" }],
-                        [{ text: "Контакти" }],
-                        [{ text: "Назад в меню" }]
+                        [{ text: "❌ Скасувати реєстрацію" }]
                     ],
                     resize_keyboard: true
                 }
             });
-            
-            user.step = 0;
-            user.registrationMode = false;
             return;
-        } catch (error) {
-            console.error("Помилка при запису реєстрації:", error);
-            bot.sendMessage(chatId, "❌ Помилка при збереженні даних. Спробуйте ще раз.");
+        }
+
+        if (user.step === 2) {
+            user.phone = text;
+            user.step = 3;
+
+            bot.sendMessage(chatId, "📝 <b>Крок 3/6:</b> Введіть вашу <b>дату народження</b> (формат: ДД.ММ.РРРР)", {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "❌ Скасувати реєстрацію" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (user.step === 3) {
+            user.birth = text;
+            user.step = 4;
+
+            bot.sendMessage(chatId, "📝 <b>Крок 4/6:</b> Чи відвідували ви Простір раніше?", {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "Так" }, { text: "Ні" }],
+                        [{ text: "❌ Скасувати реєстрацію" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (user.step === 4) {
+            user.visited = text;
+            user.step = 5;
+
+            bot.sendMessage(chatId, "📝 <b>Крок 5/6:</b> Ваш статус:", {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "ВПО" }, { text: "Місцева" }],
+                        [{ text: "❌ Скасувати реєстрацію" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (user.step === 5) {
+            user.status = text;
             user.step = 6;
+
+            bot.sendMessage(chatId, "📝 <b>Крок 6/6:</b> Інвалідність/суттєві проблеми зі здоров'ям:", {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "Інвалідність" }],
+                        [{ text: "Суттєві проблеми" }],
+                        [{ text: "Немає" }],
+                        [{ text: "❌ Скасувати реєстрацію" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
             return;
+        }
+
+        if (user.step === 6) {
+            user.health = text;
+
+            try {
+                // Записуємо дані прямо в таблицю без пункту username
+                await appendRegistrationRow(chatId, user);
+
+                // Зберігаємо дані користувача для швидкого доступу 
+                knownUsers[chatId] = {
+                    name: user.name,
+                    phone: user.phone,
+                    birth: user.birth,
+                    visited: user.visited,
+                    status: user.status,
+                    health: user.health,
+                    username: user.username || ""
+                };
+
+                // Показуємо меню з кнопками
+                bot.sendMessage(chatId, "✅ <b>Реєстрація завершена!</b>\n\n👤 " + user.name + "\n📱 " + user.phone + "\n\nТепер вибери, що далі:", {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "Афіша заходів" }],
+                            [{ text: "Контакти" }],
+                            [{ text: "Назад в меню" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                
+                user.step = 0;
+                user.registrationMode = false;
+                return;
+            } catch (error) {
+                console.error("Помилка при запису реєстрації:", error);
+                bot.sendMessage(chatId, "❌ Помилка при збереженні даних. Спробуйте ще раз.");
+                user.step = 6;
+                return;
+            }
         }
     }
 
