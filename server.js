@@ -2300,7 +2300,12 @@ bot.on('message', async (msg) => {
 
     // === ОБРОБКА РЕЄСТРАЦІЙНОЇ ФОРМИ (КРОКИ 1-6) ===
     // ВАЖЛИВО: цей блок повинен бути ПЕРЕД всіма іншими обробниками меню!
-    if (user.registrationMode) {
+    const registrationStep = Number(user.step);
+    if (user.registrationMode || (Number.isInteger(registrationStep) && registrationStep >= 1 && registrationStep <= 6)) {
+        // Відновлюємо режим форми, якщо прапорець загубився, але крок лишився
+        user.registrationMode = true;
+        user.step = registrationStep;
+
         if (user.step === 1) {
             user.name = text;
             user.step = 2;
