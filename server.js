@@ -2728,6 +2728,46 @@ bot.on('message', async (msg) => {
     }
     console.log('⚠️ День не знайдено. Доступні ключі:', Object.keys(weekdays));
 
+    // === ПЕРЕВІРЯЄМО КОНТЕКСТ ВІДПИСАННЯ ДО ПОШУКУ ЗАХОДУ ===
+    // Обробка вибору заходу для відписання
+    if (user.context === 'unregister' && user.unregButtonMap && user.unregButtonMap[text]) {
+        const eventId = user.unregButtonMap[text];
+        
+        // Знаходимо інформацію про захід
+        const regIndex = (userEventRegistrations[chatId] || []).findIndex(r => r.eventId === eventId);
+        if (regIndex === -1) {
+            bot.sendMessage(chatId, "❌ Захід не знайдено.", {
+                reply_markup: {
+                    keyboard: [[{ text: "Нагадування" }], [{ text: "Повернутися в меню" }]],
+                    resize_keyboard: true
+                }
+            });
+            delete user.unregButtonMap;
+            user.context = null;
+            return;
+        }
+        
+        const eventName = userEventRegistrations[chatId][regIndex].eventName;
+        
+        // Підтвердження
+        user.pendingUnregEventId = eventId;
+        user.pendingUnregEventName = eventName;
+        
+        const confirmMsg = `❓ <b>Ви впевнені, що хочете відписатись від цього заходу?</b>\n\n📌 <b>${eventName}</b>\n\nДані про вас залишаться в базі, maar місце звільниться для інших учасників.`;
+        
+        bot.sendMessage(chatId, confirmMsg, {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: "✅ Так, відписатись" }],
+                    [{ text: "❌ Скасувати" }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
     // Перевіряємо чи натиснута кнопка з заходом
     let selectedEvent = null;
     if (user.eventButtonMap && user.eventButtonMap[text]) {
@@ -3135,45 +3175,6 @@ bot.on('message', async (msg) => {
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: buttons,
-                resize_keyboard: true
-            }
-        });
-        return;
-    }
-
-    // Обробка вибору заходу для відписання
-    if (user.context === 'unregister' && user.unregButtonMap && user.unregButtonMap[text]) {
-        const eventId = user.unregButtonMap[text];
-        
-        // Знаходимо інформацію про захід
-        const regIndex = (userEventRegistrations[chatId] || []).findIndex(r => r.eventId === eventId);
-        if (regIndex === -1) {
-            bot.sendMessage(chatId, "❌ Захід не знайдено.", {
-                reply_markup: {
-                    keyboard: [[{ text: "Нагадування" }], [{ text: "Повернутися в меню" }]],
-                    resize_keyboard: true
-                }
-            });
-            delete user.unregButtonMap;
-            user.context = null;
-            return;
-        }
-        
-        const eventName = userEventRegistrations[chatId][regIndex].eventName;
-        
-        // Підтвердження
-        user.pendingUnregEventId = eventId;
-        user.pendingUnregEventName = eventName;
-        
-        const confirmMsg = `❓ <b>Ви впевнені, що хочете відписатись від цього заходу?</b>\n\n📌 <b>${eventName}</b>\n\nДані про вас залишаться в базі, maar місце звільниться для інших учасників.`;
-        
-        bot.sendMessage(chatId, confirmMsg, {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [
-                    [{ text: "✅ Так, відписатись" }],
-                    [{ text: "❌ Скасувати" }]
-                ],
                 resize_keyboard: true
             }
         });
