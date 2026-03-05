@@ -1602,21 +1602,60 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // respond to /start command by showing main menu
+    // respond to /start command by requesting username
     if (text === '/start') {
-        bot.sendMessage(chatId, "Меню:", {
+        if (!users[chatId]) users[chatId] = { step: 0 };
+        const user = users[chatId];
+        user.waitingForUsername = true;
+        
+        bot.sendMessage(chatId, `🔄 Завантаження вашого профілю Вільна...\n\n📝 Введіть ваше ім'я користувача у форматі (@account_name)`, {
             reply_markup: {
-                keyboard: [
-                    [{ text: "Реєстрація" }],
-                    [{ text: "Афіша заходів" }],
-                    [{ text: "Нагадування" }],
-                    [{ text: "Контакти" }],
-                    [{ text: "Назад" }]
-                ],
-                resize_keyboard: true
+                remove_keyboard: true
             }
         });
-        delete users[chatId];
+        return;
+    }
+
+    // === ОБРОБКА ВВЕДЕННЯ USERNAME ===
+    if (user.waitingForUsername) {
+        user.waitingForUsername = false;
+        
+        // Очищуємо username від @ якщо його додали
+        const inputUsername = text.toLowerCase().replace('@', '').trim();
+        
+        // Шукаємо профіль за username
+        const foundProfile = await loadKnownUserByUsername(inputUsername);
+        
+        if (foundProfile && foundProfile.name && foundProfile.phone) {
+            // Профіль знайдено — логінимо користувача
+            Object.assign(user, foundProfile);
+            user.profileHydrated = true;
+            
+            bot.sendMessage(chatId, `✅ Привіт, ${foundProfile.name.split(' ')[0]}! Рад(а) тебе бачити.\n\nОберіть дію:`, {
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "Афіша заходів" }],
+                        [{ text: "Нагадування" }],
+                        [{ text: "Контакти" }],
+                        [{ text: "Назад" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+        } else {
+            // Профіль не знайдено — показуємо меню з реєстрацією
+            bot.sendMessage(chatId, "Профіль не знайдено. 🤔\n\nЩоб продовжити, будь ласка зареєструйтесь або виберіть розділ:", {
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "Реєстрація" }],
+                        [{ text: "Афіша заходів" }],
+                        [{ text: "Контакти" }],
+                        [{ text: "Назад" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+        }
         return;
     }
 
