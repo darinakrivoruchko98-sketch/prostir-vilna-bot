@@ -3216,7 +3216,7 @@ bot.on('message', async (msg) => {
         
         if (result.status === 'ok') {
             bot.sendMessage(chatId, 
-                `✅ <b>Ви успішно відписались від заходу!</b>\n\n📌 ${eventName}\n\nМісто звільнено для інших учасників. 🩵`, {
+                `✅ <b>Ви успішно відписались від заходу!</b>\n\n📌 ${eventName}\n\nМісце звільнено для інших учасників. 🩵`, {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
