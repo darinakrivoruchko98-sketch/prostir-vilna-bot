@@ -1516,11 +1516,14 @@ bot.on('message', async (msg) => {
     }
 
     let user = users[chatId];
+    console.log(`📨 Повідомлення від ${chatId}: text="${text.substring(0, 30)}", context="${user.context}", step=${user.step}`);
 
     // === ОБРОБКА ЗВЕРНЕНЬ - ПЕРЕВІРЯЄМО ПЕРШИМ ===
     if (text === "Скасувати" && user.context === 'appeal') {
+        console.log(`🔙 Скасування звернення для ${chatId}: context=${user.context}`);
         user.context = null;
         user.step = 0;
+        console.log(`✅ Повернення до меню`);
         bot.sendMessage(chatId, "Меню:", {
             reply_markup: {
                 keyboard: [
