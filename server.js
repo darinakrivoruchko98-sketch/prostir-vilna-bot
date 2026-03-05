@@ -3,10 +3,12 @@ require('dotenv').config();
 
 const fs = require("fs");
 const path = require("path");
+const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
 const { google } = require("googleapis");
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
+const PORT = process.env.PORT || 3000;
 const GROUP_ID = process.env.GROUP_ID || config.GROUP_ID;
 const CHAT_ID = process.env.CHAT_ID || config.CHAT_ID;
 // Таблиця для розкладу та реєстрацій на заходи
@@ -34,8 +36,55 @@ if (!TOKEN) {
     process.exit(1);
 }
 
-const bot = new TelegramBot(TOKEN, { polling: false });
-let pollingStarted = false;
+// Express сервер для webhook
+const app = express();
+app.use(express.json());
+
+// Telegram бот без polling
+const bot = new TelegramBot(TOKEN);
+
+// Встановлюємо webhook
+if (process.env.RAILWAY_URL) {
+    bot.setWebHook(`${process.env.RAILWAY_URL}/bot${TOKEN}`)
+        .then(() => {
+            console.log('✅ Webhook встановлено успішно');
+            console.log(`📍 Webhook URL: ${process.env.RAILWAY_URL}/bot${TOKEN}`);
+        })
+        .catch((err) => {
+            console.error('❌ Помилка встановлення webhook:', err.message);
+        });
+} else {
+    console.log('⚠️ RAILWAY_URL не встановлено. Webhook не активовано.');
+}
+
+// Обробка повідомлень від Telegram
+app.post(`/bot${TOKEN}`, (req, res) => {
+    bot.processUpdate(req.body);
+    res.sendStatus(200);
+});
+
+// Health check endpoint
+app.get('/', (req, res) => {
+    res.json({ 
+        status: 'ok', 
+        mode: 'webhook',
+        timestamp: new Date().toISOString() 
+    });
+});
+
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'healthy',
+        uptime: process.uptime(),
+        events: events.length
+    });
+});
+
+// Запускаємо Express сервер
+app.listen(PORT, () => {
+    console.log(`🚀 Сервер запущено на порті ${PORT}`);
+    console.log(`📡 Режим: Webhook (Production)`);
+});
 
 // Логування налаштованих груп для налагодження
 if (typeof GROUP_ID !== 'undefined') {
@@ -782,10 +831,8 @@ function parseCredentialsFromEnv() {
 }
 
 function startPollingIfNeeded() {
-    if (pollingStarted) return;
-    bot.startPolling();
-    pollingStarted = true;
-    console.log("🤖 Telegram polling запущено ✅");
+    // Webhook режим - polling не використовується
+    console.log("🤖 Telegram webhook режим активовано ✅");
 }
 
 function resolveGoogleAuthCandidates() {
@@ -870,7 +917,7 @@ async function initSheets() {
         sheetsClient = await createAuthorizedSheetsClient();
 
         console.log("Google Sheets підключено ✅");
-        startPollingIfNeeded();
+        // startPollingIfNeeded(); // Видалено - використовується webhook
 
         // Початкове завантаження розкладу та періодичне оновлення
         try {
@@ -2043,6 +2090,6 @@ bot.on('message', async (msg) => {
 
 });
 
-console.log("⏳ Бот ініціалізується. Telegram polling стартує після підключення до Google Sheets.");
+console.log("⏳ Бот ініціалізується. Telegram webhook автоматично встановлюється після підключення до Google Sheets.");
 console.log("📋 Розклад:", config.SPREADSHEET_ID);
 console.log("👤 Персональні дані:", config.PERSONAL_DATA_SPREADSHEET_ID);

@@ -20,6 +20,10 @@ GOOGLE_CLIENT_EMAIL=your-service-account@project-id.iam.gserviceaccount.com
 GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
 ```
 
+**ВАЖЛИВО:** 
+- Railway автоматично встановлює `RAILWAY_URL` - не треба додавати вручну
+- `PORT` - Railway автоматично встановлює порт
+
 Розклад читається з аркуша `Розклад` (або значення `SCHEDULE_SHEET_NAME`) у таблиці `SPREADSHEET_ID`,
 а персональні дані записуються в аркуш `Березень` (або значення `PERSONAL_DATA_SHEET_NAME`) у таблиці `PERSONAL_DATA_SPREADSHEET_ID`.
 
@@ -31,9 +35,21 @@ GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY----
 - `GOOGLE_CLIENT_EMAIL`
 - `GOOGLE_PRIVATE_KEY` (з `\\n` у значенні)
 
-### 3. Деплой
+### 3. Деплой на Railway
 
-Railway автоматично задеплоїть бот після пушу в `main` гілку.
+1. Підключіть GitHub репозиторій до Railway
+2. Railway автоматично задеплоїть бот після пушу в `main` гілку
+3. Після першого деплою:
+   - Перейдіть **Settings** → **Networking**
+   - Натисніть **Generate Domain**
+   - Railway автоматично встановить змінну `RAILWAY_URL`
+
+### 4. Перевірка
+
+Після деплою перевірте, що все працює:
+- Відкрийте `https://your-app-name.up.railway.app/health` - має показати статус
+- Перевірте логи на Railway - має бути повідомлення "✅ Webhook встановлено успішно"
+- Напишіть боту в Telegram - має відповісти
 
 ## Локальна розробка
 
