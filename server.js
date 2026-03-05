@@ -45,31 +45,66 @@ app.use(express.json());
 const bot = new TelegramBot(TOKEN, { polling: true });
 let stoppingBecauseOfPollingConflict = false;
 
+let pollingErrorCount = 0;
+const pollingErrorThreshold = 5; // Після 5 помилок на хвилину - перезавантажити
+
 bot.on('polling_error', async (error) => {
     const message = String((error && error.message) || '');
     const isConflict = message.includes('409 Conflict') || (error && error.code === 'ETELEGRAM' && message.includes('getUpdates'));
+    const isFatalNetwork = message.includes('EFATAL') || message.includes('ECONNREFUSED') || message.includes('ETIMEDOUT');
 
-    if (!isConflict) {
-        console.error('⚠️ polling_error:', error);
+    // Конфлікт - інший інстанс працює
+    if (isConflict) {
+        console.error('❌ ETELEGRAM 409 Conflict: знайдено інший активний інстанс бота з тим самим токеном.');
+
+        if (stoppingBecauseOfPollingConflict) {
+            return;
+        }
+
+        stoppingBecauseOfPollingConflict = true;
+        try {
+            await bot.stopPolling();
+            console.error('🛑 Поточний інстанс зупинено, щоб уникнути дублювання/хаотичних кроків.');
+        } catch (stopErr) {
+            console.error('⚠️ Не вдалося коректно зупинити polling:', stopErr);
+        }
+
+        process.exit(1);
         return;
     }
 
-    console.error('❌ ETELEGRAM 409 Conflict: знайдено інший активний інстанс бота з тим самим токеном.');
-
-    if (stoppingBecauseOfPollingConflict) {
+    // Тимчасові мережеві ошибки - логуємо але не зупиняємо
+    if (isFatalNetwork) {
+        pollingErrorCount++;
+        console.error(`⚠️ Мережева ошибка polling (${pollingErrorCount}/${pollingErrorThreshold}):`, message);
+        
+        if (pollingErrorCount >= pollingErrorThreshold) {
+            console.error('🔴 Занадто багато мережевих помилок, перезапускаємо polling...');
+            pollingErrorCount = 0;
+            try {
+                await bot.stopPolling();
+                // Чекаємо 2 секунди перед перезапуском
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                await bot.startPolling();
+                console.log('✅ Polling перезапущено');
+            } catch (e) {
+                console.error('❌ Не вдалося перезапустити polling:', e.message);
+            }
+        }
         return;
     }
 
-    stoppingBecauseOfPollingConflict = true;
-    try {
-        await bot.stopPolling();
-        console.error('🛑 Поточний інстанс зупинено, щоб уникнути дублювання/хаотичних кроків.');
-    } catch (stopErr) {
-        console.error('⚠️ Не вдалося коректно зупинити polling:', stopErr);
-    }
-
-    process.exit(1);
+    // Інші помилки - просто логуємо
+    console.error('⚠️ polling_error:', error);
 });
+
+// Скидаємо лічильник помилок кожну хвилину
+setInterval(() => {
+    if (pollingErrorCount > 0) {
+        console.log(`📊 Лічильник помилок polling скинуто (було ${pollingErrorCount})`);
+    }
+    pollingErrorCount = 0;
+}, 60000);
 
 // Health check endpoints
 app.get('/', (req, res) => {
@@ -637,21 +672,154 @@ function parseEventFromRow(row, currentDateContext) {
     };
 }
 
-// Функція видалена - реєстрації тепер не записуються в таблицю розкладу
 async function incrementSheetRegistration(event, fallbackRegistrant) {
-    // Реєстрації зберігаються тільки в пам'яті бота для нагадувань
-    // Персональні дані йдуть в таблицю "Березень" через appendRegistrationRow()
-    return;
+    if (!event || !sheetsClient || !SPREADSHEET_ID) {
+        return;
+    }
+
+    const match = await findScheduleRowByEvent(event);
+    if (!match) {
+        console.warn(`⚠️ Не знайдено рядок у розкладі для оновлення нотатки: ${event.name}`);
+        return;
+    }
+
+    const registrationsCount = Number.isFinite(event.registrations) ? event.registrations : 0;
+
+    try {
+        await sheetsClient.spreadsheets.values.update({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `${match.scheduleSheet}!E${match.rowIndex + 1}`,
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[registrationsCount]]
+            }
+        });
+    } catch (error) {
+        console.error('❌ Не вдалося оновити кількість реєстрацій у розкладі:', error && error.message ? error.message : error);
+    }
+
+    try {
+        await updateScheduleRegistrationNote({
+            scheduleSheet: match.scheduleSheet,
+            rowIndex: match.rowIndex,
+            registrationsCount,
+            fallbackRegistrant
+        });
+    } catch (error) {
+        console.error('❌ Не вдалося оновити нотатку реєстрації у розкладі:', error && error.message ? error.message : error);
+    }
 }
 
-// Функція видалена - використовувалась тільки для оновлення нотаток реєстрацій
 async function getSheetIdByTitle(spreadsheetId, sheetTitle) {
-    return null;
+    if (!spreadsheetId || !sheetTitle || !sheetsClient) {
+        return null;
+    }
+
+    try {
+        const metadata = await sheetsClient.spreadsheets.get({
+            spreadsheetId,
+            fields: 'sheets(properties(sheetId,title))'
+        });
+        const sheet = (metadata.data.sheets || []).find((item) => item && item.properties && item.properties.title === sheetTitle);
+        return sheet && sheet.properties ? sheet.properties.sheetId : null;
+    } catch (error) {
+        console.error(`❌ Не вдалося отримати sheetId для листа "${sheetTitle}":`, error && error.message ? error.message : error);
+        return null;
+    }
 }
 
-// Функція видалена - використовувалась тільки для парсингу нотаток реєстрацій
 function parseRegistrantsFromNote(noteText) {
-    return [];
+    const text = String(noteText || '').trim();
+    if (!text) return [];
+
+    const registrants = [];
+    const seen = new Set();
+    const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    for (const line of lines) {
+        if (/^зареєстровано\s*:/i.test(line)) {
+            continue;
+        }
+
+        const cleaned = line
+            .replace(/^[-*•]\s*/, '')
+            .replace(/^\d+[.)-]?\s*/, '')
+            .trim();
+
+        if (!cleaned) continue;
+
+        let name = '';
+        let phone = '';
+
+        if (cleaned.includes('|')) {
+            const [left, right] = cleaned.split('|');
+            name = String(left || '').trim();
+            phone = String(right || '').trim();
+        } else {
+            const phoneMatch = cleaned.match(/(\+?\d[\d\s()\-]{6,})$/);
+            if (phoneMatch) {
+                phone = String(phoneMatch[1] || '').trim();
+                name = cleaned.slice(0, cleaned.length - phone.length).replace(/[,:;\-\s]+$/, '').trim();
+            }
+        }
+
+        if (!name && !phone) {
+            continue;
+        }
+
+        const key = `${normalizeRegistrantName(name)}|${normalizeRegistrantPhone(phone)}`;
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        registrants.push({ name, phone });
+    }
+
+    return registrants;
+}
+
+async function findScheduleRowByEvent(event) {
+    if (!event || !event.date || !SPREADSHEET_ID || !sheetsClient) {
+        return null;
+    }
+
+    for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
+        try {
+            const resp = await sheetsClient.spreadsheets.values.get({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `${scheduleSheet}!A:E`
+            });
+            const rows = resp.data.values || [];
+            let dateContext = null;
+
+            for (const [rowIndex, row] of rows.entries()) {
+                const parsed = parseEventFromRow(row, dateContext);
+                dateContext = parsed.nextDateContext;
+
+                if (!parsed.event) {
+                    continue;
+                }
+
+                const parsedEvent = parsed.event;
+                const sameTitle = normalizeTitle(parsedEvent.name) === normalizeTitle(event.name);
+                const sameTime = parsedEvent.date.getTime() === event.date.getTime();
+                if (sameTitle && sameTime) {
+                    return { scheduleSheet, rowIndex };
+                }
+            }
+        } catch (error) {
+            const message = (error && error.message ? String(error.message) : '').toLowerCase();
+            if (message.includes('unable to parse range') || message.includes('not found')) {
+                continue;
+            }
+            console.error(`❌ Помилка пошуку рядка події у листі ${scheduleSheet}:`, error && error.message ? error.message : error);
+        }
+    }
+
+    return null;
 }
 
 function normalizeRegistrantName(value) {
@@ -662,25 +830,131 @@ function normalizeRegistrantPhone(value) {
     return String(value || '').replace(/\D+/g, '');
 }
 
-// Функція видалена - перевірка дублікатів тепер йде по пам'яті бота
 async function isRegistrantAlreadyInEventNote(event, registrantProfile) {
-    // Перевірка дублікатів тепер відбувається в registerForSelectedEvent() через userEventRegistrations
-    return false;
+    if (!event || !registrantProfile || !SPREADSHEET_ID || !sheetsClient) {
+        return false;
+    }
+
+    const normalizedName = normalizeRegistrantName(registrantProfile.name);
+    const normalizedPhone = normalizeRegistrantPhone(registrantProfile.phone);
+    if (!normalizedName && !normalizedPhone) {
+        return false;
+    }
+
+    const match = await findScheduleRowByEvent(event);
+    if (!match) {
+        return false;
+    }
+
+    const existingNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex);
+    const registrants = parseRegistrantsFromNote(existingNote);
+    return registrants.some((item) => {
+        const sameName = normalizeRegistrantName(item.name) === normalizedName;
+        const samePhone = normalizeRegistrantPhone(item.phone) === normalizedPhone;
+        return (normalizedName && normalizedPhone && sameName && samePhone)
+            || (!normalizedPhone && normalizedName && sameName)
+            || (!normalizedName && normalizedPhone && samePhone);
+    });
 }
 
-// Функція видалена - нотатки більше не використовуються
 async function getScheduleCellNote(scheduleSheet, rowIndex) {
-    return '';
+    if (!scheduleSheet || rowIndex < 0 || !SPREADSHEET_ID || !sheetsClient) {
+        return '';
+    }
+
+    try {
+        const resp = await sheetsClient.spreadsheets.get({
+            spreadsheetId: SPREADSHEET_ID,
+            ranges: [`${scheduleSheet}!E${rowIndex + 1}`],
+            includeGridData: true,
+            fields: 'sheets(data(rowData(values(note))))'
+        });
+
+        const note = resp && resp.data && resp.data.sheets && resp.data.sheets[0]
+            && resp.data.sheets[0].data && resp.data.sheets[0].data[0]
+            && resp.data.sheets[0].data[0].rowData && resp.data.sheets[0].data[0].rowData[0]
+            && resp.data.sheets[0].data[0].rowData[0].values && resp.data.sheets[0].data[0].rowData[0].values[0]
+            ? resp.data.sheets[0].data[0].rowData[0].values[0].note
+            : '';
+
+        return String(note || '');
+    } catch (error) {
+        console.error(`❌ Помилка читання нотатки з ${scheduleSheet}!E${rowIndex + 1}:`, error && error.message ? error.message : error);
+        return '';
+    }
 }
 
-// Функція видалена - нотатки більше не використовуються
 async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, existingNote) {
-    return '';
+    const registrants = parseRegistrantsFromNote(existingNote);
+
+    const candidateName = String((fallbackRegistrant && fallbackRegistrant.name) || '').trim();
+    const candidatePhone = String((fallbackRegistrant && fallbackRegistrant.phone) || '').trim();
+    if (candidateName || candidatePhone) {
+        const candidateNameKey = normalizeRegistrantName(candidateName);
+        const candidatePhoneKey = normalizeRegistrantPhone(candidatePhone);
+        const exists = registrants.some((item) => {
+            const sameName = normalizeRegistrantName(item.name) === candidateNameKey;
+            const samePhone = normalizeRegistrantPhone(item.phone) === candidatePhoneKey;
+            return (candidateNameKey && candidatePhoneKey && sameName && samePhone)
+                || (!candidatePhoneKey && candidateNameKey && sameName)
+                || (!candidateNameKey && candidatePhoneKey && samePhone);
+        });
+        if (!exists) {
+            registrants.push({ name: candidateName, phone: candidatePhone });
+        }
+    }
+
+    const safeCount = Number.isFinite(registrationsCount) ? registrationsCount : registrants.length;
+    const header = `Зареєстровано: ${safeCount}`;
+
+    if (registrants.length === 0) {
+        return header;
+    }
+
+    const people = registrants.map((item, index) => {
+        const name = String(item.name || '').trim() || 'Без імені';
+        const phone = String(item.phone || '').trim();
+        return `${index + 1}. ${name}${phone ? ` | ${phone}` : ''}`;
+    });
+
+    return `${header}\n\n${people.join('\n')}`;
 }
 
-// Функція видалена - нотатки більше не оновлюються
 async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registrationsCount, fallbackRegistrant }) {
-    return;
+    if (!scheduleSheet || rowIndex < 0 || !SPREADSHEET_ID || !sheetsClient) {
+        return;
+    }
+
+    const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, scheduleSheet);
+    if (sheetId === null || typeof sheetId === 'undefined') {
+        return;
+    }
+
+    const existingNote = await getScheduleCellNote(scheduleSheet, rowIndex);
+    const nextNote = await buildRegistrantsNote(registrationsCount, fallbackRegistrant, existingNote);
+
+    await sheetsClient.spreadsheets.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: {
+            requests: [
+                {
+                    repeatCell: {
+                        range: {
+                            sheetId,
+                            startRowIndex: rowIndex,
+                            endRowIndex: rowIndex + 1,
+                            startColumnIndex: 4,
+                            endColumnIndex: 5
+                        },
+                        cell: {
+                            note: nextNote
+                        },
+                        fields: 'note'
+                    }
+                }
+            ]
+        }
+    });
 }
 
 // Фільтрувати та сортувати заходи
@@ -743,61 +1017,73 @@ function normalizeCredentials(credentials) {
     return credentials;
 }
 
+function stripWrappingQuotes(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return raw;
+    if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
+        return raw.slice(1, -1).trim();
+    }
+    return raw;
+}
+
+function tryParseServiceAccountValue(rawValue, { allowBase64 = true } = {}) {
+    const candidate = stripWrappingQuotes(rawValue);
+    if (!candidate) return null;
+
+    // 1) Direct JSON
+    try {
+        const parsed = JSON.parse(candidate);
+        if (parsed && parsed.client_email && parsed.private_key) {
+            return normalizeCredentials(parsed);
+        }
+    } catch (e) {
+        // console.debug(`Не вдалось парсити як JSON: ${e.message}`);
+    }
+
+    // 2) Base64 JSON
+    if (allowBase64) {
+        try {
+            const compact = candidate.replace(/\s+/g, '');
+            const decoded = Buffer.from(compact, 'base64').toString('utf8');
+            const parsed = JSON.parse(decoded);
+            if (parsed && parsed.client_email && parsed.private_key) {
+                return normalizeCredentials(parsed);
+            }
+        } catch (e) {
+            // console.debug(`Не вдалось парсити як Base64 JSON: ${e.message}`);
+        }
+    }
+
+    return null;
+}
+
 function parseCredentialsFromEnv() {
     const sources = [];
     const sheetsScopes = ["https://www.googleapis.com/auth/spreadsheets"];
 
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-        try {
-            const parsed = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-            sources.push({
-                label: "GOOGLE_SERVICE_ACCOUNT_JSON",
-                authOptions: {
-                    credentials: normalizeCredentials(parsed),
-                    scopes: sheetsScopes
-                }
-            });
-        } catch (error) {
-            console.error(`Невалідний GOOGLE_SERVICE_ACCOUNT_JSON: ${error.message}`);
-        }
-    }
+    const jsonEnvAliases = [
+        'GOOGLE_SERVICE_ACCOUNT_JSON',
+        'GOOGLE_SERVICE_ACCOUNT_JSON_BASE64',
+        'GOOGLE_CREDENTIALS',
+        'GOOGLE_CREDENTIALS_JSON',
+        'GOOGLE_APPLICATION_CREDENTIALS_JSON',
+        'GCP_SERVICE_ACCOUNT_JSON'
+    ];
 
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
-        try {
-            const decoded = Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64").toString("utf8");
-            const parsed = JSON.parse(decoded);
+    for (const envName of jsonEnvAliases) {
+        const raw = process.env[envName];
+        if (!raw) continue;
+        const parsed = tryParseServiceAccountValue(raw, { allowBase64: true });
+        if (parsed) {
             sources.push({
-                label: "GOOGLE_SERVICE_ACCOUNT_JSON_BASE64",
+                label: envName,
                 authOptions: {
-                    credentials: normalizeCredentials(parsed),
+                    credentials: parsed,
                     scopes: sheetsScopes
                 }
             });
-        } catch (error) {
-            console.error(`Невалідний GOOGLE_SERVICE_ACCOUNT_JSON_BASE64: ${error.message}`);
-        }
-    }
-
-    // Backward-compatible alias used in older deployments/docs.
-    // Accept both raw JSON and base64 payloads to support legacy env setups.
-    if (process.env.GOOGLE_CREDENTIALS) {
-        try {
-            let parsed = null;
-            try {
-                parsed = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-            } catch {
-                const decoded = Buffer.from(process.env.GOOGLE_CREDENTIALS, "base64").toString("utf8");
-                parsed = JSON.parse(decoded);
-            }
-            sources.push({
-                label: "GOOGLE_CREDENTIALS",
-                authOptions: {
-                    credentials: normalizeCredentials(parsed),
-                    scopes: sheetsScopes
-                }
-            });
-        } catch (error) {
-            console.error(`Невалідний GOOGLE_CREDENTIALS: ${error.message}`);
+        } else {
+            console.error(`Невалідний ${envName}: не вдалося розпарсити як JSON/Base64 service_account`);
         }
     }
 
@@ -829,6 +1115,7 @@ function resolveGoogleAuthCandidates() {
 
     const envCandidates = parseCredentialsFromEnv();
     if (envCandidates.length > 0) {
+        console.log(`📋 parseCredentialsFromEnv знайшло ${envCandidates.length} кандидатів: ${envCandidates.map(c => c.label).join(', ')}`);
         candidates.push(...envCandidates);
     }
 
@@ -838,15 +1125,21 @@ function resolveGoogleAuthCandidates() {
         if (gac.startsWith('{')) {
             try {
                 const parsed = JSON.parse(gac);
-                candidates.push({
-                    label: 'GOOGLE_APPLICATION_CREDENTIALS (inline JSON)',
-                    authOptions: {
-                        credentials: normalizeCredentials(parsed),
-                        scopes
-                    }
-                });
+                if (parsed && typeof parsed === 'object') {
+                    // Завжди додаємо, навіть якщо недостатньо інформації - хай GoogleAuth розбірається
+                    candidates.push({
+                        label: 'GOOGLE_APPLICATION_CREDENTIALS (inline JSON)',
+                        authOptions: {
+                            credentials: normalizeCredentials(parsed),
+                            scopes
+                        }
+                    });
+                    console.log(`✅ GOOGLE_APPLICATION_CREDENTIALS (inline JSON) додано до candidates`);
+                } else {
+                    console.error(`⚠️ GOOGLE_APPLICATION_CREDENTIALS (inline JSON) невалідний: не є об'єктом`);
+                }
             } catch (error) {
-                console.error(`Невалідний GOOGLE_APPLICATION_CREDENTIALS (inline JSON): ${error.message}`);
+                console.error(`❌ Невалідний GOOGLE_APPLICATION_CREDENTIALS (inline JSON): ${error.message}`);
             }
         } else {
             candidates.push({
@@ -856,6 +1149,7 @@ function resolveGoogleAuthCandidates() {
                     scopes
                 }
             });
+            console.log(`✅ GOOGLE_APPLICATION_CREDENTIALS (file path) додано до candidates: ${gac}`);
         }
     }
 
@@ -869,9 +1163,13 @@ function resolveGoogleAuthCandidates() {
                 scopes
             }
         });
+        console.log(`✅ vilna-bot-8e7e5cb23ce2.json знайдено`);
+    } else {
+        console.log(`ℹ️ vilna-bot-8e7e5cb23ce2.json не знайдено`);
     }
 
     const anyLocalCredentials = fs.readdirSync(cwd).filter((fileName) => /^vilna-bot-.*\.json$/.test(fileName));
+    console.log(`🔍 Локальні vilna-bot-*.json файли: ${anyLocalCredentials.length > 0 ? anyLocalCredentials.join(', ') : 'не знайдено'}`);
     for (const fileName of anyLocalCredentials) {
         const filePath = path.join(cwd, fileName);
         if (filePath === preferredFile) continue;
@@ -882,17 +1180,43 @@ function resolveGoogleAuthCandidates() {
                 scopes
             }
         });
+        console.log(`✅ ${fileName} додано до candidates`);
     }
 
     if (candidates.length === 0) {
-        throw new Error("Не знайдено Google credentials. Додайте GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, GOOGLE_CREDENTIALS, GOOGLE_CLIENT_EMAIL+GOOGLE_PRIVATE_KEY, GOOGLE_APPLICATION_CREDENTIALS або файл vilna-bot-*.json");
+        const knownVars = [
+            'GOOGLE_SERVICE_ACCOUNT_JSON',
+            'GOOGLE_SERVICE_ACCOUNT_JSON_BASE64',
+            'GOOGLE_CREDENTIALS',
+            'GOOGLE_CREDENTIALS_JSON',
+            'GOOGLE_APPLICATION_CREDENTIALS_JSON',
+            'GCP_SERVICE_ACCOUNT_JSON',
+            'GOOGLE_CLIENT_EMAIL',
+            'GOOGLE_PRIVATE_KEY',
+            'GOOGLE_APPLICATION_CREDENTIALS'
+        ];
+        const present = knownVars.filter((name) => !!process.env[name]);
+        console.log(`🔴 Нічого не знайдено. Наявні env ключі: ${present.length ? present.join(', ') : 'жодного'}`);
+        throw new Error(
+            "Не знайдено Google credentials. Додайте GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, GOOGLE_CREDENTIALS, " +
+            "GOOGLE_CLIENT_EMAIL+GOOGLE_PRIVATE_KEY, GOOGLE_APPLICATION_CREDENTIALS або файл vilna-bot-*.json. " +
+            `Наявні env ключі: ${present.length ? present.join(', ') : 'жодного'}`
+        );
     }
 
+    console.log(`✨ Всього candidates: ${candidates.length}`);
     return candidates;
 }
 
 async function createAuthorizedSheetsClient() {
-    const candidates = resolveGoogleAuthCandidates();
+    let candidates;
+    try {
+        candidates = resolveGoogleAuthCandidates();
+    } catch (error) {
+        console.error(`🔴 resolveGoogleAuthCandidates помилка: ${error.message}`);
+        throw error;
+    }
+
     const errors = [];
 
     for (const candidate of candidates) {
@@ -914,7 +1238,9 @@ async function createAuthorizedSheetsClient() {
         }
     }
 
-    throw new Error(`Жодне джерело credentials не підійшло. ${errors.join(" | ")}`);
+    const errorMsg = `Жодне джерело credentials не підійшло. ${errors.join(" | ")}`;
+    console.error(`🔴 ПОМИЛКА AUTHENTICATION: ${errorMsg}`);
+    throw new Error(errorMsg);
 }
 
 async function initSheets() {
@@ -1489,6 +1815,14 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
     const registrantProfile = await resolveRegistrantProfile(chatId, user, providedName || '', providedPhone || '');
 
     const evObj = events.find(e => e.id === eventId);
+
+    // Додаткова перевірка дублікату після рестарту бота: дивимось запис у нотатці таблиці
+    if (evObj) {
+        const duplicateInSheet = await isRegistrantAlreadyInEventNote(evObj, registrantProfile);
+        if (duplicateInSheet) {
+            return { status: 'already-registered' };
+        }
+    }
     
     // Перевіряємо дублікати в пам'яті (не в таблиці)
     if (evObj && userEventRegistrations[chatId]) {
@@ -1502,6 +1836,7 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
     if (evObj) {
         evObj.registrations = (evObj.registrations || 0) + 1;
         if (typeof evObj.seats === 'number') evObj.seats = Math.max(0, evObj.seats - 1);
+        await incrementSheetRegistration(evObj, registrantProfile);
     }
 
     if (user.step === 7) {
