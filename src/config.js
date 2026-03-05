@@ -1,6 +1,7 @@
 require('dotenv').config();
 
-const TOKEN = process.env.TOKEN;
+const DEFAULT_BOT_TOKEN = "8448480345:AAH48UBqGxkrzc_vyT6mKsQsc3264ifhLgg";
+const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || DEFAULT_BOT_TOKEN;
 const GROUP_ID = process.env.GROUP_ID;
 const CHAT_ID = process.env.CHAT_ID;
 // Таблиця для розкладу та реєстрацій на заходи
@@ -18,6 +19,9 @@ const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
 
 if (!process.env.SPREADSHEET_ID) {
     console.warn(`SPREADSHEET_ID не встановлений, використовую значення за замовчуванням: ${DEFAULT_SCHEDULE_SPREADSHEET_ID}`);
+}
+if (!process.env.TOKEN && !process.env.TELEGRAM_BOT_TOKEN) {
+    console.warn("TOKEN не встановлено через env, використовую значення з коду");
 }
 console.log("📋 Таблиця розкладу:", SPREADSHEET_ID);
 console.log("📄 Аркуш розкладу:", SCHEDULE_SHEET_NAME);

@@ -6,15 +6,15 @@ const path = require("path");
 const TelegramBot = require("node-telegram-bot-api");
 const { google } = require("googleapis");
 
-const TOKEN = process.env.TOKEN;
-const GROUP_ID = process.env.GROUP_ID;
-const CHAT_ID = process.env.CHAT_ID;
+const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
+const GROUP_ID = process.env.GROUP_ID || config.GROUP_ID;
+const CHAT_ID = process.env.CHAT_ID || config.CHAT_ID;
 // Таблиця для розкладу та реєстрацій на заходи
-const SPREADSHEET_ID = process.env.SPREADSHEET_ID || "1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8";
-const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || "Розклад";
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID || config.SPREADSHEET_ID;
+const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || config.SCHEDULE_SHEET_NAME;
 // Таблиця для персональних даних (ПІБ, телефон тощо)
-const PERSONAL_DATA_SPREADSHEET_ID = process.env.PERSONAL_DATA_SPREADSHEET_ID || "1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE";
-const PERSONAL_DATA_SHEET_NAME = process.env.PERSONAL_DATA_SHEET_NAME || "Березень";
+const PERSONAL_DATA_SPREADSHEET_ID = process.env.PERSONAL_DATA_SPREADSHEET_ID || config.PERSONAL_DATA_SPREADSHEET_ID;
+const PERSONAL_DATA_SHEET_NAME = process.env.PERSONAL_DATA_SHEET_NAME || config.PERSONAL_DATA_SHEET_NAME;
 const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
 
 // Таблиця розкладу: https://docs.google.com/spreadsheets/d/1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8/edit
