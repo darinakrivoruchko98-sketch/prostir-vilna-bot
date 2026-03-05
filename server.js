@@ -298,7 +298,16 @@ async function showDayAgenda(chatId, dayName) {
 
     const weekdays = { 'Неділя':0, 'Середа':3, 'Четвер':4, 'П’ятниця':5, 'Субота':6 };
     const dayNum = weekdays[dayName];
+    
+    // ДІАГНОСТИКА
+    console.log(`\n🔍 showDayAgenda("${dayName}"): dayNum=${dayNum}`);
+    const allEvents = getAllEvents();
+    console.log(`   Всього майбутніх заходів: ${allEvents.length}`);
+    allEvents.forEach(e => console.log(`   - ${e.name}: ${e.date.toISOString()} (getDay=${e.date.getDay()})`));
+    
     const dayEvents = getEventsForDay(dayNum);
+    console.log(`   ✅ Знайдено на день ${dayNum}: ${dayEvents.length} заходів`);
+    
     dayEvents.sort((a,b)=>a.date-b.date);
     
     const dayForms = {
