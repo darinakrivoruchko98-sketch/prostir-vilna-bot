@@ -65,11 +65,15 @@ function parseDateValue(rawDate, yearHint) {
     const source = String(rawDate || '').trim();
     if (!source) return null;
 
+    // ДІАГНОСТИКА
+    const isDebug = source.length > 3 && source.length < 30;
+    
     const uaDate = source.match(/^(\d{1,2})\s+([А-Яа-яІіЇїЄєґҐ'']+)\s+(\d{4})$/);
     if (uaDate) {
         const parsed = parseEventDate(source, '00:00');
         if (parsed && !Number.isNaN(parsed.getTime())) {
             parsed.setHours(0, 0, 0, 0);
+            if (isDebug) console.log(`   ✅ parseDateValue UA: "${source}" → ${parsed.toISOString()}`);
             return parsed;
         }
     }
@@ -83,7 +87,10 @@ function parseDateValue(rawDate, yearHint) {
             ? (explicitYear < 100 ? 2000 + explicitYear : explicitYear)
             : (yearHint || new Date().getFullYear());
         const date = new Date(year, month, day, 0, 0, 0, 0);
-        if (!Number.isNaN(date.getTime())) return date;
+        if (!Number.isNaN(date.getTime())) {
+            if (isDebug) console.log(`   ✅ parseDateValue DMY: "${source}" → ${date.toISOString()}`);
+            return date;
+        }
     }
 
     const ymd = source.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
@@ -92,7 +99,10 @@ function parseDateValue(rawDate, yearHint) {
         const month = parseInt(ymd[2], 10) - 1;
         const day = parseInt(ymd[3], 10);
         const date = new Date(year, month, day, 0, 0, 0, 0);
-        if (!Number.isNaN(date.getTime())) return date;
+        if (!Number.isNaN(date.getTime())) {
+            if (isDebug) console.log(`   ✅ parseDateValue YMD: "${source}" → ${date.toISOString()}`);
+            return date;
+        }
     }
 
     const asNumber = Number(source.replace(',', '.'));
@@ -100,8 +110,15 @@ function parseDateValue(rawDate, yearHint) {
         const excelEpoch = new Date(Date.UTC(1899, 11, 30));
         const date = new Date(excelEpoch.getTime() + asNumber * 86400000);
         if (!Number.isNaN(date.getTime())) {
-            return new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0);
+            const result = new Date(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0);
+            if (isDebug) console.log(`   ✅ parseDateValue Excel: "${source}" → ${result.toISOString()}`);
+            return result;
         }
+    }
+
+    // ДІАГНОСТИКА: дата не розпізнана
+    if (isDebug && /\d/.test(source)) {
+        console.log(`   ⚠️ parseDateValue FAILED: "${source}" не розпізнана`);
     }
 
     return null;

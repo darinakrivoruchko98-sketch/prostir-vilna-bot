@@ -71,6 +71,11 @@ function parseEventFromRow(row, currentDateContext) {
     }
 
     if (!dateBase || !time || !title) {
+        // ДІАГНОСТИКА для неповних даних
+        if (nonEmpty.length >= 2) {
+            console.log(`⚠️ Неповні дані в рядку: cells=[${cells.join('|')}]`);
+            console.log(`   dateIndex=${dateIndex}, dateBase=${dateBase}, time=${time}, title="${title}"`);
+        }
         return { event: null, nextDateContext: dateBase || currentDateContext };
     }
 

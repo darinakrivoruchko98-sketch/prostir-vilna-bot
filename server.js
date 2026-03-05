@@ -1130,6 +1130,12 @@ async function loadEventsFromSheet() {
             throw new Error(`Не вдалося зчитати розклад із таблиці ${SPREADSHEET_ID}. ${details}`);
         }
 
+        // ДІАГНОСТИКА: логуємо перші рядки таблиці
+        console.log(`\n🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):`);
+        for (let i = 0; i < Math.min(5, rows.length); i++) {
+            console.log(`   Рядок ${i}: ${JSON.stringify(rows[i])}`);
+        }
+
         // Очистити поточні заходи перед завантаженням
         events = [];
         const seen = new Set();
