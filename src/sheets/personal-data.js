@@ -14,7 +14,8 @@ async function appendRegistrationRow(chatId, user) {
         user.birth || "",
         user.visited || "",
         user.status || "",
-        user.health || ""
+        user.health || "",
+        String(chatId) // Колона H - ID користувача
     ];
 
     const findFirstFreeRow = (rows) => {
@@ -56,7 +57,7 @@ async function appendRegistrationRow(chatId, user) {
 
             await state.sheetsClient.spreadsheets.values.update({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${config.PERSONAL_DATA_SHEET_NAME}!A${targetRow}:G${targetRow}`,
+                range: `${config.PERSONAL_DATA_SHEET_NAME}!A${targetRow}:H${targetRow}`,
                 valueInputOption: "RAW",
                 requestBody: { values: [values] }
             });
@@ -86,7 +87,7 @@ async function appendRegistrationRow(chatId, user) {
 
                     await state.sheetsClient.spreadsheets.values.update({
                         spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                        range: `A${targetRow}:G${targetRow}`,
+                        range: `A${targetRow}:H${targetRow}`,
                         valueInputOption: "RAW",
                         requestBody: { values: [values] }
                     });
@@ -117,13 +118,13 @@ async function findUserByChatId(chatId) {
     try {
         const resp = await state.sheetsClient.spreadsheets.values.get({
             spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-            range: `${config.PERSONAL_DATA_SHEET_NAME}!A:I`
+            range: `${config.PERSONAL_DATA_SHEET_NAME}!A:H`
         });
         const rows = resp.data.values || [];
         const chatIdStr = String(chatId);
-        // Find the latest matching row (column I = index 8)
+        // Find the latest matching row (column H = index 7)
         for (let i = rows.length - 1; i >= 0; i--) {
-            if (rows[i][8] === chatIdStr) {
+            if (rows[i][7] === chatIdStr) {
                 return {
                     name: rows[i][1] || '',
                     phone: rows[i][2] || '',
