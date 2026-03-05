@@ -60,13 +60,6 @@ async function appendRegistrationRow(chatId, user) {
                 valueInputOption: "RAW",
                 requestBody: { values: [values] }
             });
-            // Write chatId to column I separately to not overwrite column H
-            await state.sheetsClient.spreadsheets.values.update({
-                spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${config.PERSONAL_DATA_SHEET_NAME}!I${targetRow}`,
-                valueInputOption: "RAW",
-                requestBody: { values: [[String(chatId)]] }
-            });
             console.log(`Записано в таблицю ${config.PERSONAL_DATA_SHEET_NAME} (рядок ${targetRow}) ✅`);
             return;
         } catch (e) {
