@@ -2097,6 +2097,7 @@ bot.on('message', async (msg) => {
         delete user.currentSelectedEventName;
         delete user.currentSelectedEventId;
         user.step = 0;
+        user.registrationMode = false;
 
         bot.sendMessage(chatId, "Реєстрацію скасовано. Оберіть дію в меню.", {
             reply_markup: {
@@ -2226,8 +2227,14 @@ bot.on('message', async (msg) => {
         user.step = 1;
         user.registrationMode = true;
         
-        bot.sendMessage(chatId, "📝 <b>РЕЄСТРАЦІЯ</b>\n\nПрізвище Ім'я По-батькові", {
-            parse_mode: 'HTML'
+        bot.sendMessage(chatId, "📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: "❌ Скасувати реєстрацію" }]
+                ],
+                resize_keyboard: true
+            }
         });
         return;
     }
@@ -2241,7 +2248,16 @@ bot.on('message', async (msg) => {
         if (!hasAllData) {
             // Дані неповні — питаємо їх
             user.step = 1;
-            bot.sendMessage(chatId, "Спочатку заповніть дані.\n\nПрізвище Ім'я По-батькові");
+            user.registrationMode = true;
+            bot.sendMessage(chatId, "Спочатку заповніть дані.\n\n📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "❌ Скасувати реєстрацію" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
             return;
         }
         
