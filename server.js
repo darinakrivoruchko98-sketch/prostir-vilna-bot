@@ -1520,6 +1520,7 @@ bot.on('message', async (msg) => {
 
     // === ОБРОБКА ЗВЕРНЕНЬ - ПЕРЕВІРЯЄМО ПЕРШИМ ===
     if (text === "Скасувати" && user.context === 'appeal') {
+        console.log(`✅ Скасування звернення для ${chatId}`);
         user.context = null;
         user.step = 0;
         bot.sendMessage(chatId, "Меню:", {
