@@ -684,18 +684,19 @@ async function incrementSheetRegistration(event, fallbackRegistrant) {
     }
 
     const registrationsCount = Number.isFinite(event.registrations) ? event.registrations : 0;
+    const seatsCount = Number.isFinite(event.seats) ? Math.max(0, event.seats) : 0;
 
     try {
         await sheetsClient.spreadsheets.values.update({
             spreadsheetId: SPREADSHEET_ID,
-            range: `${match.scheduleSheet}!E${match.rowIndex + 1}`,
+            range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`,
             valueInputOption: 'RAW',
             requestBody: {
-                values: [[registrationsCount]]
+                values: [[seatsCount, registrationsCount]]
             }
         });
     } catch (error) {
-        console.error('❌ Не вдалося оновити кількість реєстрацій у розкладі:', error && error.message ? error.message : error);
+        console.error('❌ Не вдалося оновити місця/реєстрації у розкладі:', error && error.message ? error.message : error);
     }
 
     try {
@@ -707,6 +708,45 @@ async function incrementSheetRegistration(event, fallbackRegistrant) {
         });
     } catch (error) {
         console.error('❌ Не вдалося оновити нотатку реєстрації у розкладі:', error && error.message ? error.message : error);
+    }
+}
+
+async function decrementSheetRegistration(event, registrantProfile) {
+    if (!event || !sheetsClient || !SPREADSHEET_ID) {
+        return;
+    }
+
+    const match = await findScheduleRowByEvent(event);
+    if (!match) {
+        console.warn(`⚠️ Не знайдено рядок у розкладі для відписки: ${event.name}`);
+        return;
+    }
+
+    const registrationsCount = Number.isFinite(event.registrations) ? event.registrations : 0;
+    const seatsCount = Number.isFinite(event.seats) ? Math.max(0, event.seats) : 0;
+
+    try {
+        await sheetsClient.spreadsheets.values.update({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`,
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[seatsCount, registrationsCount]]
+            }
+        });
+    } catch (error) {
+        console.error('❌ Не вдалося оновити місця/реєстрації після відписки:', error && error.message ? error.message : error);
+    }
+
+    try {
+        await updateScheduleRegistrationNote({
+            scheduleSheet: match.scheduleSheet,
+            rowIndex: match.rowIndex,
+            registrationsCount,
+            removeRegistrant: registrantProfile
+        });
+    } catch (error) {
+        console.error('❌ Не вдалося оновити нотатку після відписки:', error && error.message ? error.message : error);
     }
 }
 
@@ -830,6 +870,31 @@ function normalizeRegistrantPhone(value) {
     return String(value || '').replace(/\D+/g, '');
 }
 
+function isSameRegistrant(item, candidateNameKey, candidatePhoneKey) {
+    const sameName = normalizeRegistrantName(item.name) === candidateNameKey;
+    const samePhone = normalizeRegistrantPhone(item.phone) === candidatePhoneKey;
+    return (candidateNameKey && candidatePhoneKey && sameName && samePhone)
+        || (!candidatePhoneKey && candidateNameKey && sameName)
+        || (!candidateNameKey && candidatePhoneKey && samePhone);
+}
+
+function buildRegistrantsNoteFromList(registrationsCount, registrants) {
+    const safeCount = Number.isFinite(registrationsCount) ? registrationsCount : registrants.length;
+    const header = `Зареєстровано: ${safeCount}`;
+
+    if (registrants.length === 0) {
+        return header;
+    }
+
+    const people = registrants.map((item, index) => {
+        const name = String(item.name || '').trim() || 'Без імені';
+        const phone = String(item.phone || '').trim();
+        return `${index + 1}. ${name}${phone ? ` | ${phone}` : ''}`;
+    });
+
+    return `${header}\n\n${people.join('\n')}`;
+}
+
 async function isRegistrantAlreadyInEventNote(event, registrantProfile) {
     if (!event || !registrantProfile || !SPREADSHEET_ID || !sheetsClient) {
         return false;
@@ -848,13 +913,7 @@ async function isRegistrantAlreadyInEventNote(event, registrantProfile) {
 
     const existingNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex);
     const registrants = parseRegistrantsFromNote(existingNote);
-    return registrants.some((item) => {
-        const sameName = normalizeRegistrantName(item.name) === normalizedName;
-        const samePhone = normalizeRegistrantPhone(item.phone) === normalizedPhone;
-        return (normalizedName && normalizedPhone && sameName && samePhone)
-            || (!normalizedPhone && normalizedName && sameName)
-            || (!normalizedName && normalizedPhone && samePhone);
-    });
+    return registrants.some((item) => isSameRegistrant(item, normalizedName, normalizedPhone));
 }
 
 async function getScheduleCellNote(scheduleSheet, rowIndex) {
@@ -892,35 +951,16 @@ async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, exis
     if (candidateName || candidatePhone) {
         const candidateNameKey = normalizeRegistrantName(candidateName);
         const candidatePhoneKey = normalizeRegistrantPhone(candidatePhone);
-        const exists = registrants.some((item) => {
-            const sameName = normalizeRegistrantName(item.name) === candidateNameKey;
-            const samePhone = normalizeRegistrantPhone(item.phone) === candidatePhoneKey;
-            return (candidateNameKey && candidatePhoneKey && sameName && samePhone)
-                || (!candidatePhoneKey && candidateNameKey && sameName)
-                || (!candidateNameKey && candidatePhoneKey && samePhone);
-        });
+        const exists = registrants.some((item) => isSameRegistrant(item, candidateNameKey, candidatePhoneKey));
         if (!exists) {
             registrants.push({ name: candidateName, phone: candidatePhone });
         }
     }
 
-    const safeCount = Number.isFinite(registrationsCount) ? registrationsCount : registrants.length;
-    const header = `Зареєстровано: ${safeCount}`;
-
-    if (registrants.length === 0) {
-        return header;
-    }
-
-    const people = registrants.map((item, index) => {
-        const name = String(item.name || '').trim() || 'Без імені';
-        const phone = String(item.phone || '').trim();
-        return `${index + 1}. ${name}${phone ? ` | ${phone}` : ''}`;
-    });
-
-    return `${header}\n\n${people.join('\n')}`;
+    return buildRegistrantsNoteFromList(registrationsCount, registrants);
 }
 
-async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registrationsCount, fallbackRegistrant }) {
+async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registrationsCount, fallbackRegistrant, removeRegistrant }) {
     if (!scheduleSheet || rowIndex < 0 || !SPREADSHEET_ID || !sheetsClient) {
         return;
     }
@@ -931,7 +971,20 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
     }
 
     const existingNote = await getScheduleCellNote(scheduleSheet, rowIndex);
-    const nextNote = await buildRegistrantsNote(registrationsCount, fallbackRegistrant, existingNote);
+    let registrants = parseRegistrantsFromNote(existingNote);
+
+    if (removeRegistrant) {
+        const removeNameKey = normalizeRegistrantName(removeRegistrant.name);
+        const removePhoneKey = normalizeRegistrantPhone(removeRegistrant.phone);
+        if (removeNameKey || removePhoneKey) {
+            registrants = registrants.filter((item) => !isSameRegistrant(item, removeNameKey, removePhoneKey));
+        }
+    }
+
+    let nextNote = buildRegistrantsNoteFromList(registrationsCount, registrants);
+    if (fallbackRegistrant) {
+        nextNote = await buildRegistrantsNote(registrationsCount, fallbackRegistrant, nextNote);
+    }
 
     await sheetsClient.spreadsheets.batchUpdate({
         spreadsheetId: SPREADSHEET_ID,
@@ -1586,6 +1639,59 @@ async function resolveRegistrantProfile(chatId, user, providedName, providedPhon
     return resolved;
 }
 
+async function restoreUserRegistrationsFromSheet(chatId, user) {
+    if (!chatId || !sheetsClient || !SPREADSHEET_ID) {
+        return 0;
+    }
+
+    const profile = await resolveRegistrantProfile(chatId, user, user && user.name, user && user.phone);
+    const normalizedName = normalizeRegistrantName(profile.name);
+    const normalizedPhone = normalizeRegistrantPhone(profile.phone);
+    if (!normalizedName && !normalizedPhone) {
+        return 0;
+    }
+
+    if (!userEventRegistrations[chatId]) {
+        userEventRegistrations[chatId] = [];
+    }
+
+    const existingIds = new Set(userEventRegistrations[chatId].map((item) => item.eventId));
+    let restoredCount = 0;
+
+    for (const event of getAllEvents()) {
+        if (!event || !event.date || event.date <= new Date() || existingIds.has(event.id)) {
+            continue;
+        }
+
+        const inNote = await isRegistrantAlreadyInEventNote(event, profile);
+        if (!inNote) {
+            continue;
+        }
+
+        userEventRegistrations[chatId].push({
+            eventId: event.id,
+            eventName: event.name,
+            eventDate: event.date,
+            registrantName: profile.name,
+            registrantPhone: profile.phone,
+            reminded24h: false,
+            reminded1h: false
+        });
+        existingIds.add(event.id);
+        restoredCount += 1;
+    }
+
+    if (userEventRegistrations[chatId].length === 0) {
+        delete userEventRegistrations[chatId];
+    }
+
+    if (restoredCount > 0) {
+        console.log(`♻️ Відновлено ${restoredCount} реєстрацій з нотаток для chatId=${chatId}`);
+    }
+
+    return restoredCount;
+}
+
 async function resolveRegistrantFormData(chatId, user) {
     const resolved = {
         userId: String(chatId || ''),
@@ -1857,6 +1963,8 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
                 eventId: eventId,
                 eventName: eventName,
                 eventDate: evObj.date,
+                registrantName: registrantProfile.name,
+                registrantPhone: registrantProfile.phone,
                 reminded24h: false,
                 reminded1h: false
             });
@@ -1913,6 +2021,14 @@ async function unregisterFromEvent(chatId, eventId) {
         if (typeof event.seats === 'number') {
             event.seats = event.seats + 1;
         }
+
+        const registrantProfile = await resolveRegistrantProfile(
+            chatId,
+            users[chatId],
+            registration.registrantName,
+            registration.registrantPhone
+        );
+        await decrementSheetRegistration(event, registrantProfile);
         console.log(`📝 Користувач ${chatId} відписаний від "${registration.eventName}" (місць +1)`);
     }
 
@@ -2920,6 +3036,9 @@ bot.on('message', async (msg) => {
     }
 
     if (text === "Нагадування") {
+        // Після рестарту відновлюємо реєстрації з нотаток таблиці для цього користувача.
+        await restoreUserRegistrationsFromSheet(chatId, user);
+
         // Показуємо майбутні заходи користувача з нагадуваннями
         const userRegistrations = userEventRegistrations[chatId] || [];
         
@@ -3225,12 +3344,18 @@ bot.on('message', async (msg) => {
 
     // Перейти до реєстрації на всі вибрані заходи
     if (text === "📝 Перейти до реєстрації") {
-        // Якщо щойно обрали захід і ще не натиснули "Додати", не губимо його
-        if ((!user.selectedEventsList || user.selectedEventsList.length === 0) && user.currentSelectedEventId && user.currentSelectedEventName) {
-            user.selectedEventsList = [{
-                id: user.currentSelectedEventId,
-                name: user.currentSelectedEventName
-            }];
+        // Якщо щойно обрали захід і ще не натиснули "Додати", не губимо його.
+        if (user.currentSelectedEventId && user.currentSelectedEventName) {
+            if (!user.selectedEventsList) {
+                user.selectedEventsList = [];
+            }
+            const alreadyAddedCurrent = user.selectedEventsList.some((item) => item.id === user.currentSelectedEventId);
+            if (!alreadyAddedCurrent) {
+                user.selectedEventsList.push({
+                    id: user.currentSelectedEventId,
+                    name: user.currentSelectedEventName
+                });
+            }
         }
 
         if (!user.selectedEventsList || user.selectedEventsList.length === 0) {
@@ -3269,12 +3394,18 @@ bot.on('message', async (msg) => {
 
     // Обробка реєстрації на всі вибрані заходи
     if (text === "✅ Продовжити реєстрацію") {
-        // Страховка від втрати стану між кнопками
-        if ((!user.selectedEventsList || user.selectedEventsList.length === 0) && user.currentSelectedEventId && user.currentSelectedEventName) {
-            user.selectedEventsList = [{
-                id: user.currentSelectedEventId,
-                name: user.currentSelectedEventName
-            }];
+        // Страховка від втрати стану між кнопками.
+        if (user.currentSelectedEventId && user.currentSelectedEventName) {
+            if (!user.selectedEventsList) {
+                user.selectedEventsList = [];
+            }
+            const alreadyAddedCurrent = user.selectedEventsList.some((item) => item.id === user.currentSelectedEventId);
+            if (!alreadyAddedCurrent) {
+                user.selectedEventsList.push({
+                    id: user.currentSelectedEventId,
+                    name: user.currentSelectedEventName
+                });
+            }
         }
 
         if (!user.selectedEventsList || user.selectedEventsList.length === 0) {
