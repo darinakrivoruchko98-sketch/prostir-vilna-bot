@@ -102,6 +102,7 @@ if (APPEALS_GROUP_ID) {
 
 let users = {};
 let knownUsers = {}; // Кеш з персональними даними користувачів (ім'я, телефон)
+let appealMessagesMap = {}; // Мапа: message_id звернення в групі → chatId користувача
 let events = []; // масив для зберігання заходів
 // reminders feature removed per request
 
@@ -1429,19 +1430,15 @@ bot.on('message', async (msg) => {
     if (chatId === APPEALS_GROUP_ID && msg.reply_to_message) {
         console.log(`\n🔍 ПЕРЕВІРКА REPLY У ГРУПІ ЗВЕРНЕНЬ`);
         console.log(`ChatID: ${chatId} === APPEALS_GROUP_ID: ${APPEALS_GROUP_ID}`);
-        console.log(`Reply to message exists: ${!!msg.reply_to_message}`);
+        console.log(`Reply to message ID: ${msg.reply_to_message.message_id}`);
         
-        // Перевіряємо, чи reply на повідомлення від бота (звернення)
-        const originalText = msg.reply_to_message.text || '';
-        console.log(`Original text length: ${originalText.length}`);
-        console.log(`Original text preview: ${originalText.substring(0, 200)}`);
+        // Шукаємо користувача через mapping
+        const originalMessageId = msg.reply_to_message.message_id;
+        const userChatId = appealMessagesMap[originalMessageId];
         
-        // Витягуємо Telegram ID користувача з оригінального повідомлення
-        const idMatch = originalText.match(/🔗\s*<b>Telegram ID:<\/b>\s*<code>(\d+)<\/code>/);
-        console.log(`ID Match result: ${idMatch ? idMatch[1] : 'НЕ ЗНАЙДЕНО'}`);
+        console.log(`Mapping lookup: message_id ${originalMessageId} → user ${userChatId || 'НЕ ЗНАЙДЕНО'}`);
         
-        if (idMatch && idMatch[1]) {
-            const userChatId = parseInt(idMatch[1]);
+        if (userChatId) {
             const replyText = text;
             
             console.log(`\n📨 ВІДПОВІДЬ НА ЗВЕРНЕННЯ`);
@@ -1474,7 +1471,8 @@ bot.on('message', async (msg) => {
                 });
             }
         } else {
-            console.log(`⚠️ Не вдалося знайти ID користувача в повідомленні`);
+            console.log(`⚠️ Не знайдено користувача для message_id ${originalMessageId} в mapping`);
+            console.log(`⚠️ Доступні message_id в mapping:`, Object.keys(appealMessagesMap).join(', '));
         }
         return; // Не обробляємо інші повідомлення з групи
     }
@@ -1664,6 +1662,11 @@ bot.on('message', async (msg) => {
                 const result = await bot.sendMessage(APPEALS_GROUP_ID, appealMessage, {
                     parse_mode: 'HTML'
                 });
+                
+                // Зберігаємо mapping між message_id та chatId користувача
+                appealMessagesMap[result.message_id] = chatId;
+                console.log(`💾 Збережено mapping: message_id ${result.message_id} → user ${chatId}`);
+                
                 console.log(`✅ УСПІХ! Message ID: ${result.message_id}`);
                 console.log(`===============================\n`);
                 bot.sendMessage(chatId, "✅ Дякуємо! Ваше звернення надіслано.\n\nНаша команда обов'язково його прочитає і зв'яжеться з вами якомога швидше. 🩵", {
