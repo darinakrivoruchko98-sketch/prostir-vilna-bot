@@ -147,14 +147,6 @@ function normalizeText(text) {
     return text.replace(/[''ʼ]/g, "'");
 }
 
-function isLikelyFullName(value) {
-    const raw = String(value || '').trim();
-    if (!raw) return false;
-    const parts = raw.split(/\s+/).filter(Boolean);
-    if (parts.length < 2) return false;
-    return parts.every((part) => /^[A-Za-zА-Яа-яІіЇїЄєҐґ'`-]+$/.test(part));
-}
-
 // Правильна граматика для множини заходів
 function pluralizeEvents(count) {
     if (count === 1) return "захід";
@@ -2551,7 +2543,7 @@ bot.on('message', async (msg) => {
                 } else if (errorMsg.toLowerCase().includes('quota') || errorMsg.toLowerCase().includes('rate limit')) {
                     hint = '\n\n💡 Перевищено ліміт API. Спробуйте ще раз за 1-2 хвилини.';
                 } else if (errorMsg.toLowerCase().includes('not found') || errorMsg.toLowerCase().includes('sheet')) {
-                    hint = `\n\n💡 Лист "${PERSONAL_DATA_SHEET_NAME}" не знайдено. Перевірте налаштування.`;
+                    hint = `\n\n💡 Перевірте PERSONAL_DATA_SPREADSHEET_ID, доступ service account та існування листа "${PERSONAL_DATA_SHEET_NAME}".`;
                 }
                 
                 bot.sendMessage(chatId, `❌ Помилка при збереженні даних.\n\nДеталі: ${errorMsg}${hint}\n\nБудь ласка, спробуйте ще раз або зверніться до адміністратора.`, {
@@ -2766,25 +2758,6 @@ bot.on('message', async (msg) => {
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: [[{ text: "Скасувати" }]],
-                resize_keyboard: true
-            }
-        });
-        return;
-    }
-
-    // Якщо стан кроку загубився (перезапуск/конфлікт polling), але користувач ввів ПІБ,
-    // підхоплюємо як крок 1, щоб одразу перейти до кроку 2.
-    if (!user.registrationMode && Number(user.step || 0) === 0 && isLikelyFullName(text)) {
-        user.registrationMode = true;
-        user.step = 2;
-        user.name = text;
-
-        await bot.sendMessage(chatId, "📝 <b>Крок 2/6:</b> Введіть ваш <b>номер телефону</b> (формат: 380...)", {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [
-                    [{ text: "❌ Скасувати реєстрацію" }]
-                ],
                 resize_keyboard: true
             }
         });
