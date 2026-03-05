@@ -290,6 +290,19 @@ function getAfishaDaysKeyboard() {
     ];
 }
 
+function normalizeWeekdayKey(value) {
+    const normalized = normalizeText(String(value || ''))
+        .toLowerCase()
+        .replace(/[’`]/g, "'");
+
+    const aliases = {
+        "пятниця": "п'ятниця",
+        "пятницю": "п'ятницю"
+    };
+
+    return aliases[normalized] || normalized;
+}
+
 function showAfishaDaysMenu(chatId) {
     if (!users[chatId]) {
         users[chatId] = { step: 0 };
@@ -310,9 +323,18 @@ async function showDayAgenda(chatId, dayName) {
     }
     users[chatId].context = 'afisha';
 
-    const normalizedDay = normalizeText(dayName).toLowerCase();
+    const normalizedDay = normalizeWeekdayKey(dayName);
     const weekdays = { "неділя":0, "понеділок":1, "вівторок":2, "середа":3, "четвер":4, "п'ятниця":5, "субота":6 };
     const dayNum = weekdays[normalizedDay];
+    if (dayNum === undefined) {
+        await bot.sendMessage(chatId, "Не вдалося розпізнати день. Оберіть день з кнопок нижче.", {
+            reply_markup: {
+                keyboard: getAfishaDaysKeyboard(),
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
     // ДІАГНОСТИКА
     console.log(`\n🔍 showDayAgenda("${dayName}"): normalized="${normalizedDay}", dayNum=${dayNum}`);
     const allEvents = getAllEvents();
@@ -2657,7 +2679,7 @@ bot.on('message', async (msg) => {
     }
 
     // якщо натиснутий день тижня, делегуємо показ загального меню на відповідну функцію
-    const normalizedText = normalizeText(text).toLowerCase();
+    const normalizedText = normalizeWeekdayKey(text);
     const weekdays = { 'неділя':0, 'понеділок':1, 'вівторок':2, 'середа':3, 'четвер':4, "п'ятниця":5, 'субота':6 };
     
     console.log('🔍 Перевірка дня: text="' + text + '" → normalized="' + normalizedText + '"');
@@ -2764,6 +2786,14 @@ bot.on('message', async (msg) => {
 
     // Перейти до реєстрації на всі вибрані заходи
     if (text === "📝 Перейти до реєстрації") {
+        // Якщо щойно обрали захід і ще не натиснули "Додати", не губимо його
+        if ((!user.selectedEventsList || user.selectedEventsList.length === 0) && user.currentSelectedEventId && user.currentSelectedEventName) {
+            user.selectedEventsList = [{
+                id: user.currentSelectedEventId,
+                name: user.currentSelectedEventName
+            }];
+        }
+
         if (!user.selectedEventsList || user.selectedEventsList.length === 0) {
             bot.sendMessage(chatId, "❌ Немає вибраних заходів. Оберіть захід з афіші.", {
                 reply_markup: {
@@ -2800,6 +2830,14 @@ bot.on('message', async (msg) => {
 
     // Обробка реєстрації на всі вибрані заходи
     if (text === "✅ Продовжити реєстрацію") {
+        // Страховка від втрати стану між кнопками
+        if ((!user.selectedEventsList || user.selectedEventsList.length === 0) && user.currentSelectedEventId && user.currentSelectedEventName) {
+            user.selectedEventsList = [{
+                id: user.currentSelectedEventId,
+                name: user.currentSelectedEventName
+            }];
+        }
+
         if (!user.selectedEventsList || user.selectedEventsList.length === 0) {
             bot.sendMessage(chatId, "❌ Немає вибраних заходів.", {
                 reply_markup: {
