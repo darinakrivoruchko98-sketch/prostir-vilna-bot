@@ -43,31 +43,23 @@ app.use(express.json());
 // Telegram бот без polling
 const bot = new TelegramBot(TOKEN);
 
-// Встановлюємо webhook
-if (process.env.RAILWAY_URL) {
-    bot.setWebHook(`${process.env.RAILWAY_URL}/bot${TOKEN}`)
-        .then(() => {
-            console.log('✅ Webhook встановлено успішно');
-            console.log(`📍 Webhook URL: ${process.env.RAILWAY_URL}/bot${TOKEN}`);
-        })
-        .catch((err) => {
-            console.error('❌ Помилка встановлення webhook:', err.message);
-        });
-} else {
-    console.log('⚠️ RAILWAY_URL не встановлено. Webhook не активовано.');
-}
-
 // Обробка повідомлень від Telegram
 app.post(`/bot${TOKEN}`, (req, res) => {
-    bot.processUpdate(req.body);
-    res.sendStatus(200);
+    try {
+        bot.processUpdate(req.body);
+        res.sendStatus(200);
+    } catch (err) {
+        console.error('Error processing update:', err);
+        res.sendStatus(500);
+    }
 });
 
-// Health check endpoint
+// Health check endpoints
 app.get('/', (req, res) => {
     res.json({ 
         status: 'ok', 
         mode: 'webhook',
+        railway_url: process.env.RAILWAY_URL || 'not set',
         timestamp: new Date().toISOString() 
     });
 });
@@ -76,14 +68,32 @@ app.get('/health', (req, res) => {
     res.json({ 
         status: 'healthy',
         uptime: process.uptime(),
-        events: events.length
+        events: events.length,
+        railway_url: process.env.RAILWAY_URL || 'not set'
     });
 });
 
-// Запускаємо Express сервер
-app.listen(PORT, () => {
+// Запускаємо Express сервер ПЕРШИМ
+const server = app.listen(PORT, () => {
     console.log(`🚀 Сервер запущено на порті ${PORT}`);
     console.log(`📡 Режим: Webhook (Production)`);
+    
+    // Встановлюємо webhook ПІСЛЯ старту сервера
+    if (process.env.RAILWAY_URL) {
+        setTimeout(() => {
+            bot.setWebHook(`${process.env.RAILWAY_URL}/bot${TOKEN}`)
+                .then(() => {
+                    console.log('✅ Webhook встановлено успішно');
+                    console.log(`📍 Webhook URL: ${process.env.RAILWAY_URL}/bot${TOKEN}`);
+                })
+                .catch((err) => {
+                    console.error('❌ Помилка встановлення webhook:', err.message);
+                });
+        }, 2000); // Затримка 2 секунди після старту сервера
+    } else {
+        console.log('⚠️ RAILWAY_URL не встановлено. Webhook не активовано.');
+        console.log('💡 Встановіть змінну RAILWAY_URL у Railway Dashboard');
+    }
 });
 
 // Логування налаштованих груп для налагодження
@@ -917,7 +927,6 @@ async function initSheets() {
         sheetsClient = await createAuthorizedSheetsClient();
 
         console.log("Google Sheets підключено ✅");
-        // startPollingIfNeeded(); // Видалено - використовується webhook
 
         // Початкове завантаження розкладу та періодичне оновлення
         try {
@@ -934,12 +943,34 @@ async function initSheets() {
         }, 60000);
 
     } catch (err) {
-        console.error("Sheets error", err && err.message ? err.message : err);
-        setTimeout(initSheets, 30000);
+        console.error("❌ Google Sheets не підключено:", err && err.message ? err.message : err);
+        console.error("⚠️ Бот працює без Google Sheets. Перевірте credentials!");
+        // Не падаємо - сервер має працювати навіть без Sheets
     }
 }
 
-initSheets();
+// Викликаємо асинхронно - не блокує старт сервера
+initSheets().catch(err => {
+    console.error("Google Sheets initialization error:", err);
+});
+
+// Обробка необроблених помилок - не падаємо
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('⚠️ Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('⚠️ Uncaught Exception:', error);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('SIGTERM signal received: closing HTTP server');
+    server.close(() => {
+        console.log('HTTP server closed');
+        process.exit(0);
+    });
+});
 
 /* ===== TEST EVENTS (for demo) ===== */
 // Приклади заходів для тестування
