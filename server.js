@@ -1520,6 +1520,7 @@ bot.on('message', async (msg) => {
                 keyboard: [
                     [{ text: "Реєстрація" }],
                     [{ text: "Афіша заходів" }],
+                    [{ text: "Нагадування" }],
                     [{ text: "Контакти" }],
                     [{ text: "Назад" }]
                 ],
@@ -1709,11 +1710,12 @@ bot.on('message', async (msg) => {
         console.log(`✅ Скасування звернення для ${chatId}`);
         user.context = null;
         user.step = 0;
-        bot.sendMessage(chatId, "Меню:", {
+        bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
             reply_markup: {
                 keyboard: [
                     [{ text: "Реєстрація" }],
                     [{ text: "Афіша заходів" }],
+                    [{ text: "Нагадування" }],
                     [{ text: "Контакти" }],
                     [{ text: "Назад" }]
                 ],
@@ -1822,6 +1824,83 @@ bot.on('message', async (msg) => {
         // покажемо меню днів тижня
         user.context = 'afisha';
         await showAfishaDaysMenu(chatId);
+        return;
+    }
+
+    if (text === "Нагадування") {
+        // Показуємо майбутні заходи користувача з нагадуваннями
+        const userRegistrations = userEventRegistrations[chatId] || [];
+        
+        if (userRegistrations.length === 0) {
+            bot.sendMessage(chatId, 
+                "📅 У вас немає запланованих заходів.\n\n" +
+                "Зареєструйтесь на захід через меню «Афіша заходів», і ми нагадаємо вам про нього! 🩵", {
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "Повернутися в меню" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+        
+        // Сортуємо за датою
+        const sortedEvents = [...userRegistrations].sort((a, b) => a.eventDate - b.eventDate);
+        
+        let message = "📅 <b>Ваші майбутні заходи:</b>\n\n";
+        
+        sortedEvents.forEach((reg, index) => {
+            const dateStr = reg.eventDate.toLocaleDateString('uk-UA', { 
+                weekday: 'long', 
+                day: 'numeric', 
+                month: 'long' 
+            });
+            const timeStr = reg.eventDate.toLocaleTimeString('uk-UA', { 
+                hour: '2-digit', 
+                minute: '2-digit' 
+            });
+            
+            const timeUntilEvent = reg.eventDate - new Date();
+            const hoursUntilEvent = Math.floor(timeUntilEvent / (1000 * 60 * 60));
+            const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
+            
+            let timeLeftStr = '';
+            if (daysUntilEvent > 0) {
+                timeLeftStr = `через ${daysUntilEvent} ${daysUntilEvent === 1 ? 'день' : 'днів'}`;
+            } else if (hoursUntilEvent > 0) {
+                timeLeftStr = `через ${hoursUntilEvent} год`;
+            } else {
+                timeLeftStr = 'сьогодні';
+            }
+            
+            message += `${index + 1}. <b>${reg.eventName}</b>\n`;
+            message += `   🕐 ${dateStr} о ${timeStr}\n`;
+            message += `   ⏱ ${timeLeftStr}\n`;
+            
+            if (reg.reminded24h) {
+                message += `   ✅ Нагадування за 24 год надіслано\n`;
+            }
+            if (reg.reminded2h) {
+                message += `   ✅ Нагадування за 2 год надіслано\n`;
+            }
+            message += '\n';
+        });
+        
+        message += "\n🔔 <b>Автоматичні нагадування:</b>\n";
+        message += "• За 24 години до заходу\n";
+        message += "• За 2 години до заходу\n\n";
+        message += "Ми обов'язково нагадаємо вам! 🩵";
+        
+        bot.sendMessage(chatId, message, {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: "Повернутися в меню" }]
+                ],
+                resize_keyboard: true
+            }
+        });
         return;
     }
 
@@ -2117,6 +2196,7 @@ bot.on('message', async (msg) => {
                 keyboard: [
                     [{ text: "Реєстрація" }],
                     [{ text: "Афіша заходів" }],
+                    [{ text: "Нагадування" }],
                     [{ text: "Контакти" }],
                     [{ text: "Назад" }]
                 ],
@@ -2140,6 +2220,7 @@ bot.on('message', async (msg) => {
                 keyboard: [
                     [{ text: "Реєстрація" }],
                     [{ text: "Афіша заходів" }],
+                    [{ text: "Нагадування" }],
                     [{ text: "Контакти" }],
                     [{ text: "Назад" }]
                 ],
