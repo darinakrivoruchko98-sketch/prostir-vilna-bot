@@ -303,7 +303,7 @@ async function showDayAgenda(chatId, dayName) {
     console.log(`\n🔍 showDayAgenda("${dayName}"): normalized="${normalizedDay}", dayNum=${dayNum}`);
     const allEvents = getAllEvents();
     console.log(`   Всього майбутніх заходів: ${allEvents.length}`);
-    allEvents.forEach(e => console.log(`   - ${e.name}: ${e.date.toISOString()} (getUTCDay=${e.date.getDay()})`));
+    allEvents.forEach(e => console.log(`   - ${e.name}: ${e.date.toISOString()} (getUTCDay=${e.date.getUTCDay()})`));
     
     const dayEvents = getEventsForDay(dayNum);
     console.log(`   ✅ Знайдено на день ${dayNum}: ${dayEvents.length} заходів`);
@@ -2061,18 +2061,13 @@ bot.on('message', async (msg) => {
     }
 
     // якщо натиснутий день тижня, делегуємо показ загального меню на відповідну функцію
-    const normalizedText = normalizeText(text);
-    const weekdays = { 'Неділя':0, 'Середа':3, 'Четвер':4, "П'ятниця":5, 'Субота':6 };
+    const normalizedText = normalizeText(text).toLowerCase();
+    const weekdays = { 'неділя':0, 'понеділок':1, 'вівторок':2, 'середа':3, 'четвер':4, "п'ятниця":5, 'субота':6 };
     
     console.log('🔍 Перевірка дня: text="' + text + '" → normalized="' + normalizedText + '"');
-    if (weekdays[text] !== undefined) {
-        console.log('✅ Знайдено день (оригінал): ' + text + ' → ' + weekdays[text]);
-        await showDayAgenda(chatId, text);
-        return;
-    }
     if (weekdays[normalizedText] !== undefined) {
-        console.log('✅ Знайдено день (нормалізований): ' + normalizedText + ' → ' + weekdays[normalizedText]);
-        await showDayAgenda(chatId, normalizedText);
+        console.log('✅ Знайдено день: ' + normalizedText + ' → ' + weekdays[normalizedText]);
+        await showDayAgenda(chatId, text);
         return;
     }
     console.log('⚠️ День не знайдено. Доступні ключі:', Object.keys(weekdays));
