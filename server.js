@@ -1132,12 +1132,20 @@ async function appendRegistrationRow(chatId, user) {
         }
 
         try {
+            console.log(`\n📝 Спроба ${attempt}/${maxTries} запису в таблицю`);
+            console.log(`Spreadsheet ID: ${PERSONAL_DATA_SPREADSHEET_ID}`);
+            console.log(`Sheet Name: ${PERSONAL_DATA_SHEET_NAME}`);
+            console.log(`Range: ${PERSONAL_DATA_SHEET_NAME}!A:G`);
+            
             const existingResp = await sheetsClient.spreadsheets.values.get({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
                 range: `${PERSONAL_DATA_SHEET_NAME}!A:G`,
             });
             const rows = existingResp.data.values || [];
             const targetRow = findFirstFreeRow(rows);
+            
+            console.log(`Знайдено рядок для запису: ${targetRow}`);
+            console.log(`Дані для запису:`, values);
 
             await sheetsClient.spreadsheets.values.update({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
@@ -1145,7 +1153,7 @@ async function appendRegistrationRow(chatId, user) {
                 valueInputOption: "RAW",
                 requestBody: { values: [values] }
             });
-            console.log(`Записано в таблицю ${PERSONAL_DATA_SHEET_NAME} (рядок ${targetRow}) ✅`);
+            console.log(`✅ Записано в таблицю ${PERSONAL_DATA_SHEET_NAME} (рядок ${targetRow})`);
             return;
         } catch (e) {
             lastErr = e;
@@ -1194,6 +1202,18 @@ async function appendRegistrationRow(chatId, user) {
     }
 
     // якщо всі спроби не вдались — кинути помилку вгору
+    console.error(`\n❌ === КРИТИЧНА ПОМИЛКА ЗАПИСУ В ТАБЛИЦЮ ===`);
+    console.error(`Всі ${maxTries} спроби запису не вдались`);
+    console.error(`PERSONAL_DATA_SPREADSHEET_ID: ${PERSONAL_DATA_SPREADSHEET_ID}`);
+    console.error(`PERSONAL_DATA_SHEET_NAME: ${PERSONAL_DATA_SHEET_NAME}`);
+    console.error(`Останя помилка:`, lastErr);
+    if (lastErr && lastErr.response) {
+        console.error(`API Response:`, lastErr.response.data);
+        console.error(`API Status:`, lastErr.response.status);
+    }
+    console.error(`Дані які намагались записати:`, values);
+    console.error(`===============================\n`);
+    
     throw lastErr || new Error('Unknown error writing to sheet');
 }
 
@@ -1690,6 +1710,55 @@ bot.on('message', async (msg) => {
         }
         
         bot.sendMessage(chatId, testMsg, { parse_mode: 'HTML' });
+        return;
+    }
+
+    // ДІАГНОСТИКА: тест запису в таблицю персональних даних
+    if (text === '/test_write' || text === '/test_table') {
+        bot.sendMessage(chatId, '⏳ Тестую запис в таблицю "Березень"...');
+        
+        try {
+            const testUser = {
+                username: 'test_user',
+                name: 'ТЕСТ Запис',
+                phone: '380000000000',
+                birth: '01.01.2000',
+                visited: 'Ні',
+                status: 'ВПО',
+                health: 'Немає'
+            };
+            
+            await appendRegistrationRow(chatId, testUser);
+            
+            bot.sendMessage(chatId, 
+                `✅ <b>ТЕСТ УСПІШНИЙ!</b>\n\n` +
+                `Запис в таблицю працює.\n` +
+                `Перевірте таблицю "${PERSONAL_DATA_SHEET_NAME}" - там має з'явитись тестовий рядок.\n\n` +
+                `<b>Важливо:</b> Видаліть тестовий рядок з таблиці вручну.`,
+                { parse_mode: 'HTML' }
+            );
+        } catch (error) {
+            let errorMsg = `❌ <b>ТЕСТ НЕ ПРОЙДЕНО!</b>\n\n`;
+            errorMsg += `<b>Помилка:</b> ${error.message}\n\n`;
+            
+            if (error.message.includes('not found') || error.message.includes('Unable to parse')) {
+                errorMsg += `❌ Лист "${PERSONAL_DATA_SHEET_NAME}" не знайдено в таблиці!\n\n`;
+                errorMsg += `<b>Рішення:</b>\n`;
+                errorMsg += `1. Перевірте, що в таблиці є лист з назвою "${PERSONAL_DATA_SHEET_NAME}"\n`;
+                errorMsg += `2. Або змініть PERSONAL_DATA_SHEET_NAME в налаштуваннях`;
+            } else if (error.code === 403 || error.message.includes('permission')) {
+                errorMsg += `❌ Немає доступу до таблиці!\n\n`;
+                errorMsg += `<b>Рішення:</b>\n`;
+                errorMsg += `1. Відкрийте Google таблицю\n`;
+                errorMsg += `2. Натисніть "Поділитися"\n`;
+                errorMsg += `3. Додайте email service account як редактора`;
+            } else {
+                errorMsg += `<b>Детальна інформація:</b>\n`;
+                errorMsg += `<code>${JSON.stringify(error, null, 2).substring(0, 500)}</code>`;
+            }
+            
+            bot.sendMessage(chatId, errorMsg, { parse_mode: 'HTML' });
+        }
         return;
     }
 
