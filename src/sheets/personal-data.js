@@ -23,7 +23,8 @@ async function appendRegistrationRow(chatId, user) {
 
         for (let i = searchStartIndex; i < rows.length; i++) {
             const row = rows[i] || [];
-            const personalDataHasValues = [1, 2, 3, 4, 5, 6].some((idx) => String(row[idx] || '').trim() !== '');
+            // Перевіряємо ВСІ колонки A-G (індекси 0-6)
+            const personalDataHasValues = [0, 1, 2, 3, 4, 5, 6].some((idx) => String(row[idx] || '').trim() !== '');
             if (!personalDataHasValues) {
                 targetRow = i + 1;
                 break;
@@ -49,7 +50,7 @@ async function appendRegistrationRow(chatId, user) {
         try {
             const existingResp = await state.sheetsClient.spreadsheets.values.get({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${config.PERSONAL_DATA_SHEET_NAME}!A:I`
+                range: `${config.PERSONAL_DATA_SHEET_NAME}!A:G`
             });
             const rows = existingResp.data.values || [];
             const targetRow = findFirstFreeRow(rows);

@@ -2314,8 +2314,22 @@ bot.on('message', async (msg) => {
             user.health = text;
 
             try {
+                console.log(`\n📝 === ЗБЕРЕЖЕННЯ РЕЄСТРАЦІЇ ===`);
+                console.log(`ChatID: ${chatId}`);
+                console.log(`Дані користувача:`, {
+                    name: user.name,
+                    phone: user.phone,
+                    birth: user.birth,
+                    visited: user.visited,
+                    status: user.status,
+                    health: user.health
+                });
+                
                 // Записуємо дані прямо в таблицю без пункту username
                 await appendRegistrationRow(chatId, user);
+
+                console.log(`✅ Реєстрація успішно збережена для ${chatId}`);
+                console.log(`===============================\n`);
 
                 // Зберігаємо дані користувача для швидкого доступу 
                 knownUsers[chatId] = {
@@ -2345,8 +2359,22 @@ bot.on('message', async (msg) => {
                 user.registrationMode = false;
                 return;
             } catch (error) {
-                console.error("Помилка при запису реєстрації:", error);
-                bot.sendMessage(chatId, "❌ Помилка при збереженні даних. Спробуйте ще раз.");
+                console.error(`\n❌ === ПОМИЛКА ЗБЕРЕЖЕННЯ РЕЄСТРАЦІЇ ===`);
+                console.error(`ChatID: ${chatId}`);
+                console.error(`Помилка:`, error);
+                console.error(`Stack:`, error.stack);
+                console.error(`===============================\n`);
+                
+                const errorMsg = error && error.message ? error.message : 'Невідома помилка';
+                bot.sendMessage(chatId, `❌ Помилка при збереженні даних.\n\nДеталі: ${errorMsg}\n\nБудь ласка, спробуйте ще раз або зверніться до адміністратора.`, {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "❌ Скасувати реєстрацію" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
                 user.step = 6;
                 return;
             }
