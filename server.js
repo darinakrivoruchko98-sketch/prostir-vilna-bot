@@ -27,9 +27,9 @@ const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
 if (!SPREADSHEET_ID) {
     console.log("SPREADSHEET_ID не встановлений");
 }
-console.log("📋 Таблиця розкладу:", SPREADSHEET_ID);
+console.log("📋 Таблиця розкладу (тільки читання):", SPREADSHEET_ID);
 console.log("📄 Аркуш розкладу:", SCHEDULE_SHEET_NAME);
-console.log("👤 Таблиця персональних даних:", PERSONAL_DATA_SPREADSHEET_ID);
+console.log("👤 Таблиця персональних даних (запис ПІБ + всі реєстрації):", PERSONAL_DATA_SPREADSHEET_ID);
 console.log("📄 Аркуш персональних даних:", PERSONAL_DATA_SHEET_NAME);
 
 if (!TOKEN) {
@@ -637,95 +637,21 @@ function parseEventFromRow(row, currentDateContext) {
     };
 }
 
+// Функція видалена - реєстрації тепер не записуються в таблицю розкладу
 async function incrementSheetRegistration(event, fallbackRegistrant) {
-    if (!sheetsClient || !SPREADSHEET_ID) return;
-    for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
-        try {
-            const resp = await sheetsClient.spreadsheets.values.get({
-                spreadsheetId: SPREADSHEET_ID,
-                range: `${scheduleSheet}!A:E`
-            });
-            const rows = resp.data.values || [];
-            for (let i = 0; i < rows.length; i++) {
-                const row = rows[i];
-                const parsed = parseEventFromRow(row, null);
-                const parsedEvent = parsed.event;
-                if (!parsedEvent) continue;
-
-                const sameTitle = normalizeTitle(parsedEvent.name) === normalizeTitle(event.name);
-                const sameMinute = Math.abs(parsedEvent.date.getTime() - event.date.getTime()) < 60 * 1000;
-
-                if (sameTitle && sameMinute) {
-                const currReg = parseInt(row[4] || '0', 10);
-                const newReg = currReg + 1;
-                const currCap = parseInt(row[3] || '0', 10);
-                const newCap = Math.max(0, currCap - 1);
-                const range = `${scheduleSheet}!D${i+1}:E${i+1}`;
-                await sheetsClient.spreadsheets.values.update({
-                    spreadsheetId: SPREADSHEET_ID,
-                    range,
-                    valueInputOption: 'USER_ENTERED',
-                    requestBody: { values: [[newCap, newReg]] }
-                });
-
-                try {
-                    await updateScheduleRegistrationNote({
-                        scheduleSheet,
-                        rowIndex: i,
-                        registrationsCount: newReg,
-                        fallbackRegistrant
-                    });
-                } catch (noteErr) {
-                    console.error('Не вдалося оновити нотатку реєстрацій', noteErr && noteErr.message ? noteErr.message : noteErr);
-                }
-
-                event.seats = newCap;
-                event.registrations = newReg;
-                return;
-            }
-            }
-        } catch (e) {
-            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-            if (msg.includes('unable to parse range') || msg.includes('not found')) {
-                continue;
-            }
-            console.error('Error incrementing registration count', e);
-            return;
-        }
-    }
-    console.warn(`Не вдалося оновити лічильник у розкладі. Спробовано аркуші: ${SCHEDULE_SHEET_CANDIDATES.join(', ')}`);
+    // Реєстрації зберігаються тільки в пам'яті бота для нагадувань
+    // Персональні дані йдуть в таблицю "Березень" через appendRegistrationRow()
+    return;
 }
 
+// Функція видалена - використовувалась тільки для оновлення нотаток реєстрацій
 async function getSheetIdByTitle(spreadsheetId, sheetTitle) {
-    const meta = await sheetsClient.spreadsheets.get({
-        spreadsheetId,
-        fields: 'sheets.properties'
-    });
-    const sheets = (meta.data && meta.data.sheets) || [];
-    const found = sheets.find((sheetItem) => {
-        const title = sheetItem && sheetItem.properties && sheetItem.properties.title;
-        return title === sheetTitle;
-    });
-    return found && found.properties ? found.properties.sheetId : null;
+    return null;
 }
 
+// Функція видалена - використовувалась тільки для парсингу нотаток реєстрацій
 function parseRegistrantsFromNote(noteText) {
-    if (!noteText) return [];
-    const lines = String(noteText).split('\n');
-    const parsed = [];
-    for (const line of lines) {
-        const match = line.match(/^\s*\d+\.\s*(.*?)\s*—\s*(.*?)\s*$/);
-        if (!match) continue;
-        const rawName = String(match[1] || '').trim();
-        const rawPhone = String(match[2] || '').trim();
-        const userMatch = rawName.match(/^user\s+(\d+)$/i);
-        parsed.push({
-            userId: userMatch ? String(userMatch[1] || '').trim() : '',
-            name: userMatch ? '' : rawName,
-            phone: /^без\s+номера$/i.test(rawPhone) ? '' : rawPhone
-        });
-    }
-    return parsed;
+    return [];
 }
 
 function normalizeRegistrantName(value) {
@@ -736,128 +662,25 @@ function normalizeRegistrantPhone(value) {
     return String(value || '').replace(/\D+/g, '');
 }
 
+// Функція видалена - перевірка дублікатів тепер йде по пам'яті бота
 async function isRegistrantAlreadyInEventNote(event, registrantProfile) {
-    if (!event || !registrantProfile || !sheetsClient || !SPREADSHEET_ID) return false;
-
-    const profileName = normalizeRegistrantName(registrantProfile.name);
-    const profilePhone = normalizeRegistrantPhone(registrantProfile.phone);
-    if (!profileName || !profilePhone) return false;
-
-    for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
-        try {
-            const resp = await sheetsClient.spreadsheets.values.get({
-                spreadsheetId: SPREADSHEET_ID,
-                range: `${scheduleSheet}!A:E`
-            });
-            const rows = resp.data.values || [];
-            for (let i = 0; i < rows.length; i++) {
-                const parsedEvent = parseEventFromRow(rows[i], null).event;
-                if (!parsedEvent) continue;
-
-                const sameTitle = normalizeTitle(parsedEvent.name) === normalizeTitle(event.name);
-                const sameMinute = Math.abs(parsedEvent.date.getTime() - event.date.getTime()) < 60 * 1000;
-                if (!sameTitle || !sameMinute) continue;
-
-                const noteText = await getScheduleCellNote(scheduleSheet, i);
-                const registrants = parseRegistrantsFromNote(noteText);
-                return registrants.some((item) => {
-                    const itemName = normalizeRegistrantName(item.name);
-                    const itemPhone = normalizeRegistrantPhone(item.phone);
-                    return itemName === profileName && itemPhone === profilePhone;
-                });
-            }
-        } catch (e) {
-            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-            if (msg.includes('unable to parse range') || msg.includes('not found')) {
-                continue;
-            }
-            return false;
-        }
-    }
-
+    // Перевірка дублікатів тепер відбувається в registerForSelectedEvent() через userEventRegistrations
     return false;
 }
 
+// Функція видалена - нотатки більше не використовуються
 async function getScheduleCellNote(scheduleSheet, rowIndex) {
-    const resp = await sheetsClient.spreadsheets.get({
-        spreadsheetId: SPREADSHEET_ID,
-        ranges: [`${scheduleSheet}!E${rowIndex + 1}`],
-        includeGridData: true,
-        fields: 'sheets.data.rowData.values.note'
-    });
-
-    const sheets = (resp.data && resp.data.sheets) || [];
-    const rowData = sheets[0] && sheets[0].data && sheets[0].data[0] && sheets[0].data[0].rowData;
-    const cell = rowData && rowData[0] && rowData[0].values && rowData[0].values[0];
-    return (cell && typeof cell.note === 'string') ? cell.note : '';
+    return '';
 }
 
+// Функція видалена - нотатки більше не використовуються
 async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, existingNote) {
-    const registrants = parseRegistrantsFromNote(existingNote);
-    if (fallbackRegistrant) {
-        const fallbackUserId = String(fallbackRegistrant.userId || '').trim();
-        const fallbackName = String(fallbackRegistrant.name || '').trim();
-        const fallbackPhone = String(fallbackRegistrant.phone || '').trim();
-
-        if (fallbackName || fallbackPhone || fallbackUserId) {
-            registrants.push({
-                userId: fallbackUserId,
-                name: fallbackName,
-                phone: fallbackPhone
-            });
-        }
-    }
-
-    if (registrants.length === 0) {
-        const safeCount = Number.isFinite(Number(registrationsCount)) ? Number(registrationsCount) : 0;
-        return `Зареєстровано: ${safeCount}\n\nСписок порожній`;
-    }
-
-    const safeCount = Number.isFinite(Number(registrationsCount)) ? Number(registrationsCount) : 0;
-    const displayCount = Math.max(safeCount, registrants.length);
-
-    const lines = registrants.map((item, index) => {
-        const name = item.name || `user ${item.userId}`;
-        const phone = item.phone || 'без номера';
-        return `${index + 1}. ${name} — ${phone}`;
-    });
-
-    return `Зареєстровано: ${displayCount}\n\n${lines.join('\n')}`;
+    return '';
 }
 
+// Функція видалена - нотатки більше не оновлюються
 async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registrationsCount, fallbackRegistrant }) {
-    if (!sheetsClient || !SPREADSHEET_ID) return;
-    const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, scheduleSheet);
-    if (sheetId === null || sheetId === undefined) return;
-
-    let existingNote = '';
-    try {
-        existingNote = await getScheduleCellNote(scheduleSheet, rowIndex);
-    } catch (e) {
-        existingNote = '';
-    }
-    const noteText = await buildRegistrantsNote(registrationsCount, fallbackRegistrant, existingNote);
-
-    await sheetsClient.spreadsheets.batchUpdate({
-        spreadsheetId: SPREADSHEET_ID,
-        requestBody: {
-            requests: [{
-                repeatCell: {
-                    range: {
-                        sheetId,
-                        startRowIndex: rowIndex,
-                        endRowIndex: rowIndex + 1,
-                        startColumnIndex: 4,
-                        endColumnIndex: 5
-                    },
-                    cell: {
-                        note: noteText
-                    },
-                    fields: 'note'
-                }
-            }]
-        }
-    });
+    return;
 }
 
 // Фільтрувати та сортувати заходи
@@ -1620,24 +1443,17 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
     const registrantProfile = await resolveRegistrantProfile(chatId, user, providedName || '', providedPhone || '');
 
     const evObj = events.find(e => e.id === eventId);
-    if (evObj) {
-        const alreadyRegistered = await isRegistrantAlreadyInEventNote(evObj, registrantProfile);
-        if (alreadyRegistered) {
+    
+    // Перевіряємо дублікати в пам'яті (не в таблиці)
+    if (evObj && userEventRegistrations[chatId]) {
+        const alreadyAdded = userEventRegistrations[chatId].some(r => r.eventId === eventId);
+        if (alreadyAdded) {
             return { status: 'already-registered' };
         }
     }
 
-    await appendEventRegistration(eventId, chatId, {
-        name: registrantProfile.name,
-        phone: registrantProfile.phone
-    });
-
+    // Оновлюємо лічильник тільки в пам'яті
     if (evObj) {
-        await incrementSheetRegistration(evObj, {
-            userId: registrantProfile.userId,
-            name: registrantProfile.name,
-            phone: registrantProfile.phone
-        });
         evObj.registrations = (evObj.registrations || 0) + 1;
         if (typeof evObj.seats === 'number') evObj.seats = Math.max(0, evObj.seats - 1);
     }
