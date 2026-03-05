@@ -7,14 +7,22 @@ async function appendRegistrationRow(chatId, user) {
         throw new Error('PERSONAL_DATA_SPREADSHEET_ID not set');
     }
 
+    // Структура таблиці "Березень":
+    // A: Прізвище Ім'я По-батькові (ПІБ)
+    // B: Телефон
+    // C: Дата народження
+    // D: Чи відвідували простір?
+    // E: ВПО/МО
+    // F: Інвалідність/Суттєві проблеми
+    // G: Ім'я акаунта (chatId для ідентифікації)
     const values = [
-        String(chatId),
-        user.name || "",
-        user.phone || "",
-        user.birth || "",
-        user.visited || "",
-        user.status || "",
-        user.health || ""
+        user.name || "",           // Колонка A: ПІБ
+        user.phone || "",          // Колонка B: Телефон
+        user.birth || "",          // Колонка C: Дата народження
+        user.visited || "",        // Колонка D: Чи відвідували?
+        user.status || "",         // Колонка E: ВПО/МО
+        user.health || "",         // Колонка F: Інвалідність
+        String(chatId)              // Колонка G: ID користувача (для пошуку)
     ];
 
     const findFirstFreeRow = (rows) => {
@@ -23,15 +31,9 @@ async function appendRegistrationRow(chatId, user) {
 
         for (let i = searchStartIndex; i < rows.length; i++) {
             const row = rows[i] || [];
-            // Перевіряємо ВСІ колонки A-G (індекси 0-6)
-            const personalDataHasValues = [0, 1, 2, 3, 4, 5, 6].some((idx) => String(row[idx] || '').trim() !== '');
-            if (!personalDataHasValues) {
-                targetRow = i + 1;
-                break;
-            }
-        }
-
-        return targetRow;
+            // Перевіряємо колонку A (ПІБ) - якщо вона пуста, то рядок вільний
+            const cell = String(row[0] || '').trim();
+            if (cell === '') {
     };
 
     console.log(`appendRegistrationRow -> writing to ${config.PERSONAL_DATA_SHEET_NAME}:`, values);
@@ -142,16 +144,16 @@ async function findUserByChatId(chatId) {
         });
         const rows = resp.data.values || [];
         const chatIdStr = String(chatId);
-        // Find the latest matching row (column A = index 0)
+        // Find the latest matching row (chatId is now in column G = index 6)
         for (let i = rows.length - 1; i >= 0; i--) {
-            if (rows[i][0] === chatIdStr) {
+            if (rows[i][6] === chatIdStr) {  // Column G (index 6) contains chatId
                 return {
-                    name: rows[i][1] || '',
-                    phone: rows[i][2] || '',
-                    birth: rows[i][3] || '',
-                    visited: rows[i][4] || '',
-                    status: rows[i][5] || '',
-                    health: rows[i][6] || '',
+                    name: rows[i][0] || '',      // Column A: ПІБ
+                    phone: rows[i][1] || '',     // Column B: Телефон
+                    birth: rows[i][2] || '',     // Column C: Дата народження
+                    visited: rows[i][3] || '',   // Column D: Чи відвідували?
+                    status: rows[i][4] || '',    // Column E: ВПО/МО
+                    health: rows[i][5] || ''     // Column F: Інвалідність
                 };
             }
         }

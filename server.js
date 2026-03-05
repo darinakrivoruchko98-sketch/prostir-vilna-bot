@@ -1839,6 +1839,61 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    // ДІАГНОСТИКА: команда для тестування з'єднання з Google Sheets
+    if (text === '/test_sheets' || text === '/test') {
+        let testMsg = `🔍 <b>ТЕСТ GOOGLE SHEETS З'ЄДНАННЯ</b>\n\n`;
+        
+        try {
+            // Тест 1: Перевірка sheetsClient
+            if (!sheetsClient) {
+                testMsg += `❌ sheetsClient не ініціалізований\n`;
+                bot.sendMessage(chatId, testMsg, { parse_mode: 'HTML' });
+                return;
+            }
+            testMsg += `✅ sheetsClient ініціалізований\n\n`;
+            
+            // Тест 2: Тест читання таблиці розкладу
+            try {
+                const scheduleResp = await sheetsClient.spreadsheets.values.get({
+                    spreadsheetId: SPREADSHEET_ID,
+                    range: `${SCHEDULE_SHEET_NAME}!A1:C1`
+                });
+                testMsg += `✅ <b>Таблиця розкладу:</b>\n`;
+                testMsg += `   ID: ${SPREADSHEET_ID.substring(0, 20)}...\n`;
+                testMsg += `   Лист: "${SCHEDULE_SHEET_NAME}"\n`;
+                testMsg += `   Статус: Доступна ✅\n\n`;
+            } catch (e) {
+                testMsg += `❌ <b>Таблиця розкладу:</b> ${e && e.message ? e.message : e}\n\n`;
+            }
+            
+            // Тест 3: Тест читання таблиці особистих даних
+            try {
+                const personalResp = await sheetsClient.spreadsheets.values.get({
+                    spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                    range: `${PERSONAL_DATA_SHEET_NAME}!A1:G1`
+                });
+                testMsg += `✅ <b>Таблиця персональних даних:</b>\n`;
+                testMsg += `   ID: ${PERSONAL_DATA_SPREADSHEET_ID.substring(0, 20)}...\n`;
+                testMsg += `   Лист: "${PERSONAL_DATA_SHEET_NAME}"\n`;
+                testMsg += `   Статус: Доступна ✅\n`;
+                testMsg += `   Рядків: ${(personalResp.data.values || []).length}\n\n`;
+            } catch (e) {
+                testMsg += `❌ <b>Таблиця персональних даних:</b> ${e && e.message ? e.message : e}\n\n`;
+            }
+            
+            testMsg += `📝 Якщо є помилки, перевірте:\n`;
+            testMsg += `• Дозволи service account\n`;
+            testMsg += `• Назви листів у конфігурації\n`;
+            testMsg += `• Активність Google Sheets API`;
+            
+        } catch (error) {
+            testMsg = `❌ <b>ПОМИЛКА ТЕСТУ</b>\n\n${error && error.message ? error.message : error}`;
+        }
+        
+        bot.sendMessage(chatId, testMsg, { parse_mode: 'HTML' });
+        return;
+    }
+
     // respond to /start command by auto-loading profile
     if (text === '/start') {
         if (!users[chatId]) users[chatId] = { step: 0 };
