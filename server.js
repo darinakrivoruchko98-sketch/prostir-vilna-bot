@@ -1538,6 +1538,47 @@ bot.on('message', async (msg) => {
         }
     }
 
+    // ДІАГНОСТИКА: команда для перегляду всіх заходів
+    if (text === '/debug_events' || text === '/debug') {
+        const allEventsRaw = events || [];
+        const now = new Date();
+        const futureEvents = allEventsRaw.filter(e => e.date > now);
+        
+        let debugMsg = `🔍 <b>ДІАГНОСТИКА ЗАХОДІВ</b>\n\n`;
+        debugMsg += `📊 Всього заходів: ${allEventsRaw.length}\n`;
+        debugMsg += `📅 Майбутніх: ${futureEvents.length}\n`;
+        debugMsg += `⏰ Поточний час: ${now.toLocaleString('uk-UA', { timeZone: 'Europe/Kiev' })}\n\n`;
+        
+        if (allEventsRaw.length === 0) {
+            debugMsg += `❌ Заходи не завантажені!\nПеревірте:\n• Підключення до Google Sheets\n• Формат таблиці Розклад`;
+        } else {
+            debugMsg += `<b>Всі заходи:</b>\n`;
+            allEventsRaw.forEach((e, i) => {
+                const dayNames = ['Неділя', 'Понеділок', 'Вівторок', 'Середа', 'Четвер', 'П\'ятниця', 'Субота'];
+                const dayName = dayNames[e.date.getDay()];
+                const isPast = e.date <= now ? '(минулий)' : '';
+                debugMsg += `${i+1}. ${e.name}\n`;
+                debugMsg += `   ${dayName}, ${e.date.toLocaleString('uk-UA', { timeZone: 'Europe/Kiev' })} ${isPast}\n`;
+                debugMsg += `   Місць: ${e.seats}\n\n`;
+            });
+        }
+        
+        bot.sendMessage(chatId, debugMsg, { parse_mode: 'HTML' });
+        return;
+    }
+
+    // ДІАГНОСТИКА: команда для перезавантаження розкладу
+    if (text === '/reload_schedule' || text === '/reload') {
+        bot.sendMessage(chatId, '⏳ Перезавантажую розклад з Google Sheets...');
+        try {
+            await loadEventsFromSheet();
+            bot.sendMessage(chatId, `✅ Розклад оновлено!\nЗавантажено ${events.length} заходів`);
+        } catch (e) {
+            bot.sendMessage(chatId, `❌ Помилка: ${e.message}`);
+        }
+        return;
+    }
+
     // respond to /start command by showing main menu
     if (text === '/start') {
         bot.sendMessage(chatId, "Меню:", {
