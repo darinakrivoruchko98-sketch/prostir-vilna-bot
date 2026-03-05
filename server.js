@@ -1620,12 +1620,20 @@ bot.on('message', async (msg) => {
     // ДІАГНОСТИКА: логуємо всі повідомлення з групи звернень
     if (chatId === APPEALS_GROUP_ID) {
         console.log(`\n🔔 ПОВІДОМЛЕННЯ З ГРУПИ ЗВЕРНЕНЬ`);
-        console.log(`Chat ID: ${chatId}`);
+        console.log(`Chat ID: ${chatId} (type: ${typeof chatId})`);
+        console.log(`APPEALS_GROUP_ID: ${APPEALS_GROUP_ID} (type: ${typeof APPEALS_GROUP_ID})`);
+        console.log(`IDs match: ${chatId === APPEALS_GROUP_ID}`);
         console.log(`Chat type: ${msg.chat.type}`);
         console.log(`Has reply: ${!!msg.reply_to_message}`);
+        console.log(`Message from: ${msg.from?.first_name || msg.from?.username || 'Unknown'} (${msg.from?.id})`);
         console.log(`Text: "${text.substring(0, 50)}"`);
         if (msg.reply_to_message) {
+            console.log(`Reply to message_id: ${msg.reply_to_message.message_id}`);
             console.log(`Reply to text: "${(msg.reply_to_message.text || '').substring(0, 100)}"`);
+            console.log(`Reply from bot: ${msg.reply_to_message.from?.is_bot}`);
+            console.log(`Reply from username: ${msg.reply_to_message.from?.username}`);
+        } else {
+            console.log(`⚠️ Це НЕ відповідь (reply) на повідомлення!`);
         }
     }
 
@@ -1655,6 +1663,33 @@ bot.on('message', async (msg) => {
         }
         
         bot.sendMessage(chatId, debugMsg, { parse_mode: 'HTML' });
+        return;
+    }
+
+    // ДІАГНОСТИКА: тест зв'язку з групою звернень
+    if (text === '/test_appeals' || text === '/test_group') {
+        let testMsg = `🔍 <b>ТЕСТ ГРУПИ ЗВЕРНЕНЬ</b>\n\n`;
+        testMsg += `📊 Поточний чат ID: ${chatId}\n`;
+        testMsg += `📊 Тип чату: ${msg.chat.type}\n`;
+        testMsg += `📊 APPEALS_GROUP_ID: ${APPEALS_GROUP_ID}\n`;
+        testMsg += `📊 IDs match: ${chatId === APPEALS_GROUP_ID ? '✅' : '❌'}\n\n`;
+        testMsg += `💾 Збережених звернень: ${Object.keys(appealMessagesMap).length}\n`;
+        
+        if (Object.keys(appealMessagesMap).length > 0) {
+            testMsg += `\n<b>Останні 5 звернень:</b>\n`;
+            const entries = Object.entries(appealMessagesMap).slice(-5);
+            entries.forEach(([msgId, userId]) => {
+                testMsg += `• msg_id: ${msgId} → user: ${userId}\n`;
+            });
+        }
+        
+        if (chatId === APPEALS_GROUP_ID) {
+            testMsg += `\n✅ Це група звернень! Відповіді працюватимуть.`;
+        } else {
+            testMsg += `\n⚠️ Це НЕ група звернень!`;
+        }
+        
+        bot.sendMessage(chatId, testMsg, { parse_mode: 'HTML' });
         return;
     }
 
@@ -1797,14 +1832,19 @@ bot.on('message', async (msg) => {
     // === ОБРОБКА ВІДПОВІДЕЙ НА ЗВЕРНЕННЯ У ГРУПІ (ПЕРЕД ІНШИМИ ГРУПАМИ) ===
     if (chatId === APPEALS_GROUP_ID && msg.reply_to_message) {
         console.log(`\n🔍 ПЕРЕВІРКА REPLY У ГРУПІ ЗВЕРНЕНЬ`);
-        console.log(`ChatID: ${chatId} === APPEALS_GROUP_ID: ${APPEALS_GROUP_ID}`);
+        console.log(`ChatID: ${chatId} (type: ${typeof chatId}) === APPEALS_GROUP_ID: ${APPEALS_GROUP_ID} (type: ${typeof APPEALS_GROUP_ID})`);
+        console.log(`Comparison result: ${chatId === APPEALS_GROUP_ID}`);
         console.log(`Reply to message ID: ${msg.reply_to_message.message_id}`);
+        console.log(`Reply to message from bot: ${msg.reply_to_message.from?.is_bot}`);
+        console.log(`Reply to message from username: ${msg.reply_to_message.from?.username}`);
         
         // Шукаємо користувача через mapping
         const originalMessageId = msg.reply_to_message.message_id;
         const userChatId = appealMessagesMap[originalMessageId];
         
         console.log(`Mapping lookup: message_id ${originalMessageId} → user ${userChatId || 'НЕ ЗНАЙДЕНО'}`);
+        console.log(`Total mappings available: ${Object.keys(appealMessagesMap).length}`);
+        console.log(`Available message_ids:`, Object.keys(appealMessagesMap).join(', '));
         
         if (userChatId) {
             const replyText = text;
@@ -1827,20 +1867,32 @@ bot.on('message', async (msg) => {
                 });
                 
                 // Підтверджуємо успішну відправку в групі
-                bot.sendMessage(APPEALS_GROUP_ID, `✅ Відповідь надіслано користувачу`, {
+                await bot.sendMessage(APPEALS_GROUP_ID, `✅ Відповідь надіслано користувачу`, {
                     reply_to_message_id: msg.message_id
                 });
                 
                 console.log(`✅ Відповідь успішно надіслано користувачу ${userChatId}\n`);
             } catch (error) {
                 console.error(`❌ Помилка при відправці відповіді:`, error);
-                bot.sendMessage(APPEALS_GROUP_ID, `❌ Не вдалося надіслати відповідь користувачу (можливо, заблокував бота)`, {
+                await bot.sendMessage(APPEALS_GROUP_ID, `❌ Не вдалося надіслати відповідь користувачу (можливо, заблокував бота)`, {
                     reply_to_message_id: msg.message_id
                 });
             }
         } else {
             console.log(`⚠️ Не знайдено користувача для message_id ${originalMessageId} в mapping`);
-            console.log(`⚠️ Доступні message_id в mapping:`, Object.keys(appealMessagesMap).join(', '));
+            console.log(`⚠️ Спроба відповісти старим способом...`);
+            
+            // Спробуємо відповісти тому, хто відправив повідомлення (fallback)
+            await bot.sendMessage(APPEALS_GROUP_ID, 
+                `⚠️ Не знайдено користувача для цього звернення.\n\n` +
+                `Це може статися якщо:\n` +
+                `• Бот був перезапущений після отримання звернення\n` +
+                `• Звернення старше ніж останній перезапуск\n\n` +
+                `Використайте @username користувача для відповіді напряму.`, 
+                {
+                    reply_to_message_id: msg.message_id
+                }
+            );
         }
         return; // Не обробляємо інші повідомлення з групи
     }
@@ -2076,9 +2128,12 @@ bot.on('message', async (msg) => {
                 
                 // Зберігаємо mapping між message_id та chatId користувача
                 appealMessagesMap[result.message_id] = chatId;
-                console.log(`💾 Збережено mapping: message_id ${result.message_id} → user ${chatId}`);
+                console.log(`💾 Збережено mapping: message_id ${result.message_id} → user chatId ${chatId}`);
+                console.log(`💾 Всього mappings в пам'яті: ${Object.keys(appealMessagesMap).length}`);
+                console.log(`💾 Список всіх message_ids:`, Object.keys(appealMessagesMap).join(', '));
                 
                 console.log(`✅ УСПІХ! Message ID: ${result.message_id}`);
+                console.log(`ℹ️  Щоб відповісти користувачу, натисніть Reply на це повідомлення в групі`);
                 console.log(`===============================\n`);
                 bot.sendMessage(chatId, "✅ Дякуємо! Ваше звернення надіслано.\n\nНаша команда обов'язково його прочитає і зв'яжеться з вами якомога швидше. 🩵", {
                     reply_markup: {
