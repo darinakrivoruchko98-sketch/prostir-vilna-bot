@@ -1511,6 +1511,51 @@ bot.on('message', async (msg) => {
         return; // Не обробляємо групові повідомлення як команди користувача
     }
 
+    // === ОБРОБКА ВІДПОВІДЕЙ НА ЗВЕРНЕННЯ У ГРУПІ ===
+    if (chatId === APPEALS_GROUP_ID && msg.reply_to_message) {
+        // Перевіряємо, чи reply на повідомлення від бота (звернення)
+        const originalText = msg.reply_to_message.text || '';
+        
+        // Витягуємо Telegram ID користувача з оригінального повідомлення
+        const idMatch = originalText.match(/🔗\s*<b>Telegram ID:<\/b>\s*<code>(\d+)<\/code>/);
+        
+        if (idMatch && idMatch[1]) {
+            const userChatId = parseInt(idMatch[1]);
+            const replyText = text;
+            
+            console.log(`\n📨 ВІДПОВІДЬ НА ЗВЕРНЕННЯ`);
+            console.log(`Від: ${msg.from.first_name || msg.from.username || 'Адміністратор'}`);
+            console.log(`Кому: ${userChatId}`);
+            console.log(`Текст: ${replyText.substring(0, 100)}`);
+            
+            try {
+                // Відправляємо відповідь користувачу
+                await bot.sendMessage(userChatId, `📬 <b>Відповідь від команди "Вільна":</b>\n\n${replyText}`, {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "Повернутися в меню" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                
+                // Підтверджуємо успішну відправку в групі
+                bot.sendMessage(APPEALS_GROUP_ID, `✅ Відповідь надіслано користувачу`, {
+                    reply_to_message_id: msg.message_id
+                });
+                
+                console.log(`✅ Відповідь успішно надіслано користувачу ${userChatId}\n`);
+            } catch (error) {
+                console.error(`❌ Помилка при відправці відповіді:`, error);
+                bot.sendMessage(APPEALS_GROUP_ID, `❌ Не вдалося надіслати відповідь користувачу (можливо, заблокував бота)`, {
+                    reply_to_message_id: msg.message_id
+                });
+            }
+        }
+        return; // Не обробляємо інші повідомлення з групи
+    }
+
     // === ОБРОБКА КОРИСТУВАЦЬКИХ ПОВІДОМЛЕНЬ ===
     if (!users[chatId]) {
         users[chatId] = { step: 0 };
