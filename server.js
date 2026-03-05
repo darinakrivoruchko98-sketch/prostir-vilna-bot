@@ -212,12 +212,23 @@ async function checkAndSendReminders() {
 function getAllEvents() {
     cleanupPastEvents();
     const now = new Date();
-    return events.filter(e => e.date > now);
+    const futureEvents = events.filter(e => e.date > now);
+    console.log(`📊 getAllEvents: всього ${events.length} заходів, майбутніх ${futureEvents.length}`);
+    if (events.length > 0 && futureEvents.length === 0) {
+        console.log(`⚠️ Всі заходи в минулому! Останній захід: ${events[events.length-1]?.name} ${events[events.length-1]?.date}`);
+    }
+    return futureEvents;
 }
 
 // Фільтрує заходи за номером дня (0-6)
 function getEventsForDay(dayNum) {
-    return getAllEvents().filter(e => e.date.getDay() === dayNum);
+    const allEvents = getAllEvents();
+    const dayEvents = allEvents.filter(e => e.date.getDay() === dayNum);
+    console.log(`📊 getEventsForDay(${dayNum}): знайдено ${dayEvents.length} заходів з ${allEvents.length}`);
+    if (dayEvents.length > 0) {
+        dayEvents.forEach(e => console.log(`   - ${e.name} на ${e.date}`));
+    }
+    return dayEvents;
 }
 
 function formatSeatsCount(count) {
@@ -1137,12 +1148,19 @@ async function loadEventsFromSheet() {
 
             seen.add(ev.id);
             events.push(ev);
+            console.log(`   📅 Завантажено: ${ev.name} | ${ev.date.toLocaleDateString('uk-UA')} ${ev.date.toLocaleTimeString('uk-UA', {hour: '2-digit', minute: '2-digit'})} | ${ev.seats} місць`);
         }
 
         if (events.length === 0) {
             console.warn(`⚠️ Розклад прочитано, але заходів не знайдено. Перевірте дані у листі ${SCHEDULE_SHEET_NAME}.`);
         }
         console.log(`✅ Розклад завантажено з Sheets (${events.length} заходів)`);
+        
+        // Додаткова діагностика
+        const now = new Date();
+        const futureCount = events.filter(e => e.date > now).length;
+        console.log(`   📊 Поточний час: ${now.toLocaleString('uk-UA')}`);
+        console.log(`   📊 Майбутніх заходів: ${futureCount} з ${events.length}`);
 
     } catch (e) {
         console.error('Error loading schedule from Sheets', e);
