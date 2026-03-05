@@ -34,6 +34,12 @@ async function appendRegistrationRow(chatId, user) {
             // Перевіряємо колонку A (ПІБ) - якщо вона пуста, то рядок вільний
             const cell = String(row[0] || '').trim();
             if (cell === '') {
+                targetRow = i + 1;
+                break;
+            }
+        }
+
+        return targetRow;
     };
 
     console.log(`appendRegistrationRow -> writing to ${config.PERSONAL_DATA_SHEET_NAME}:`, values);
