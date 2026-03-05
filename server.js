@@ -43,6 +43,33 @@ app.use(express.json());
 
 // Telegram бот з polling режимом
 const bot = new TelegramBot(TOKEN, { polling: true });
+let stoppingBecauseOfPollingConflict = false;
+
+bot.on('polling_error', async (error) => {
+    const message = String((error && error.message) || '');
+    const isConflict = message.includes('409 Conflict') || (error && error.code === 'ETELEGRAM' && message.includes('getUpdates'));
+
+    if (!isConflict) {
+        console.error('⚠️ polling_error:', error);
+        return;
+    }
+
+    console.error('❌ ETELEGRAM 409 Conflict: знайдено інший активний інстанс бота з тим самим токеном.');
+
+    if (stoppingBecauseOfPollingConflict) {
+        return;
+    }
+
+    stoppingBecauseOfPollingConflict = true;
+    try {
+        await bot.stopPolling();
+        console.error('🛑 Поточний інстанс зупинено, щоб уникнути дублювання/хаотичних кроків.');
+    } catch (stopErr) {
+        console.error('⚠️ Не вдалося коректно зупинити polling:', stopErr);
+    }
+
+    process.exit(1);
+});
 
 // Health check endpoints
 app.get('/', (req, res) => {
