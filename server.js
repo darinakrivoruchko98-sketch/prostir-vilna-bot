@@ -1885,7 +1885,7 @@ bot.on('message', async (msg) => {
             // Завантажуємо заходи з розпису для цього тижня
             const thisWeekEvents = await getUserWeeklyEvents(chatId, foundProfile);
             
-            let greeting = `✅ Привіт, ${foundProfile.name.split(' ')[0]}! Рад(а) тебе бачити.\n\n`;
+            let greeting = `✅ Привіт, ${foundProfile.name.split(' ')[1]}! Рад(а) тебе бачити.\n\n`;
             
             if (thisWeekEvents && thisWeekEvents.length > 0) {
                 greeting += `📅 <b>Ваші заходи на цьому тижні:</b>\n`;
@@ -1919,7 +1919,7 @@ bot.on('message', async (msg) => {
                 chatId: String(chatId)
             };
             
-            await bot.sendMessage(chatId, "Профіль не знайдено. 😔\n\nРозпочинаємо реєстрацію...\n\n📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Ім'я Прізвище По батькові):", {
+            await bot.sendMessage(chatId, "Профіль не знайдено. 😔\n\nРозпочинаємо реєстрацію...\n\n📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -2517,7 +2517,7 @@ bot.on('message', async (msg) => {
         user.step = 1;
         user.registrationMode = true;
         
-        await bot.sendMessage(chatId, "📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Ім'я Прізвище По батькові):", {
+        await bot.sendMessage(chatId, "📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: [
@@ -2539,7 +2539,7 @@ bot.on('message', async (msg) => {
             // Дані неповні — питаємо їх
             user.step = 1;
             user.registrationMode = true;
-            await bot.sendMessage(chatId, "Спочатку заповніть дані.\n\n📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Ім'я Прізвище По батькові):", {
+            await bot.sendMessage(chatId, "Спочатку заповніть дані.\n\n📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
