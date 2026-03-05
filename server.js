@@ -74,7 +74,7 @@ app.get('/health', (req, res) => {
 });
 
 // Запускаємо Express сервер ПЕРШИМ
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Сервер запущено на порті ${PORT}`);
     console.log(`📡 Режим: Webhook (Production)`);
     
