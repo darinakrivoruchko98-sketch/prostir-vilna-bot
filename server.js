@@ -1404,6 +1404,60 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    // === ОБРОБКА ВІДПОВІДЕЙ НА ЗВЕРНЕННЯ У ГРУПІ (ПЕРЕД ІНШИМИ ГРУПАМИ) ===
+    if (chatId === APPEALS_GROUP_ID && msg.reply_to_message) {
+        console.log(`\n🔍 ПЕРЕВІРКА REPLY У ГРУПІ ЗВЕРНЕНЬ`);
+        console.log(`ChatID: ${chatId} === APPEALS_GROUP_ID: ${APPEALS_GROUP_ID}`);
+        console.log(`Reply to message exists: ${!!msg.reply_to_message}`);
+        
+        // Перевіряємо, чи reply на повідомлення від бота (звернення)
+        const originalText = msg.reply_to_message.text || '';
+        console.log(`Original text length: ${originalText.length}`);
+        console.log(`Original text preview: ${originalText.substring(0, 200)}`);
+        
+        // Витягуємо Telegram ID користувача з оригінального повідомлення
+        const idMatch = originalText.match(/🔗\s*<b>Telegram ID:<\/b>\s*<code>(\d+)<\/code>/);
+        console.log(`ID Match result: ${idMatch ? idMatch[1] : 'НЕ ЗНАЙДЕНО'}`);
+        
+        if (idMatch && idMatch[1]) {
+            const userChatId = parseInt(idMatch[1]);
+            const replyText = text;
+            
+            console.log(`\n📨 ВІДПОВІДЬ НА ЗВЕРНЕННЯ`);
+            console.log(`Від: ${msg.from.first_name || msg.from.username || 'Адміністратор'}`);
+            console.log(`Кому: ${userChatId}`);
+            console.log(`Текст: ${replyText.substring(0, 100)}`);
+            
+            try {
+                // Відправляємо відповідь користувачу
+                await bot.sendMessage(userChatId, `📬 <b>Відповідь від команди "Вільна":</b>\n\n${replyText}`, {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "Повернутися в меню" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                
+                // Підтверджуємо успішну відправку в групі
+                bot.sendMessage(APPEALS_GROUP_ID, `✅ Відповідь надіслано користувачу`, {
+                    reply_to_message_id: msg.message_id
+                });
+                
+                console.log(`✅ Відповідь успішно надіслано користувачу ${userChatId}\n`);
+            } catch (error) {
+                console.error(`❌ Помилка при відправці відповіді:`, error);
+                bot.sendMessage(APPEALS_GROUP_ID, `❌ Не вдалося надіслати відповідь користувачу (можливо, заблокував бота)`, {
+                    reply_to_message_id: msg.message_id
+                });
+            }
+        } else {
+            console.log(`⚠️ Не вдалося знайти ID користувача в повідомленні`);
+        }
+        return; // Не обробляємо інші повідомлення з групи
+    }
+
     // === ОБРОБКА ПОВІДОМЛЕНЬ З ГРУПИ/КАНАЛУ ===
     // Только з офіційної групи (за ID)
     const chatIds = [];
@@ -1415,6 +1469,15 @@ bot.on('message', async (msg) => {
     if (msg.chat.type === 'group' || msg.chat.type === 'supergroup' || msg.chat.type === 'channel') {
         const status = authorizedChat ? '✅' : '❌';
         console.log(`📌 Група (ID: ${msg.chat.id}, тип: ${msg.chat.type}) ${status}`);
+        
+        // Додатково логуємо повідомлення з групи звернень
+        if (msg.chat.id === APPEALS_GROUP_ID) {
+            console.log(`   🔔 Це група звернень! ID: ${APPEALS_GROUP_ID}`);
+            console.log(`   Reply: ${msg.reply_to_message ? 'ТАК' : 'НІ'}`);
+            if (msg.reply_to_message) {
+                console.log(`   Reply from bot: ${msg.reply_to_message.from?.is_bot ? 'ТАК' : 'НІ'}`);
+            }
+        }
     }
 
     if (authorizedChat &&
@@ -1509,51 +1572,6 @@ bot.on('message', async (msg) => {
         await processParsedEvents(parsedEvents);
 
         return; // Не обробляємо групові повідомлення як команди користувача
-    }
-
-    // === ОБРОБКА ВІДПОВІДЕЙ НА ЗВЕРНЕННЯ У ГРУПІ ===
-    if (chatId === APPEALS_GROUP_ID && msg.reply_to_message) {
-        // Перевіряємо, чи reply на повідомлення від бота (звернення)
-        const originalText = msg.reply_to_message.text || '';
-        
-        // Витягуємо Telegram ID користувача з оригінального повідомлення
-        const idMatch = originalText.match(/🔗\s*<b>Telegram ID:<\/b>\s*<code>(\d+)<\/code>/);
-        
-        if (idMatch && idMatch[1]) {
-            const userChatId = parseInt(idMatch[1]);
-            const replyText = text;
-            
-            console.log(`\n📨 ВІДПОВІДЬ НА ЗВЕРНЕННЯ`);
-            console.log(`Від: ${msg.from.first_name || msg.from.username || 'Адміністратор'}`);
-            console.log(`Кому: ${userChatId}`);
-            console.log(`Текст: ${replyText.substring(0, 100)}`);
-            
-            try {
-                // Відправляємо відповідь користувачу
-                await bot.sendMessage(userChatId, `📬 <b>Відповідь від команди "Вільна":</b>\n\n${replyText}`, {
-                    parse_mode: 'HTML',
-                    reply_markup: {
-                        keyboard: [
-                            [{ text: "Повернутися в меню" }]
-                        ],
-                        resize_keyboard: true
-                    }
-                });
-                
-                // Підтверджуємо успішну відправку в групі
-                bot.sendMessage(APPEALS_GROUP_ID, `✅ Відповідь надіслано користувачу`, {
-                    reply_to_message_id: msg.message_id
-                });
-                
-                console.log(`✅ Відповідь успішно надіслано користувачу ${userChatId}\n`);
-            } catch (error) {
-                console.error(`❌ Помилка при відправці відповіді:`, error);
-                bot.sendMessage(APPEALS_GROUP_ID, `❌ Не вдалося надіслати відповідь користувачу (можливо, заблокував бота)`, {
-                    reply_to_message_id: msg.message_id
-                });
-            }
-        }
-        return; // Не обробляємо інші повідомлення з групи
     }
 
     // === ОБРОБКА КОРИСТУВАЦЬКИХ ПОВІДОМЛЕНЬ ===
