@@ -1537,6 +1537,11 @@ bot.on('message', async (msg) => {
 
     // Якщо користувач в режимі звернень - обробляємо його текст ДО всього іншого
     if (user.context === 'appeal' && user.step === 1) {
+        console.log(`\n========== ЗВЕРНЕННЯ ==========`);
+        console.log(`ChatID: ${chatId}`);
+        console.log(`Text: "${text.substring(0, 100)}"`);
+        console.log(`APPEALS_GROUP_ID: ${APPEALS_GROUP_ID} (type: ${typeof APPEALS_GROUP_ID})`);
+        
         const userName = knownUsers[chatId]?.name || `користувач ${chatId}`;
         const userPhone = knownUsers[chatId]?.phone || 'не вказаний';
         
@@ -1564,9 +1569,12 @@ bot.on('message', async (msg) => {
         // Відправляємо звернення в групу "Відгуки"
         if (APPEALS_GROUP_ID) {
             try {
-                await bot.sendMessage(APPEALS_GROUP_ID, appealMessage, {
+                console.log(`⏳ Надсилаю в групу ${APPEALS_GROUP_ID}...`);
+                const result = await bot.sendMessage(APPEALS_GROUP_ID, appealMessage, {
                     parse_mode: 'HTML'
                 });
+                console.log(`✅ УСПІХ! Message ID: ${result.message_id}`);
+                console.log(`===============================\n`);
                 bot.sendMessage(chatId, "✅ Дякуємо! Ваше звернення надіслано.\n\nНаша команда обов'язково його прочитає і зв'яжеться з вами якомога швидше. 🩵", {
                     reply_markup: {
                         keyboard: [[{ text: "Повернутися в меню" }]],
@@ -1576,7 +1584,11 @@ bot.on('message', async (msg) => {
                 user.step = 0;
                 user.context = null;
             } catch (error) {
-                console.error('❌ Помилка при відправці звернення:', error.message);
+                console.error(`❌ ПОМИЛКА при відправці:`);
+                console.error(`Код: ${error.code}`);
+                console.error(`Повідомлення: ${error.message}`);
+                console.error(`Повний стек:`, error);
+                console.log(`===============================\n`);
                 bot.sendMessage(chatId, "❌ Виникла помилка. Спробуйте пізніше.", {
                     reply_markup: {
                         keyboard: [[{ text: "Повернутися в меню" }]],
@@ -1587,6 +1599,8 @@ bot.on('message', async (msg) => {
                 user.context = null;
             }
         } else {
+            console.error(`❌ APPEALS_GROUP_ID НЕ ВСТАНОВЛЕНО!`);
+            console.log(`===============================\n`);
             bot.sendMessage(chatId, "⚠️ Групу не налаштовано. Спробуйте написати напряму фахівцям.", {
                 reply_markup: {
                     keyboard: [[{ text: "Повернутися в меню" }]],
