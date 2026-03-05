@@ -40,26 +40,14 @@ if (!TOKEN) {
 const app = express();
 app.use(express.json());
 
-// Telegram бот без polling
-const bot = new TelegramBot(TOKEN);
-
-// Обробка повідомлень від Telegram
-app.post(`/bot${TOKEN}`, (req, res) => {
-    try {
-        bot.processUpdate(req.body);
-        res.sendStatus(200);
-    } catch (err) {
-        console.error('Error processing update:', err);
-        res.sendStatus(500);
-    }
-});
+// Telegram бот з polling режимом
+const bot = new TelegramBot(TOKEN, { polling: true });
 
 // Health check endpoints
 app.get('/', (req, res) => {
     res.json({ 
         status: 'ok', 
-        mode: 'webhook',
-        railway_url: process.env.RAILWAY_URL || 'not set',
+        mode: 'polling',
         timestamp: new Date().toISOString() 
     });
 });
@@ -69,31 +57,15 @@ app.get('/health', (req, res) => {
         status: 'healthy',
         uptime: process.uptime(),
         events: events.length,
-        railway_url: process.env.RAILWAY_URL || 'not set'
+        mode: 'polling'
     });
 });
 
 // Запускаємо Express сервер ПЕРШИМ
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Сервер запущено на порті ${PORT}`);
-    console.log(`📡 Режим: Webhook (Production)`);
-    
-    // Встановлюємо webhook ПІСЛЯ старту сервера
-    if (process.env.RAILWAY_URL) {
-        setTimeout(() => {
-            bot.setWebHook(`${process.env.RAILWAY_URL}/bot${TOKEN}`)
-                .then(() => {
-                    console.log('✅ Webhook встановлено успішно');
-                    console.log(`📍 Webhook URL: ${process.env.RAILWAY_URL}/bot${TOKEN}`);
-                })
-                .catch((err) => {
-                    console.error('❌ Помилка встановлення webhook:', err.message);
-                });
-        }, 2000); // Затримка 2 секунди після старту сервера
-    } else {
-        console.log('⚠️ RAILWAY_URL не встановлено. Webhook не активовано.');
-        console.log('💡 Встановіть змінну RAILWAY_URL у Railway Dashboard');
-    }
+    console.log(`📡 Режим: Polling (Надійний для Railway)`);
+    console.log(`🤖 Бот прослуховує оновлення у режимі polling...`);
 });
 
 // Логування налаштованих груп для налагодження
