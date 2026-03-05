@@ -67,6 +67,10 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Сервер запущено на порті ${PORT}`);
     console.log(`📡 Режим: Polling (Надійний для Railway)`);
     console.log(`🤖 Бот прослуховує оновлення у режимі polling...`);
+    console.log(`\n📋 КОНФІГУРАЦІЯ ГРУП:`);
+    console.log(`   GROUP_ID: ${GROUP_ID}`);
+    console.log(`   CHAT_ID: ${CHAT_ID}`);
+    console.log(`   APPEALS_GROUP_ID: ${APPEALS_GROUP_ID} (type: ${typeof APPEALS_GROUP_ID})`);
 });
 
 // Логування налаштованих груп для налагодження
@@ -1386,6 +1390,23 @@ bot.on('message', async (msg) => {
   const text = msg.text || msg.caption || "";
 
     if (!text) return;
+    
+    // ДІАГНОСТИКА: логуємо всі групові повідомлення
+    if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
+        console.log(`\n[GROUP MSG] ID: ${chatId}, Type: ${msg.chat.type}, Reply: ${!!msg.reply_to_message}`);
+    }
+    
+    // ДІАГНОСТИКА: логуємо всі повідомлення з групи звернень
+    if (chatId === APPEALS_GROUP_ID) {
+        console.log(`\n🔔 ПОВІДОМЛЕННЯ З ГРУПИ ЗВЕРНЕНЬ`);
+        console.log(`Chat ID: ${chatId}`);
+        console.log(`Chat type: ${msg.chat.type}`);
+        console.log(`Has reply: ${!!msg.reply_to_message}`);
+        console.log(`Text: "${text.substring(0, 50)}"`);
+        if (msg.reply_to_message) {
+            console.log(`Reply to text: "${(msg.reply_to_message.text || '').substring(0, 100)}"`);
+        }
+    }
 
     // respond to /start command by showing main menu
     if (text === '/start') {
