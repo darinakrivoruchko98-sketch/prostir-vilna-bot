@@ -7,7 +7,12 @@ function loadGoogleCredentials() {
     const credsB64 = process.env.GOOGLE_CREDENTIALS;
     if (credsB64) {
         try {
-            const creds = JSON.parse(Buffer.from(credsB64, "base64").toString());
+            let creds = null;
+            try {
+                creds = JSON.parse(credsB64);
+            } catch {
+                creds = JSON.parse(Buffer.from(credsB64, "base64").toString());
+            }
             if (creds.client_email && creds.private_key) {
                 console.log("🔑 Credentials: GOOGLE_CREDENTIALS env var");
                 return creds;

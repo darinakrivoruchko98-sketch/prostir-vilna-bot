@@ -741,11 +741,17 @@ function parseCredentialsFromEnv() {
         }
     }
 
-    // Backward-compatible alias used in older deployments/docs
+    // Backward-compatible alias used in older deployments/docs.
+    // Accept both raw JSON and base64 payloads to support legacy env setups.
     if (process.env.GOOGLE_CREDENTIALS) {
         try {
-            const decoded = Buffer.from(process.env.GOOGLE_CREDENTIALS, "base64").toString("utf8");
-            const parsed = JSON.parse(decoded);
+            let parsed = null;
+            try {
+                parsed = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+            } catch {
+                const decoded = Buffer.from(process.env.GOOGLE_CREDENTIALS, "base64").toString("utf8");
+                parsed = JSON.parse(decoded);
+            }
             sources.push({
                 label: "GOOGLE_CREDENTIALS",
                 authOptions: {
