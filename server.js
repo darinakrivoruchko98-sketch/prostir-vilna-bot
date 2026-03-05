@@ -2152,7 +2152,7 @@ bot.on('message', async (msg) => {
         user.step = 0;
         user.registrationMode = false;
 
-        bot.sendMessage(chatId, "Реєстрацію скасовано. Оберіть дію в меню.", {
+        await bot.sendMessage(chatId, "Реєстрацію скасовано. Оберіть дію в меню.", {
             reply_markup: {
                 keyboard: [
                     [{ text: "Реєстрація" }],
@@ -2172,7 +2172,7 @@ bot.on('message', async (msg) => {
         console.log(`✅ Скасування звернення для ${chatId}`);
         user.context = null;
         user.step = 0;
-        bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
+        await bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
             reply_markup: {
                 keyboard: [
                     [{ text: "Реєстрація" }],
@@ -2282,7 +2282,7 @@ bot.on('message', async (msg) => {
             user.name = text;
             user.step = 2;
 
-            bot.sendMessage(chatId, "📝 <b>Крок 2/6:</b> Введіть ваш <b>номер телефону</b> (формат: 380...)", {
+            await bot.sendMessage(chatId, "📝 <b>Крок 2/6:</b> Введіть ваш <b>номер телефону</b> (формат: 380...)", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -2298,7 +2298,7 @@ bot.on('message', async (msg) => {
             user.phone = text;
             user.step = 3;
 
-            bot.sendMessage(chatId, "📝 <b>Крок 3/6:</b> Введіть вашу <b>дату народження</b> (формат: ДД.ММ.РРРР)", {
+            await bot.sendMessage(chatId, "📝 <b>Крок 3/6:</b> Введіть вашу <b>дату народження</b> (формат: ДД.ММ.РРРР)", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -2314,7 +2314,7 @@ bot.on('message', async (msg) => {
             user.birth = text;
             user.step = 4;
 
-            bot.sendMessage(chatId, "📝 <b>Крок 4/6:</b> Чи відвідували ви Простір раніше?", {
+            await bot.sendMessage(chatId, "📝 <b>Крок 4/6:</b> Чи відвідували ви Простір раніше?", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -2331,7 +2331,7 @@ bot.on('message', async (msg) => {
             user.visited = text;
             user.step = 5;
 
-            bot.sendMessage(chatId, "📝 <b>Крок 5/6:</b> Ваш статус:", {
+            await bot.sendMessage(chatId, "📝 <b>Крок 5/6:</b> Ваш статус:", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -2348,7 +2348,7 @@ bot.on('message', async (msg) => {
             user.status = text;
             user.step = 6;
 
-            bot.sendMessage(chatId, "📝 <b>Крок 6/6:</b> Інвалідність/суттєві проблеми зі здоров'ям:", {
+            await bot.sendMessage(chatId, "📝 <b>Крок 6/6:</b> Інвалідність/суттєві проблеми зі здоров'ям:", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -2458,7 +2458,7 @@ bot.on('message', async (msg) => {
         user.step = 1;
         user.registrationMode = true;
         
-        bot.sendMessage(chatId, "📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
+        await bot.sendMessage(chatId, "📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: [
@@ -2480,7 +2480,7 @@ bot.on('message', async (msg) => {
             // Дані неповні — питаємо їх
             user.step = 1;
             user.registrationMode = true;
-            bot.sendMessage(chatId, "Спочатку заповніть дані.\n\n📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
+            await bot.sendMessage(chatId, "Спочатку заповніть дані.\n\n📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
