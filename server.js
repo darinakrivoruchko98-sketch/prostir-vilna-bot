@@ -11,7 +11,7 @@ const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKE
 const PORT = process.env.PORT || 8080;
 const GROUP_ID = process.env.GROUP_ID || config.GROUP_ID;
 const CHAT_ID = process.env.CHAT_ID || config.CHAT_ID;
-const APPEALS_GROUP_ID = process.env.APPEALS_GROUP_ID || '-1003802751255'; // Група "Відгуки чат-бот Вільна"
+const APPEALS_GROUP_ID = Number(process.env.APPEALS_GROUP_ID || '-1003802751255'); // Група "Відгуки чат-бот Вільна"
 // Таблиця для розкладу та реєстрацій на заходи
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || config.SPREADSHEET_ID;
 const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || config.SCHEDULE_SHEET_NAME;
@@ -88,6 +88,12 @@ if (typeof CHAT_ID !== 'undefined') {
     }
 } else {
     console.log("⚠️ CHAT_ID змінна не визначена (можна додати у .env або через export)");
+}
+
+if (APPEALS_GROUP_ID) {
+    console.log(`📬 APPEALS_GROUP_ID встановлено: ${APPEALS_GROUP_ID} (група "Відгуки")`);
+} else {
+    console.log("⚠️ APPEALS_GROUP_ID не встановлено");
 }
 
 let users = {};
