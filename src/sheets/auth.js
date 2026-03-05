@@ -63,15 +63,26 @@ function loadGoogleCredentials() {
     }
 
     // 6. Local key file (for local dev — gitignored)
-    const files = fs.readdirSync(".").filter(f => /^vilna-bot-.*\.json$/.test(f));
-    for (const f of files) {
-        try {
-            const data = JSON.parse(fs.readFileSync(f, "utf8"));
-            if (data.type === "service_account" && data.client_email && data.private_key) {
-                console.log("🔑 Credentials: key file", f);
-                return data;
+    try {
+        const allFiles = fs.readdirSync(".");
+        console.log("📁 Файли в поточній папці:", allFiles.filter(f => f.endsWith('.json')));
+        
+        const files = allFiles.filter(f => /^vilna-bot-.*\.json$/.test(f));
+        console.log("🔍 Знайдено файлів credentials з регулярним виразом:", files);
+        
+        for (const f of files) {
+            try {
+                const data = JSON.parse(fs.readFileSync(f, "utf8"));
+                if (data.type === "service_account" && data.client_email && data.private_key) {
+                    console.log("🔑 Credentials: key file", f);
+                    return data;
+                }
+            } catch (e) {
+                console.log(`⚠️ Помилка читання файлу ${f}:`, e.message);
             }
-        } catch {}
+        }
+    } catch (e) {
+        console.log("⚠️ Помилка при пошуку локальних файлів:", e.message);
     }
 
     return null;
