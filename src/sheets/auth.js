@@ -80,11 +80,14 @@ function loadGoogleCredentials() {
 async function createAuthorizedSheetsClient() {
     const creds = loadGoogleCredentials();
     if (!creds) {
+        console.error("❌ Google credentials не знайдено!");
         throw new Error(
             "Не знайдено Google credentials. Задайте GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, GOOGLE_CREDENTIALS, " +
             "GOOGLE_CLIENT_EMAIL+GOOGLE_PRIVATE_KEY, GOOGLE_APPLICATION_CREDENTIALS або покладіть vilna-bot-*.json у кореневу папку"
         );
     }
+
+    console.log(`✅ Credentials завантажені від ${creds.client_email}`);
 
     const auth = new google.auth.GoogleAuth({
         credentials: {
@@ -94,11 +97,23 @@ async function createAuthorizedSheetsClient() {
         scopes: ["https://www.googleapis.com/auth/spreadsheets"]
     });
 
-    const client = await auth.getClient();
-    await client.getAccessToken();
-    console.log("🔐 Google Sheets credentials валідні");
-
-    return google.sheets({ version: "v4", auth: client });
+    try {
+        const client = await auth.getClient();
+        const token = await client.getAccessToken();
+        console.log(`🔐 Google Sheets credentials валідні`);
+        console.log(`   Service account: ${creds.client_email}`);
+        return google.sheets({ version: "v4", auth: client });
+    } catch (error) {
+        console.error(`\n❌ === ПОМИЛКА АВТОРИЗАЦІЇ GOOGLE SHEETS ===`);
+        console.error(`Помилка: ${error && error.message ? error.message : error}`);
+        console.error(`Email service account: ${creds.client_email}`);
+        console.error(`\n💡 Перевірте:`);
+        console.error(`   1. Чи додано ${creds.client_email} як редактор до обох Google Sheets`);
+        console.error(`   2. Чи правильно скопійовані дані credentials у .env`);
+        console.error(`   3. Чи активовано Google Sheets API у Google Cloud Console`);
+        console.error(`=====================================\n`);
+        throw error;
+    }
 }
 
 module.exports = {

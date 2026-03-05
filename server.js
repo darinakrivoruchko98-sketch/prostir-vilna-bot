@@ -2366,12 +2366,31 @@ bot.on('message', async (msg) => {
             } catch (error) {
                 console.error(`\n❌ === ПОМИЛКА ЗБЕРЕЖЕННЯ РЕЄСТРАЦІЇ ===`);
                 console.error(`ChatID: ${chatId}`);
+                console.error(`Дані які намагалась зберегти:`, {
+                    name: user.name,
+                    phone: user.phone,
+                    birth: user.birth,
+                    visited: user.visited,
+                    status: user.status,
+                    health: user.health
+                });
                 console.error(`Помилка:`, error);
                 console.error(`Stack:`, error.stack);
                 console.error(`===============================\n`);
                 
-                const errorMsg = error && error.message ? error.message : 'Невідома помилка';
-                bot.sendMessage(chatId, `❌ Помилка при збереженні даних.\n\nДеталі: ${errorMsg}\n\nБудь ласка, спробуйте ще раз або зверніться до адміністратора.`, {
+                let errorMsg = error && error.message ? error.message : 'Невідома помилка';
+                
+                // Додаємо деталі про можливі причини
+                let hint = '';
+                if (errorMsg.toLowerCase().includes('permission') || errorMsg.toLowerCase().includes('403')) {
+                    hint = '\n\n💡 Перевірте, чи добавлено service account як редактор до Google Sheet.';
+                } else if (errorMsg.toLowerCase().includes('quota') || errorMsg.toLowerCase().includes('rate limit')) {
+                    hint = '\n\n💡 Перевищено ліміт API. Спробуйте ще раз за 1-2 хвилини.';
+                } else if (errorMsg.toLowerCase().includes('not found') || errorMsg.toLowerCase().includes('sheet')) {
+                    hint = `\n\n💡 Лист "${PERSONAL_DATA_SHEET_NAME}" не знайдено. Перевірте налаштування.`;
+                }
+                
+                bot.sendMessage(chatId, `❌ Помилка при збереженні даних.\n\nДеталі: ${errorMsg}${hint}\n\nБудь ласка, спробуйте ще раз або зверніться до адміністратора.`, {
                     parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [

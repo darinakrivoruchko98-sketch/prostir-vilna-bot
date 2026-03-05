@@ -48,12 +48,16 @@ async function appendRegistrationRow(chatId, user) {
         }
 
         try {
+            console.log(`\n📝 Спроба ${attempt}/${maxTries}: Читання листа "${config.PERSONAL_DATA_SHEET_NAME}"...`);
             const existingResp = await state.sheetsClient.spreadsheets.values.get({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
                 range: `${config.PERSONAL_DATA_SHEET_NAME}!A:G`
             });
             const rows = existingResp.data.values || [];
+            console.log(`✅ Лист прочитаний. Рядків: ${rows.length}`);
+            
             const targetRow = findFirstFreeRow(rows);
+            console.log(`📝 Запис у рядок ${targetRow}`);
 
             await state.sheetsClient.spreadsheets.values.update({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
@@ -61,22 +65,30 @@ async function appendRegistrationRow(chatId, user) {
                 valueInputOption: "RAW",
                 requestBody: { values: [values] }
             });
-            console.log(`Записано в таблицю ${config.PERSONAL_DATA_SHEET_NAME} (рядок ${targetRow}) ✅`);
+            console.log(`✅ Записано в таблицю ${config.PERSONAL_DATA_SHEET_NAME} (рядок ${targetRow}) ✅\n`);
             return;
         } catch (e) {
             lastErr = e;
+            const errorMsg = e && e.message ? e.message : String(e);
+            const errorCode = e && e.code ? e.code : 'unknown';
+            
             try {
                 const apiInfo = e && e.response && e.response.data ? JSON.stringify(e.response.data) : null;
-                console.error(`appendRegistrationRow attempt ${attempt} failed:`, e && e.message ? e.message : e, apiInfo ? `| api: ${apiInfo}` : '');
+                console.error(`\n❌ Спроба ${attempt} не вдалась:`);
+                console.error(`   Код помилки: ${errorCode}`);
+                console.error(`   Повідомлення: ${errorMsg}`);
+                if (apiInfo) console.error(`   API деталі: ${apiInfo}`);
+                console.error(`   Лист: "${config.PERSONAL_DATA_SHEET_NAME}"`);
+                console.error(`   SpreadsheetId: ${config.PERSONAL_DATA_SPREADSHEET_ID}\n`);
             } catch (logErr) {
-                console.error(`appendRegistrationRow attempt ${attempt} failed (unable to stringify error):`, e);
+                console.error(`\n❌ Спроба ${attempt} не вдалась (неможливо вивести деталі):`, e);
             }
 
             // Якщо помилка з листом — пробуємо перший лист як fallback
-            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+            const msg = errorMsg.toLowerCase();
             if ((msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('sheet') ) && attempt === 1) {
                 try {
-                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:G (перший аркуш)');
+                    console.warn('⚠️  Спроба fallback-діапазону A:G (перший аркуш)...');
 
                     const existingResp = await state.sheetsClient.spreadsheets.values.get({
                         spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
@@ -91,25 +103,33 @@ async function appendRegistrationRow(chatId, user) {
                         valueInputOption: "RAW",
                         requestBody: { values: [values] }
                     });
-                    console.log(`Записано в таблицю (fallback A:G, рядок ${targetRow}) ✅`);
+                    console.log(`✅ Записано в таблицю (fallback A:G, рядок ${targetRow}) ✅\n`);
                     return;
                 } catch (e2) {
                     lastErr = e2;
-                    console.error('Fallback append to A:G failed:', e2 && e2.message ? e2.message : e2);
+                    console.error('❌ Fallback append to A:G failed:', e2 && e2.message ? e2.message : e2);
                 }
             }
 
             // Если ошибка связана с правами — дать подсказку в лог
-            if (msg.includes('permission') || (e && e.code === 403)) {
-                console.error('appendRegistrationRow: можливі проблеми з дозволами. Перевірте, чи додано service account як редактор до Google Sheet.');
+            if (msg.includes('permission') || errorCode === 403 || errorCode === '403') {
+                console.error('⚠️  ❌ Помилка дозволів (403)! Перевірте, чи добавлено service account як редактор до Google Sheet.');
+            }
+            
+            if (msg.includes('quota') || msg.includes('rate limit')) {
+                console.error('⚠️  ❌ Перевищено ліміт API! Спробуйте ще раз пізніше.');
             }
 
             await new Promise(r => setTimeout(r, 500 * attempt));
         }
     }
 
-    // якщо всі спроби не вдались — кинути помилку вгору
-    throw lastErr || new Error('Unknown error writing to sheet');
+    // якщо всі спроби не вдались — кинути помилку вгору з деталями
+    if (lastErr) {
+        const msg = lastErr && lastErr.message ? lastErr.message : 'Unknown error';
+        throw new Error(`Помилка при збереженні до Google Sheets: ${msg}`);
+    }
+    throw new Error('Unknown error writing to sheet');
 }
 
 async function findUserByChatId(chatId) {
