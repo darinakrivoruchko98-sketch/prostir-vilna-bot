@@ -11,7 +11,7 @@ const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || "Розклад";
 // Таблиця для персональних даних (ПІБ, телефон тощо)
 const PERSONAL_DATA_SPREADSHEET_ID = process.env.PERSONAL_DATA_SPREADSHEET_ID || "1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE";
 const PERSONAL_DATA_SHEET_NAME = process.env.PERSONAL_DATA_SHEET_NAME || "Березень";
-const REGISTRATIONS_SHEET_NAME = process.env.REGISTRATIONS_SHEET_NAME || "Реєстрації";
+const REGISTRATIONS_SHEET_NAME = process.env.REGISTRATIONS_SHEET_NAME || "Березень";
 const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
 
 // Таблиця розкладу: https://docs.google.com/spreadsheets/d/1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8/edit

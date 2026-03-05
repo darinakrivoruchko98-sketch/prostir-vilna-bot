@@ -51,15 +51,28 @@ function loadGoogleCredentials() {
         };
     }
 
-    // 5. Explicit key file path
+    // 5. GOOGLE_APPLICATION_CREDENTIALS can be either:
+    //    - a file path (classic behavior)
+    //    - a raw JSON string (common misconfiguration on Railway)
     if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        const gac = process.env.GOOGLE_APPLICATION_CREDENTIALS.trim();
         try {
-            const fileCreds = JSON.parse(fs.readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, "utf8"));
-            if (fileCreds.client_email && fileCreds.private_key) {
-                console.log(`🔑 Credentials: GOOGLE_APPLICATION_CREDENTIALS (${process.env.GOOGLE_APPLICATION_CREDENTIALS})`);
-                return fileCreds;
+            if (gac.startsWith("{")) {
+                const inlineCreds = JSON.parse(gac);
+                if (inlineCreds.client_email && inlineCreds.private_key) {
+                    console.log("🔑 Credentials: GOOGLE_APPLICATION_CREDENTIALS (inline JSON)");
+                    return inlineCreds;
+                }
+            } else {
+                const fileCreds = JSON.parse(fs.readFileSync(gac, "utf8"));
+                if (fileCreds.client_email && fileCreds.private_key) {
+                    console.log(`🔑 Credentials: GOOGLE_APPLICATION_CREDENTIALS (${gac})`);
+                    return fileCreds;
+                }
             }
-        } catch {}
+        } catch (e) {
+            console.log(`⚠️ GOOGLE_APPLICATION_CREDENTIALS не вдалося прочитати: ${e.message}`);
+        }
     }
 
     // 6. Local key file (for local dev — gitignored)

@@ -833,13 +833,30 @@ function resolveGoogleAuthCandidates() {
     }
 
     if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-        candidates.push({
-            label: `GOOGLE_APPLICATION_CREDENTIALS (${process.env.GOOGLE_APPLICATION_CREDENTIALS})`,
-            authOptions: {
-                keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-                scopes
+        const gac = String(process.env.GOOGLE_APPLICATION_CREDENTIALS).trim();
+        // Railway misconfiguration guard: some deployments put raw JSON into GOOGLE_APPLICATION_CREDENTIALS.
+        if (gac.startsWith('{')) {
+            try {
+                const parsed = JSON.parse(gac);
+                candidates.push({
+                    label: 'GOOGLE_APPLICATION_CREDENTIALS (inline JSON)',
+                    authOptions: {
+                        credentials: normalizeCredentials(parsed),
+                        scopes
+                    }
+                });
+            } catch (error) {
+                console.error(`Невалідний GOOGLE_APPLICATION_CREDENTIALS (inline JSON): ${error.message}`);
             }
-        });
+        } else {
+            candidates.push({
+                label: `GOOGLE_APPLICATION_CREDENTIALS (${gac})`,
+                authOptions: {
+                    keyFile: gac,
+                    scopes
+                }
+            });
+        }
     }
 
     const cwd = process.cwd();
@@ -1127,6 +1144,12 @@ async function appendRegistrationRow(chatId, user) {
     for (let attempt = 1; attempt <= maxTries; attempt++) {
         if (!sheetsClient) {
             console.warn(`sheetsClient not ready, attempt ${attempt}/${maxTries}`);
+            try {
+                sheetsClient = await createAuthorizedSheetsClient();
+                console.log('✅ sheetsClient ініціалізовано повторно перед записом');
+            } catch (reinitErr) {
+                lastErr = reinitErr;
+            }
             await new Promise(r => setTimeout(r, 1000 * attempt));
             continue;
         }
@@ -1213,7 +1236,10 @@ async function appendRegistrationRow(chatId, user) {
     }
     console.error(`Дані які намагались записати:`, values);
     console.error(`===============================\n`);
-    
+
+    if (!lastErr && !sheetsClient) {
+        throw new Error('Google Sheets client not initialized. Перевірте credentials у Railway та зробіть redeploy.');
+    }
     throw lastErr || new Error('Unknown error writing to sheet');
 }
 
