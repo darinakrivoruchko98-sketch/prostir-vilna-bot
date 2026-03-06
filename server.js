@@ -167,6 +167,103 @@ let knownUsers = {}; // Кеш з персональними даними кор
 let appealMessagesMap = {}; // Мапа: message_id звернення в групі → chatId користувача
 let events = []; // масив для зберігання заходів
 let userEventRegistrations = {}; // Мапа: chatId → [{eventId, eventName, eventDate, reminded24h: false, reminded1h: false}]
+const REMINDERS_STATE_PATH = process.env.REMINDERS_STATE_PATH || path.join(__dirname, 'data', 'reminders-state.json');
+
+function normalizeReminderRegistration(raw) {
+    if (!raw || !raw.eventId || !raw.eventDate) {
+        return null;
+    }
+
+    const parsedDate = new Date(raw.eventDate);
+    if (Number.isNaN(parsedDate.getTime())) {
+        return null;
+    }
+
+    return {
+        eventId: String(raw.eventId),
+        eventName: String(raw.eventName || '').trim(),
+        eventDate: parsedDate,
+        registrantName: String(raw.registrantName || '').trim(),
+        registrantPhone: String(raw.registrantPhone || '').trim(),
+        reminded24h: raw.reminded24h === true,
+        reminded1h: raw.reminded1h === true
+    };
+}
+
+function loadReminderStateFromDisk() {
+    if (!fs.existsSync(REMINDERS_STATE_PATH)) {
+        return;
+    }
+
+    try {
+        const raw = fs.readFileSync(REMINDERS_STATE_PATH, 'utf8');
+        const parsed = JSON.parse(raw || '{}');
+        const restored = {};
+        const now = new Date();
+
+        for (const chatId of Object.keys(parsed || {})) {
+            const rawRegistrations = Array.isArray(parsed[chatId]) ? parsed[chatId] : [];
+            const normalized = rawRegistrations
+                .map(normalizeReminderRegistration)
+                .filter((item) => item && item.eventDate > now);
+
+            if (normalized.length > 0) {
+                restored[String(chatId)] = normalized;
+            }
+        }
+
+        userEventRegistrations = restored;
+        const restoredCount = Object.values(userEventRegistrations).reduce((sum, items) => sum + items.length, 0);
+        console.log(`♻️ Відновлено ${restoredCount} реєстрацій нагадувань з ${REMINDERS_STATE_PATH}`);
+    } catch (error) {
+        console.error(`❌ Не вдалося відновити стан нагадувань (${REMINDERS_STATE_PATH}):`, error && error.message ? error.message : error);
+    }
+}
+
+function saveReminderStateToDisk() {
+    try {
+        const payload = {};
+
+        for (const [chatId, registrations] of Object.entries(userEventRegistrations || {})) {
+            if (!Array.isArray(registrations) || registrations.length === 0) {
+                continue;
+            }
+
+            payload[chatId] = registrations
+                .map((registration) => {
+                    if (!registration || !registration.eventDate) {
+                        return null;
+                    }
+
+                    const date = registration.eventDate instanceof Date
+                        ? registration.eventDate
+                        : new Date(registration.eventDate);
+
+                    if (Number.isNaN(date.getTime())) {
+                        return null;
+                    }
+
+                    return {
+                        eventId: String(registration.eventId || ''),
+                        eventName: String(registration.eventName || ''),
+                        eventDate: date.toISOString(),
+                        registrantName: String(registration.registrantName || ''),
+                        registrantPhone: String(registration.registrantPhone || ''),
+                        reminded24h: registration.reminded24h === true,
+                        reminded1h: registration.reminded1h === true
+                    };
+                })
+                .filter(Boolean);
+        }
+
+        fs.mkdirSync(path.dirname(REMINDERS_STATE_PATH), { recursive: true });
+        fs.writeFileSync(REMINDERS_STATE_PATH, JSON.stringify(payload, null, 2), 'utf8');
+    } catch (error) {
+        console.error(`❌ Не вдалося зберегти стан нагадувань (${REMINDERS_STATE_PATH}):`, error && error.message ? error.message : error);
+    }
+}
+
+loadReminderStateFromDisk();
 
 /* ===== HELPER FUNCTIONS ===== */
 
@@ -198,6 +295,7 @@ function pluralizeEvents(count) {
 function cleanupPastEvents() {
     const now = new Date();
     const initialCount = events.length;
+    let hasReminderChanges = false;
     events = events.filter(e => e.date > now);
     
     if (events.length < initialCount) {
@@ -208,15 +306,24 @@ function cleanupPastEvents() {
     for (const chatId in userEventRegistrations) {
         const before = userEventRegistrations[chatId].length;
         userEventRegistrations[chatId] = userEventRegistrations[chatId].filter(reg => reg.eventDate > now);
+        if (userEventRegistrations[chatId].length !== before) {
+            hasReminderChanges = true;
+        }
         if (userEventRegistrations[chatId].length === 0) {
             delete userEventRegistrations[chatId];
+            hasReminderChanges = true;
         }
+    }
+
+    if (hasReminderChanges) {
+        saveReminderStateToDisk();
     }
 }
 
 // Перевірка та відправка нагадувань про заходи
 async function checkAndSendReminders() {
     const now = new Date();
+    let hasReminderChanges = false;
     
     for (const chatId in userEventRegistrations) {
         // Перевіряємо чи користувач не вимкнув нагадування
@@ -257,6 +364,7 @@ async function checkAndSendReminders() {
                     );
                     
                     reg.reminded24h = true;
+                    hasReminderChanges = true;
                     console.log(`⏰ Відправлено нагадування (24 год) для ${chatId} про "${reg.eventName}"`);
                 } catch (error) {
                     console.error(`❌ Помилка відправки нагадування (24 год) для ${chatId}:`, error);
@@ -294,12 +402,17 @@ async function checkAndSendReminders() {
                     );
                     
                     reg.reminded1h = true;
+                    hasReminderChanges = true;
                     console.log(`⏰ Відправлено нагадування (1 год) для ${chatId} про "${reg.eventName}"`);
                 } catch (error) {
                     console.error(`❌ Помилка відправки нагадування (1 год) для ${chatId}:`, error);
                 }
             }
         }
+    }
+
+    if (hasReminderChanges) {
+        saveReminderStateToDisk();
     }
 }
 
@@ -1687,6 +1800,7 @@ async function restoreUserRegistrationsFromSheet(chatId, user) {
 
     if (restoredCount > 0) {
         console.log(`♻️ Відновлено ${restoredCount} реєстрацій з нотаток для chatId=${chatId}`);
+        saveReminderStateToDisk();
     }
 
     return restoredCount;
@@ -1968,6 +2082,7 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
                 reminded24h: false,
                 reminded1h: false
             });
+            saveReminderStateToDisk();
             console.log(`📝 Збережено реєстрацію для нагадувань: ${chatId} → ${eventName} (${evObj.date})`);
         }
     }
@@ -2013,6 +2128,7 @@ async function unregisterFromEvent(chatId, eventId) {
     if (userEventRegistrations[chatId].length === 0) {
         delete userEventRegistrations[chatId];
     }
+    saveReminderStateToDisk();
 
     // Оновлюємо коунтери в пам'яті (звільнюємо місце)
     const event = events.find(e => e.id === eventId);
