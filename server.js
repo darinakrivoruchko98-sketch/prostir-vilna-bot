@@ -12,6 +12,11 @@ const PORT = process.env.PORT || 8080;
 const GROUP_ID = process.env.GROUP_ID || config.GROUP_ID;
 const CHAT_ID = process.env.CHAT_ID || config.CHAT_ID;
 const APPEALS_GROUP_ID = Number(process.env.APPEALS_GROUP_ID || '-1003802751255'); // Група "Відгуки чат-бот Вільна"
+const AI_API_KEY = process.env.AI_API_KEY || process.env.OPENAI_API_KEY || '';
+const AI_API_URL = process.env.AI_API_URL || 'https://api.openai.com/v1/chat/completions';
+const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
+const AI_HTTP_TIMEOUT_MS = Number(process.env.AI_HTTP_TIMEOUT_MS || 12000);
+const AI_ENABLED = Boolean(AI_API_KEY);
 // Таблиця для розкладу та реєстрацій на заходи
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || config.SPREADSHEET_ID;
 const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || config.SCHEDULE_SHEET_NAME;
@@ -31,6 +36,7 @@ console.log("📋 Таблиця розкладу (тільки читання):
 console.log("📄 Аркуш розкладу:", SCHEDULE_SHEET_NAME);
 console.log("👤 Таблиця персональних даних (запис ПІБ + всі реєстрації):", PERSONAL_DATA_SPREADSHEET_ID);
 console.log("📄 Аркуш персональних даних:", PERSONAL_DATA_SHEET_NAME);
+console.log(`🧠 AI режим: ${AI_ENABLED ? `увімкнено (${AI_MODEL})` : 'вимкнено (не задано AI_API_KEY)'}`);
 
 if (!TOKEN) {
     console.error("TOKEN не встановлено");
@@ -2252,6 +2258,136 @@ async function processParsedEvents(parsedEvents) {
         }
     }
 
+    const AI_ACTION_BUTTONS = [
+        'Реєстрація',
+        'Афіша заходів',
+        'Нагадування',
+        'Контакти',
+        'Написати звернення',
+        'Повернутися в меню'
+    ];
+
+    function buildAiKeyboard(suggestedAction) {
+        if (suggestedAction && AI_ACTION_BUTTONS.includes(suggestedAction) && suggestedAction !== 'Повернутися в меню') {
+            return [
+                [{ text: suggestedAction }],
+                [{ text: 'Повернутися в меню' }]
+            ];
+        }
+
+        return [
+            [{ text: 'Афіша заходів' }],
+            [{ text: 'Нагадування' }],
+            [{ text: 'Контакти' }],
+            [{ text: 'Повернутися в меню' }]
+        ];
+    }
+
+    function safeParseAiJson(content) {
+        const raw = String(content || '').trim();
+        if (!raw) return null;
+
+        try {
+            return JSON.parse(raw);
+        } catch (e) {
+            const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+            if (fenced && fenced[1]) {
+                try {
+                    return JSON.parse(fenced[1].trim());
+                } catch (err) {
+                    return null;
+                }
+            }
+            const objectSlice = raw.match(/\{[\s\S]*\}/);
+            if (objectSlice && objectSlice[0]) {
+                try {
+                    return JSON.parse(objectSlice[0]);
+                } catch (err) {
+                    return null;
+                }
+            }
+            return null;
+        }
+    }
+
+    function detectActionFromText(value) {
+        const text = String(value || '').toLowerCase();
+        if (!text) return null;
+
+        if (text.includes('афіш')) return 'Афіша заходів';
+        if (text.includes('нагад')) return 'Нагадування';
+        if (text.includes('контакт')) return 'Контакти';
+        if (text.includes('реєстра')) return 'Реєстрація';
+        if (text.includes('звернен')) return 'Написати звернення';
+        if (text.includes('меню')) return 'Повернутися в меню';
+        return null;
+    }
+
+    async function getAiAssistantAnswer(userText) {
+        if (!AI_ENABLED || !userText) {
+            return null;
+        }
+
+        const systemPrompt = [
+            'Ти асистент Telegram-бота простору «Вільна». Відповідай українською коротко і дружньо.',
+            'Твоя задача: пояснити, що робити в боті, і підказати одну кнопку.',
+            'Доступні кнопки: Реєстрація, Афіша заходів, Нагадування, Контакти, Написати звернення, Повернутися в меню.',
+            'Поверни строго JSON формату: {"reply":"...","action":"..."}.',
+            'Поле action має бути однією з доступних кнопок або пустим рядком.'
+        ].join(' ');
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), AI_HTTP_TIMEOUT_MS);
+
+        try {
+            const response = await fetch(AI_API_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${AI_API_KEY}`
+                },
+                body: JSON.stringify({
+                    model: AI_MODEL,
+                    temperature: 0.2,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: String(userText).slice(0, 1000) }
+                    ]
+                }),
+                signal: controller.signal
+            });
+
+            if (!response.ok) {
+                const body = await response.text();
+                throw new Error(`AI API HTTP ${response.status}: ${body.slice(0, 300)}`);
+            }
+
+            const data = await response.json();
+            const content = data && data.choices && data.choices[0] && data.choices[0].message
+                ? data.choices[0].message.content
+                : '';
+
+            const parsed = safeParseAiJson(content);
+            if (!parsed) {
+                return {
+                    reply: 'Підкажу швидко: оберіть розділ нижче, і я проведу вас далі.',
+                    action: detectActionFromText(String(content || ''))
+                };
+            }
+
+            const reply = String(parsed.reply || '').trim();
+            const actionRaw = String(parsed.action || '').trim();
+            const action = AI_ACTION_BUTTONS.includes(actionRaw) ? actionRaw : detectActionFromText(actionRaw);
+
+            return {
+                reply: reply || 'Оберіть потрібний розділ з кнопок нижче.',
+                action: action || null
+            };
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
 
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
@@ -4071,6 +4207,42 @@ bot.on('message', async (msg) => {
     if (text === "Спробувати інший username" && user.registrationStarted) {
         user.step = 0;
         bot.sendMessage(chatId, "📱 Введіть ім'я акаунту або номер телефону");
+        return;
+    }
+
+    // AI fallback: якщо текст не збігся з жодною кнопкою/сценарієм вище.
+    if (msg.chat.type === 'private') {
+        if (!AI_ENABLED) {
+            await bot.sendMessage(chatId, 'Не зовсім зрозуміла запит. Оберіть, будь ласка, потрібний розділ:', {
+                reply_markup: {
+                    keyboard: buildAiKeyboard(null),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        try {
+            const aiResult = await getAiAssistantAnswer(text);
+            const replyText = aiResult && aiResult.reply
+                ? aiResult.reply
+                : 'Оберіть потрібний розділ з кнопок нижче.';
+
+            await bot.sendMessage(chatId, `🧠 ${replyText}`, {
+                reply_markup: {
+                    keyboard: buildAiKeyboard(aiResult && aiResult.action ? aiResult.action : null),
+                    resize_keyboard: true
+                }
+            });
+        } catch (error) {
+            console.error('❌ AI fallback error:', error && error.message ? error.message : error);
+            await bot.sendMessage(chatId, 'Зараз не вдалося обробити запит через AI. Оберіть розділ нижче:', {
+                reply_markup: {
+                    keyboard: buildAiKeyboard(null),
+                    resize_keyboard: true
+                }
+            });
+        }
         return;
     }
 

@@ -16,6 +16,9 @@ SPREADSHEET_ID=1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8
 SCHEDULE_SHEET_NAME=Розклад
 PERSONAL_DATA_SPREADSHEET_ID=1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE
 PERSONAL_DATA_SHEET_NAME=Березень
+AI_API_KEY=sk-...
+AI_MODEL=gpt-4o-mini
+AI_API_URL=https://api.openai.com/v1/chat/completions
 GOOGLE_CLIENT_EMAIL=your-service-account@project-id.iam.gserviceaccount.com
 GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
 ```
@@ -26,6 +29,8 @@ GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY----
 
 Розклад читається з аркуша `Розклад` (або значення `SCHEDULE_SHEET_NAME`) у таблиці `SPREADSHEET_ID`,
 а персональні дані записуються в аркуш `Березень` (або значення `PERSONAL_DATA_SHEET_NAME`) у таблиці `PERSONAL_DATA_SPREADSHEET_ID`.
+
+ШІ-режим працює, якщо задано `AI_API_KEY`. Якщо ключа немає, бот покаже стандартні кнопки меню без відповіді ШІ.
 
 ### 2. Google Service Account (тільки через env)
 
@@ -59,6 +64,9 @@ TOKEN=your_token
 GROUP_ID=-1003282996506
 CHAT_ID=-1003282996506
 SPREADSHEET_ID=your_spreadsheet_id
+AI_API_KEY=sk-...
+AI_MODEL=gpt-4o-mini
+AI_API_URL=https://api.openai.com/v1/chat/completions
 GOOGLE_CLIENT_EMAIL=your-service-account@project-id.iam.gserviceaccount.com
 GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
 ```
