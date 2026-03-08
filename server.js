@@ -2258,82 +2258,55 @@ async function processParsedEvents(parsedEvents) {
         }
     }
 
-    const AI_ACTION_BUTTONS = [
-        'Реєстрація',
-        'Афіша заходів',
-        'Нагадування',
-        'Контакти',
-        'Написати звернення',
-        'Повернутися в меню'
-    ];
+    const AI_INTENT_TAGS = ['REGISTER_EVENT', 'SHOW_AFFISHA', 'UNSUBSCRIBE_EVENT', 'QUESTION', 'UNKNOWN'];
 
-    function buildAiKeyboard(suggestedAction) {
-        if (suggestedAction && AI_ACTION_BUTTONS.includes(suggestedAction) && suggestedAction !== 'Повернутися в меню') {
-            return [
-                [{ text: suggestedAction }],
-                [{ text: 'Повернутися в меню' }]
-            ];
-        }
-
+    function getMainMenuKeyboard() {
         return [
+            [{ text: 'Реєстрація' }],
             [{ text: 'Афіша заходів' }],
             [{ text: 'Нагадування' }],
             [{ text: 'Контакти' }],
-            [{ text: 'Повернутися в меню' }]
+            [{ text: 'Назад' }]
         ];
     }
 
-    function safeParseAiJson(content) {
-        const raw = String(content || '').trim();
-        if (!raw) return null;
+    function normalizeAiIntentTag(value) {
+        const raw = String(value || '').trim();
+        if (!raw) return 'UNKNOWN';
 
-        try {
-            return JSON.parse(raw);
-        } catch (e) {
-            const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-            if (fenced && fenced[1]) {
-                try {
-                    return JSON.parse(fenced[1].trim());
-                } catch (err) {
-                    return null;
-                }
-            }
-            const objectSlice = raw.match(/\{[\s\S]*\}/);
-            if (objectSlice && objectSlice[0]) {
-                try {
-                    return JSON.parse(objectSlice[0]);
-                } catch (err) {
-                    return null;
-                }
-            }
-            return null;
+        const firstLine = raw
+            .split(/\r?\n/)[0]
+            .replace(/[`"']/g, '')
+            .trim()
+            .toUpperCase();
+
+        if (AI_INTENT_TAGS.includes(firstLine)) {
+            return firstLine;
         }
+
+        const normalized = raw.toLowerCase();
+        if (normalized.includes('register_event') || normalized.includes('реєстр') || normalized.includes('запис')) return 'REGISTER_EVENT';
+        if (normalized.includes('show_affisha') || normalized.includes('афіш')) return 'SHOW_AFFISHA';
+        if (normalized.includes('unsubscribe_event') || normalized.includes('відпис')) return 'UNSUBSCRIBE_EVENT';
+        if (normalized.includes('question') || normalized.includes('?') || normalized.includes('питан')) return 'QUESTION';
+
+        return 'UNKNOWN';
     }
 
-    function detectActionFromText(value) {
-        const text = String(value || '').toLowerCase();
-        if (!text) return null;
-
-        if (text.includes('афіш')) return 'Афіша заходів';
-        if (text.includes('нагад')) return 'Нагадування';
-        if (text.includes('контакт')) return 'Контакти';
-        if (text.includes('реєстра')) return 'Реєстрація';
-        if (text.includes('звернен')) return 'Написати звернення';
-        if (text.includes('меню')) return 'Повернутися в меню';
-        return null;
-    }
-
-    async function getAiAssistantAnswer(userText) {
+    async function detectAiIntentTag(userText) {
         if (!AI_ENABLED || !userText) {
             return null;
         }
 
         const systemPrompt = [
-            'Ти асистент Telegram-бота простору «Вільна». Відповідай українською коротко і дружньо.',
-            'Твоя задача: пояснити, що робити в боті, і підказати одну кнопку.',
-            'Доступні кнопки: Реєстрація, Афіша заходів, Нагадування, Контакти, Написати звернення, Повернутися в меню.',
-            'Поверни строго JSON формату: {"reply":"...","action":"..."}.',
-            'Поле action має бути однією з доступних кнопок або пустим рядком.'
+            'Ти чат-бот простору Вільна.',
+            'Правила:',
+            '1. Визначай намір користувача.',
+            '2. Не генеруй кнопки.',
+            '3. Поверни тільки один тег наміру.',
+            'Можливі теги: REGISTER_EVENT, SHOW_AFFISHA, UNSUBSCRIBE_EVENT, QUESTION, UNKNOWN.',
+            'Якщо не зрозумів — поверни UNKNOWN.',
+            'Відповідь повинна містити тільки тег, без JSON, HTML, пояснень або додаткового тексту.'
         ].join(' ');
 
         const controller = new AbortController();
@@ -2348,7 +2321,7 @@ async function processParsedEvents(parsedEvents) {
                 },
                 body: JSON.stringify({
                     model: AI_MODEL,
-                    temperature: 0.2,
+                    temperature: 0.1,
                     messages: [
                         { role: 'system', content: systemPrompt },
                         { role: 'user', content: String(userText).slice(0, 1000) }
@@ -2367,25 +2340,79 @@ async function processParsedEvents(parsedEvents) {
                 ? data.choices[0].message.content
                 : '';
 
-            const parsed = safeParseAiJson(content);
-            if (!parsed) {
-                return {
-                    reply: 'Підкажу швидко: оберіть розділ нижче, і я проведу вас далі.',
-                    action: detectActionFromText(String(content || ''))
-                };
-            }
-
-            const reply = String(parsed.reply || '').trim();
-            const actionRaw = String(parsed.action || '').trim();
-            const action = AI_ACTION_BUTTONS.includes(actionRaw) ? actionRaw : detectActionFromText(actionRaw);
-
-            return {
-                reply: reply || 'Оберіть потрібний розділ з кнопок нижче.',
-                action: action || null
-            };
+            return normalizeAiIntentTag(content);
         } finally {
             clearTimeout(timeout);
         }
+    }
+
+    async function handleShowAffishaIntent(chatId, user) {
+        const registrantData = await resolveRegistrantFormData(chatId, user);
+        const hasAllData = registrantData.name && registrantData.phone && registrantData.birth &&
+            registrantData.visited && registrantData.status && registrantData.health;
+
+        if (!hasAllData) {
+            user.step = 1;
+            user.registrationMode = true;
+            await bot.sendMessage(chatId, "Спочатку заповніть дані.\n\n📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "❌ Скасувати реєстрацію" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        user.context = 'afisha';
+        Object.assign(user, registrantData);
+        await showAfishaDaysMenu(chatId);
+    }
+
+    async function handleUnsubscribeIntent(chatId, user) {
+        const userRegistrations = userEventRegistrations[chatId] || [];
+
+        if (userRegistrations.length === 0) {
+            await bot.sendMessage(chatId, "📅 У вас немає запланованих заходів для відписання.", {
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "Нагадування" }],
+                        [{ text: "Повернутися в меню" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        const unregButtonMap = {};
+        const buttons = userRegistrations.map((reg, index) => {
+            const dateStr = reg.eventDate.toLocaleDateString('uk-UA', {
+                day: '2-digit',
+                month: '2-digit'
+            });
+            const timeStr = reg.eventDate.toLocaleTimeString('uk-UA', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            const buttonText = `${index + 1}. ${reg.eventName} (${dateStr} ${timeStr})`;
+            unregButtonMap[buttonText] = reg.eventId;
+            return [{ text: buttonText }];
+        });
+
+        user.unregButtonMap = unregButtonMap;
+        user.context = 'unregister';
+        buttons.push([{ text: "❌ Скасувати" }]);
+
+        await bot.sendMessage(chatId, "🔴 <b>Виберіть захід для відписання:</b>", {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: buttons,
+                resize_keyboard: true
+            }
+        });
     }
 
 
@@ -3259,31 +3286,7 @@ bot.on('message', async (msg) => {
     }
 
     if (text === "Афіша заходів") {
-        // Перевіряємо чи у користувача вже є профіль
-        const registrantData = await resolveRegistrantFormData(chatId, user);
-        const hasAllData = registrantData.name && registrantData.phone && registrantData.birth && 
-                          registrantData.visited && registrantData.status && registrantData.health;
-        
-        if (!hasAllData) {
-            // Дані неповні — питаємо їх
-            user.step = 1;
-            user.registrationMode = true;
-            await bot.sendMessage(chatId, "Спочатку заповніть дані.\n\n📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
-                parse_mode: 'HTML',
-                reply_markup: {
-                    keyboard: [
-                        [{ text: "❌ Скасувати реєстрацію" }]
-                    ],
-                    resize_keyboard: true
-                }
-            });
-            return;
-        }
-        
-        // Дані повні — показуємо меню днів тижня для вибору заходів
-        user.context = 'afisha';
-        Object.assign(user, registrantData);
-        await showAfishaDaysMenu(chatId);
+        await handleShowAffishaIntent(chatId, user);
         return;
     }
 
@@ -3879,49 +3882,7 @@ bot.on('message', async (msg) => {
 
     // Кнопка відписання від заходу
     if (text === "❌ Відписатись від заходу") {
-        const userRegistrations = userEventRegistrations[chatId] || [];
-        
-        if (userRegistrations.length === 0) {
-            bot.sendMessage(chatId, "📅 У вас немає запланованих заходів для відписання.", {
-                reply_markup: {
-                    keyboard: [
-                        [{ text: "Нагадування" }],
-                        [{ text: "Повернутися в меню" }]
-                    ],
-                    resize_keyboard: true
-                }
-            });
-            return;
-        }
-        
-        // Показуємо список заходів для відписання
-        const unregButtonMap = {};
-        const buttons = userRegistrations.map((reg, index) => {
-            const dateStr = reg.eventDate.toLocaleDateString('uk-UA', { 
-                day: '2-digit', 
-                month: '2-digit' 
-            });
-            const timeStr = reg.eventDate.toLocaleTimeString('uk-UA', { 
-                hour: '2-digit', 
-                minute: '2-digit' 
-            });
-            const buttonText = `${index + 1}. ${reg.eventName} (${dateStr} ${timeStr})`;
-            unregButtonMap[buttonText] = reg.eventId;
-            return [{ text: buttonText }];
-        });
-        
-        user.unregButtonMap = unregButtonMap;
-        user.context = 'unregister';
-        
-        buttons.push([{ text: "❌ Скасувати" }]);
-        
-        bot.sendMessage(chatId, "🔴 <b>Виберіть захід для відписання:</b>", {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: buttons,
-                resize_keyboard: true
-            }
-        });
+        await handleUnsubscribeIntent(chatId, user);
         return;
     }
 
@@ -4213,9 +4174,9 @@ bot.on('message', async (msg) => {
     // AI fallback: якщо текст не збігся з жодною кнопкою/сценарієм вище.
     if (msg.chat.type === 'private') {
         if (!AI_ENABLED) {
-            await bot.sendMessage(chatId, 'Не зовсім зрозуміла запит. Оберіть, будь ласка, потрібний розділ:', {
+            await bot.sendMessage(chatId, 'Не зовсім зрозумілий запит. Будь ласка, оберіть потрібний розділ:', {
                 reply_markup: {
-                    keyboard: buildAiKeyboard(null),
+                    keyboard: getMainMenuKeyboard(),
                     resize_keyboard: true
                 }
             });
@@ -4223,14 +4184,35 @@ bot.on('message', async (msg) => {
         }
 
         try {
-            const aiResult = await getAiAssistantAnswer(text);
-            const replyText = aiResult && aiResult.reply
-                ? aiResult.reply
-                : 'Оберіть потрібний розділ з кнопок нижче.';
+            const intentTag = await detectAiIntentTag(text);
 
-            await bot.sendMessage(chatId, `🧠 ${replyText}`, {
+            if (intentTag === 'REGISTER_EVENT' || intentTag === 'SHOW_AFFISHA') {
+                await handleShowAffishaIntent(chatId, user);
+                return;
+            }
+
+            if (intentTag === 'UNSUBSCRIBE_EVENT') {
+                await handleUnsubscribeIntent(chatId, user);
+                return;
+            }
+
+            if (intentTag === 'QUESTION') {
+                await bot.sendMessage(chatId, 'Будь ласка, оберіть розділ, з яким вам допомогти:', {
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: 'Контакти' }],
+                            [{ text: 'Написати звернення' }],
+                            [{ text: 'Повернутися в меню' }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
+            await bot.sendMessage(chatId, 'Не зовсім зрозумілий запит. Будь ласка, оберіть потрібний розділ:', {
                 reply_markup: {
-                    keyboard: buildAiKeyboard(aiResult && aiResult.action ? aiResult.action : null),
+                    keyboard: getMainMenuKeyboard(),
                     resize_keyboard: true
                 }
             });
@@ -4238,7 +4220,7 @@ bot.on('message', async (msg) => {
             console.error('❌ AI fallback error:', error && error.message ? error.message : error);
             await bot.sendMessage(chatId, 'Зараз не вдалося обробити запит через AI. Оберіть розділ нижче:', {
                 reply_markup: {
-                    keyboard: buildAiKeyboard(null),
+                    keyboard: getMainMenuKeyboard(),
                     resize_keyboard: true
                 }
             });
