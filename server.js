@@ -2300,14 +2300,16 @@ async function processParsedEvents(parsedEvents) {
 
         const systemPrompt = [
             'Ти чат-бот простору Вільна.',
-            'Правила:',
-            '1. Визначай намір користувача.',
-            '2. Не генеруй кнопки.',
-            '3. Поверни тільки один тег наміру.',
-            'Можливі теги: REGISTER_EVENT, SHOW_AFFISHA, UNSUBSCRIBE_EVENT, QUESTION, UNKNOWN.',
-            'Якщо не зрозумів — поверни UNKNOWN.',
-            'Відповідь повинна містити тільки тег, без JSON, HTML, пояснень або додаткового тексту.'
-        ].join(' ');
+            'Якщо користувач вітається або пише загальні слова — відповідай дружньо.',
+            'Визнач намір користувача.',
+            'Поверни тільки один з тегів:',
+            'REGISTER_EVENT',
+            'SHOW_AFFISHA',
+            'UNSUBSCRIBE_EVENT',
+            'QUESTION',
+            'UNKNOWN',
+            'Не пояснюй відповідь.'
+        ].join('\n');
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), AI_HTTP_TIMEOUT_MS);
@@ -3508,10 +3510,6 @@ bot.on('message', async (msg) => {
     if (user.eventButtonMap && user.eventButtonMap[text]) {
         selectedEvent = getAllEvents().find((eventItem) => eventItem.id === user.eventButtonMap[text]) || null;
     }
-    if (!selectedEvent) {
-        selectedEvent = getAllEvents().find((eventItem) => text.includes(eventItem.name));
-    }
-
     if (selectedEvent) {
         // compute seats left asynchronously before replying
         const seatsLeft = await getSeatsLeft(selectedEvent.id);
@@ -4184,7 +4182,9 @@ bot.on('message', async (msg) => {
         }
 
         try {
+            console.log(`🧠 AI intent detection: input="${String(text).slice(0, 120)}"`);
             const intentTag = await detectAiIntentTag(text);
+            console.log(`🧠 AI intent detection result: ${intentTag}`);
 
             if (intentTag === 'REGISTER_EVENT' || intentTag === 'SHOW_AFFISHA') {
                 await handleShowAffishaIntent(chatId, user);
