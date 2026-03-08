@@ -2293,6 +2293,39 @@ async function processParsedEvents(parsedEvents) {
         return 'UNKNOWN';
     }
 
+    function detectIntentLocally(userText) {
+        const text = normalizeText(String(userText || '')).toLowerCase();
+        if (!text) return 'UNKNOWN';
+
+        if (text.includes('відпис') || text.includes('скасувати реєстра') || text.includes('скасувати запис')) {
+            return 'UNSUBSCRIBE_EVENT';
+        }
+
+        if (text.includes('афіш') || text.includes('розклад') || text.includes('які заход')) {
+            return 'SHOW_AFFISHA';
+        }
+
+        if (
+            text.includes('реєстр') ||
+            text.includes('запис') ||
+            text.includes('хочу на') ||
+            text.includes('майстер-клас')
+        ) {
+            return 'REGISTER_EVENT';
+        }
+
+        if (
+            text.includes('привіт') ||
+            text.includes('добр') ||
+            text.includes('підкаж') ||
+            text.includes('?')
+        ) {
+            return 'QUESTION';
+        }
+
+        return 'UNKNOWN';
+    }
+
     async function detectAiIntentTag(userText) {
         if (!AI_ENABLED || !userText) {
             return null;
@@ -2415,6 +2448,34 @@ async function processParsedEvents(parsedEvents) {
                 resize_keyboard: true
             }
         });
+    }
+
+    async function handleIntentTag(chatId, user, intentTag) {
+        if (intentTag === 'REGISTER_EVENT' || intentTag === 'SHOW_AFFISHA') {
+            await handleShowAffishaIntent(chatId, user);
+            return true;
+        }
+
+        if (intentTag === 'UNSUBSCRIBE_EVENT') {
+            await handleUnsubscribeIntent(chatId, user);
+            return true;
+        }
+
+        if (intentTag === 'QUESTION') {
+            await bot.sendMessage(chatId, 'Будь ласка, оберіть розділ, з яким вам допомогти:', {
+                reply_markup: {
+                    keyboard: [
+                        [{ text: 'Контакти' }],
+                        [{ text: 'Написати звернення' }],
+                        [{ text: 'Повернутися в меню' }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return true;
+        }
+
+        return false;
     }
 
 
@@ -3248,7 +3309,7 @@ bot.on('message', async (msg) => {
                 // Додаємо деталі про можливі причини
                 let hint = '';
                 if (errorMsg.toLowerCase().includes('permission') || errorMsg.toLowerCase().includes('403')) {
-                    hint = '\n\n💡 Перевірте, чи добавлено service account як редактор до Google Sheet.';
+                    hint = '\n\n💡 Перевірте, чи додано service account як редактор до Google Sheet.';
                 } else if (errorMsg.toLowerCase().includes('quota') || errorMsg.toLowerCase().includes('rate limit')) {
                     hint = '\n\n💡 Перевищено ліміт API. Спробуйте ще раз за 1-2 хвилини.';
                 } else if (errorMsg.toLowerCase().includes('not found') || errorMsg.toLowerCase().includes('sheet')) {
@@ -3566,7 +3627,7 @@ bot.on('message', async (msg) => {
         if (eventName && eventId && !user.selectedEventsList.some(e => e.id === eventId)) {
             user.selectedEventsList.push({ id: eventId, name: eventName });
             
-            let message = `✅ <b>Захід добавлено!</b>\n\n`;
+            let message = `✅ <b>Захід додано!</b>\n\n`;
             message += `Вибрано заходів: ${user.selectedEventsList.length}\n\n`;
             message += `📝 <b>Вибрані заходи:</b>\n`;
             user.selectedEventsList.forEach((e, i) => {
@@ -4186,27 +4247,7 @@ bot.on('message', async (msg) => {
             const intentTag = await detectAiIntentTag(text);
             console.log(`🧠 AI intent detection result: ${intentTag}`);
 
-            if (intentTag === 'REGISTER_EVENT' || intentTag === 'SHOW_AFFISHA') {
-                await handleShowAffishaIntent(chatId, user);
-                return;
-            }
-
-            if (intentTag === 'UNSUBSCRIBE_EVENT') {
-                await handleUnsubscribeIntent(chatId, user);
-                return;
-            }
-
-            if (intentTag === 'QUESTION') {
-                await bot.sendMessage(chatId, 'Будь ласка, оберіть розділ, з яким вам допомогти:', {
-                    reply_markup: {
-                        keyboard: [
-                            [{ text: 'Контакти' }],
-                            [{ text: 'Написати звернення' }],
-                            [{ text: 'Повернутися в меню' }]
-                        ],
-                        resize_keyboard: true
-                    }
-                });
+            if (await handleIntentTag(chatId, user, intentTag || 'UNKNOWN')) {
                 return;
             }
 
@@ -4218,7 +4259,14 @@ bot.on('message', async (msg) => {
             });
         } catch (error) {
             console.error('❌ AI fallback error:', error && error.message ? error.message : error);
-            await bot.sendMessage(chatId, 'Зараз не вдалося обробити запит через AI. Оберіть розділ нижче:', {
+            const fallbackIntentTag = detectIntentLocally(text);
+            console.log(`🧠 Local intent fallback result: ${fallbackIntentTag}`);
+
+            if (await handleIntentTag(chatId, user, fallbackIntentTag)) {
+                return;
+            }
+
+            await bot.sendMessage(chatId, 'Не зовсім зрозумілий запит. Будь ласка, оберіть потрібний розділ:', {
                 reply_markup: {
                     keyboard: getMainMenuKeyboard(),
                     resize_keyboard: true
