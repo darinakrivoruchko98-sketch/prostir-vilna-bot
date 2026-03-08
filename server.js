@@ -3349,7 +3349,7 @@ bot.on('message', async (msg) => {
         user.pendingUnregEventId = eventId;
         user.pendingUnregEventName = eventName;
         
-        const confirmMsg = `❓ <b>Ви впевнені, що хочете відписатись від цього заходу?</b>\n\n📌 <b>${eventName}</b>\n\nДані про вас залишаться в базі, maar місце звільниться для інших учасників.`;
+        const confirmMsg = `❓ <b>Ви впевнені, що хочете відписатись від цього заходу?</b>\n\n📌 <b>${eventName}</b>\n\nДані про вас залишаться в базі, але місце звільниться для інших учасників.`;
         
         bot.sendMessage(chatId, confirmMsg, {
             parse_mode: 'HTML',
