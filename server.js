@@ -477,6 +477,25 @@ function normalizeWeekdayKey(value) {
         .replace(/[’`]/g, "'");
 
     const aliases = {
+        "пн": "понеділок",
+        "пон": "понеділок",
+        "вів": "вівторок",
+        "вт": "вівторок",
+        "втр": "вівторок",
+        "ср": "середа",
+        "серед": "середа",
+        "срд": "середа",
+        "чет": "четвер",
+        "чт": "четвер",
+        "чтв": "четвер",
+        "пт": "п'ятниця",
+        "птн": "п'ятниця",
+        "пят": "п'ятниця",
+        "сб": "субота",
+        "суб": "субота",
+        "сбт": "субота",
+        "нд": "неділя",
+        "нед": "неділя",
         "пятниця": "п'ятниця",
         "пятницю": "п'ятницю"
     };
@@ -2258,7 +2277,7 @@ async function processParsedEvents(parsedEvents) {
         }
     }
 
-    const AI_INTENT_TAGS = ['REGISTER_EVENT', 'SHOW_AFFISHA', 'UNSUBSCRIBE_EVENT', 'QUESTION', 'UNKNOWN'];
+    const AI_INTENT_TAGS = ['SHOW_DAY', 'REGISTER_EVENT', 'SHOW_AFFISHA', 'UNKNOWN'];
 
     function getMainMenuKeyboard() {
         return [
@@ -2266,8 +2285,65 @@ async function processParsedEvents(parsedEvents) {
             [{ text: 'Афіша заходів' }],
             [{ text: 'Нагадування' }],
             [{ text: 'Контакти' }],
+            [{ text: '📲 Як зареєструватися' }],
             [{ text: 'Назад' }]
         ];
+    }
+
+    async function sendRegistrationGuide(chatId) {
+        const guideText = `📲 Як зареєструватися на заходи через чат-бот «Вільна»
+
+1️⃣ Відкрийте чат-бот «Вільна».
+📲Чат-бот Вільна для реєстрації: @vilna_chat_bot
+
+2️⃣ Зареєструйтесь у боті.
+Внесіть свої дані (👉🏻це потрібно зробити лише один раз).
+Бот запам'ятає вас, тому надалі повторно вводити дані не потрібно, тож не спішіть та вносьте інформацію уважно.
+
+3️⃣ Після реєстрації в меню натисніть кнопку «Афіша заходів».
+
+4️⃣ Оберіть день, який вас цікавить.
+Наприклад: середа.
+Бот покаже розклад заходів на цей день.
+
+5️⃣ Оберіть захід, на який хочете зареєструватися.
+Наприклад: «Коло весняного співу».
+
+6️⃣ Натисніть кнопку «Додати до реєстрації».
+
+7️⃣ Якщо хочете записатися на кілька заходів:
+— натисніть «Додати ще один»,
+— знову оберіть день і захід,
+— додайте його до реєстрації.
+
+👉🏻Або можна одразу завершити запис, натиснувши «Перейти до реєстрації».
+
+8️⃣ Бот покаже список обраних вами заходів.
+Натисніть «Продовжити реєстрацію».
+
+✅ Готово! Ви успішно зареєстровані.
+Чат-бот надішле вам підтвердження реєстрації повідомленням.
+
+❗️ Якщо зміняться обставини і потрібно відписатися від заходу:
+👉🏻 У боті натисніть «Повернутися в меню» -> «Нагадування» -> «❌ Відписатись від заходу».
+👉🏻 Оберіть захід, від якого хочете відписатися.
+👉🏻 Натисніть «✅ Так, відписатись» та підтвердьте дію.
+
+🎉 Ось і все — ви навчилися користуватися чат-ботом Вільна!
+
+Якщо виникнуть запитання або потрібно буде змінити запис на захід — бот завжди допоможе 🤍
+З будь-яких технічних питань звертатись до соціальної фахівчині Дарини Криворучко: @DarynaVilna🌷`;
+
+        await bot.sendMessage(chatId, guideText, {
+            reply_markup: {
+                keyboard: [
+                    [{ text: 'Афіша заходів' }],
+                    [{ text: 'Нагадування' }],
+                    [{ text: 'Повернутися в меню' }]
+                ],
+                resize_keyboard: true
+            }
+        });
     }
 
     function normalizeAiIntentTag(value) {
@@ -2285,21 +2361,46 @@ async function processParsedEvents(parsedEvents) {
         }
 
         const normalized = raw.toLowerCase();
+        if (normalized.includes('show_day') || normalized.includes('день')) return 'SHOW_DAY';
         if (normalized.includes('register_event') || normalized.includes('реєстр') || normalized.includes('запис')) return 'REGISTER_EVENT';
         if (normalized.includes('show_affisha') || normalized.includes('афіш')) return 'SHOW_AFFISHA';
-        if (normalized.includes('unsubscribe_event') || normalized.includes('відпис')) return 'UNSUBSCRIBE_EVENT';
-        if (normalized.includes('question') || normalized.includes('?') || normalized.includes('питан')) return 'QUESTION';
 
         return 'UNKNOWN';
+    }
+
+    function extractWeekdayFromText(userText) {
+        const source = normalizeText(String(userText || '')).toLowerCase();
+        const weekdays = {
+            "неділя": true,
+            "понеділок": true,
+            "вівторок": true,
+            "середа": true,
+            "четвер": true,
+            "п'ятниця": true,
+            "субота": true
+        };
+
+        const normalizedWhole = normalizeWeekdayKey(source);
+        if (weekdays[normalizedWhole]) {
+            return normalizedWhole;
+        }
+
+        const words = source.split(/\s+/).filter(Boolean);
+        for (const word of words) {
+            const normalizedWord = normalizeWeekdayKey(word);
+            if (weekdays[normalizedWord]) {
+                return normalizedWord;
+            }
+        }
+
+        return null;
     }
 
     function detectIntentLocally(userText) {
         const text = normalizeText(String(userText || '')).toLowerCase();
         if (!text) return 'UNKNOWN';
 
-        if (text.includes('відпис') || text.includes('скасувати реєстра') || text.includes('скасувати запис')) {
-            return 'UNSUBSCRIBE_EVENT';
-        }
+        if (extractWeekdayFromText(text)) return 'SHOW_DAY';
 
         if (text.includes('афіш') || text.includes('розклад') || text.includes('які заход')) {
             return 'SHOW_AFFISHA';
@@ -2314,15 +2415,6 @@ async function processParsedEvents(parsedEvents) {
             return 'REGISTER_EVENT';
         }
 
-        if (
-            text.includes('привіт') ||
-            text.includes('добр') ||
-            text.includes('підкаж') ||
-            text.includes('?')
-        ) {
-            return 'QUESTION';
-        }
-
         return 'UNKNOWN';
     }
 
@@ -2333,13 +2425,20 @@ async function processParsedEvents(parsedEvents) {
 
         const systemPrompt = [
             'Ти чат-бот простору Вільна.',
-            'Якщо користувач вітається або пише загальні слова — відповідай дружньо.',
+            'Якщо користувач вітається — відповідай дружньо.',
+            'Якщо користувач пише скорочення днів:',
+            'пон = понеділок',
+            'вів = вівторок',
+            'серед = середа',
+            'чет = четвер',
+            'пят = п\'ятниця',
+            'суб = субота',
+            'нед = неділя',
             'Визнач намір користувача.',
-            'Поверни тільки один з тегів:',
+            'Поверни тільки один тег:',
+            'SHOW_DAY',
             'REGISTER_EVENT',
             'SHOW_AFFISHA',
-            'UNSUBSCRIBE_EVENT',
-            'QUESTION',
             'UNKNOWN',
             'Не пояснюй відповідь.'
         ].join('\n');
@@ -2450,28 +2549,19 @@ async function processParsedEvents(parsedEvents) {
         });
     }
 
-    async function handleIntentTag(chatId, user, intentTag) {
+    async function handleIntentTag(chatId, user, intentTag, sourceText) {
+        if (intentTag === 'SHOW_DAY') {
+            const day = extractWeekdayFromText(sourceText);
+            if (day) {
+                await showDayAgenda(chatId, day);
+            } else {
+                await showAfishaDaysMenu(chatId);
+            }
+            return true;
+        }
+
         if (intentTag === 'REGISTER_EVENT' || intentTag === 'SHOW_AFFISHA') {
             await handleShowAffishaIntent(chatId, user);
-            return true;
-        }
-
-        if (intentTag === 'UNSUBSCRIBE_EVENT') {
-            await handleUnsubscribeIntent(chatId, user);
-            return true;
-        }
-
-        if (intentTag === 'QUESTION') {
-            await bot.sendMessage(chatId, 'Будь ласка, оберіть розділ, з яким вам допомогти:', {
-                reply_markup: {
-                    keyboard: [
-                        [{ text: 'Контакти' }],
-                        [{ text: 'Написати звернення' }],
-                        [{ text: 'Повернутися в меню' }]
-                    ],
-                    resize_keyboard: true
-                }
-            });
             return true;
         }
 
@@ -2482,6 +2572,7 @@ async function processParsedEvents(parsedEvents) {
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text || msg.caption || "";
+    const normalizedUserText = normalizeText(String(text || '')).toLowerCase().trim();
 
     if (!text) return;
     
@@ -2725,6 +2816,7 @@ bot.on('message', async (msg) => {
                         [{ text: "Афіша заходів" }],
                         [{ text: "Нагадування" }],
                         [{ text: "Контакти" }],
+                        [{ text: "📲 Як зареєструватися" }],
                         [{ text: "Назад" }]
                     ],
                     resize_keyboard: true
@@ -2971,13 +3063,7 @@ bot.on('message', async (msg) => {
 
         await bot.sendMessage(chatId, "Реєстрацію скасовано. Оберіть дію в меню.", {
             reply_markup: {
-                keyboard: [
-                    [{ text: "Реєстрація" }],
-                    [{ text: "Афіша заходів" }],
-                    [{ text: "Нагадування" }],
-                    [{ text: "Контакти" }],
-                    [{ text: "Назад" }]
-                ],
+                keyboard: getMainMenuKeyboard(),
                 resize_keyboard: true
             }
         });
@@ -2991,13 +3077,7 @@ bot.on('message', async (msg) => {
         user.step = 0;
         await bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
             reply_markup: {
-                keyboard: [
-                    [{ text: "Реєстрація" }],
-                    [{ text: "Афіша заходів" }],
-                    [{ text: "Нагадування" }],
-                    [{ text: "Контакти" }],
-                    [{ text: "Назад" }]
-                ],
+                keyboard: getMainMenuKeyboard(),
                 resize_keyboard: true
             }
         });
@@ -3350,6 +3430,11 @@ bot.on('message', async (msg) => {
 
     if (text === "Афіша заходів") {
         await handleShowAffishaIntent(chatId, user);
+        return;
+    }
+
+    if (text === "📲 Як зареєструватися" || normalizedUserText.includes('як зареєстру') || normalizedUserText.includes('інструкц')) {
+        await sendRegistrationGuide(chatId);
         return;
     }
 
@@ -3924,13 +4009,7 @@ bot.on('message', async (msg) => {
         user.context = null;
         bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
             reply_markup: {
-                keyboard: [
-                    [{ text: "Реєстрація" }],
-                    [{ text: "Афіша заходів" }],
-                    [{ text: "Нагадування" }],
-                    [{ text: "Контакти" }],
-                    [{ text: "Назад" }]
-                ],
+                keyboard: getMainMenuKeyboard(),
                 resize_keyboard: true
             }
         });
@@ -3990,13 +4069,7 @@ bot.on('message', async (msg) => {
         
         bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
             reply_markup: {
-                keyboard: [
-                    [{ text: "Реєстрація" }],
-                    [{ text: "Афіша заходів" }],
-                    [{ text: "Нагадування" }],
-                    [{ text: "Контакти" }],
-                    [{ text: "Назад" }]
-                ],
+                keyboard: getMainMenuKeyboard(),
                 resize_keyboard: true
             }
         });
@@ -4089,13 +4162,7 @@ bot.on('message', async (msg) => {
         }
         bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
             reply_markup: {
-                keyboard: [
-                    [{ text: "Реєстрація" }],
-                    [{ text: "Афіша заходів" }],
-                    [{ text: "Нагадування" }],
-                    [{ text: "Контакти" }],
-                    [{ text: "Назад" }]
-                ],
+                keyboard: getMainMenuKeyboard(),
                 resize_keyboard: true
             }
         });
@@ -4210,12 +4277,7 @@ bot.on('message', async (msg) => {
             user.registrationStarted = false;
             bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
                 reply_markup: {
-                    keyboard: [
-                        [{ text: "Реєстрація" }],
-                        [{ text: "Афіша заходів" }],
-                        [{ text: "Контакти" }],
-                        [{ text: "Назад" }]
-                    ],
+                    keyboard: getMainMenuKeyboard(),
                     resize_keyboard: true
                 }
             });
@@ -4233,6 +4295,12 @@ bot.on('message', async (msg) => {
     // AI fallback: якщо текст не збігся з жодною кнопкою/сценарієм вище.
     if (msg.chat.type === 'private') {
         if (!AI_ENABLED) {
+            const fallbackIntentTag = detectIntentLocally(text);
+            console.log(`🧠 AI disabled, local intent fallback: ${fallbackIntentTag}`);
+            if (await handleIntentTag(chatId, user, fallbackIntentTag, text)) {
+                return;
+            }
+
             await bot.sendMessage(chatId, 'Не зовсім зрозумілий запит. Будь ласка, оберіть потрібний розділ:', {
                 reply_markup: {
                     keyboard: getMainMenuKeyboard(),
@@ -4247,7 +4315,7 @@ bot.on('message', async (msg) => {
             const intentTag = await detectAiIntentTag(text);
             console.log(`🧠 AI intent detection result: ${intentTag}`);
 
-            if (await handleIntentTag(chatId, user, intentTag || 'UNKNOWN')) {
+            if (await handleIntentTag(chatId, user, intentTag || 'UNKNOWN', text)) {
                 return;
             }
 
@@ -4262,7 +4330,7 @@ bot.on('message', async (msg) => {
             const fallbackIntentTag = detectIntentLocally(text);
             console.log(`🧠 Local intent fallback result: ${fallbackIntentTag}`);
 
-            if (await handleIntentTag(chatId, user, fallbackIntentTag)) {
+            if (await handleIntentTag(chatId, user, fallbackIntentTag, text)) {
                 return;
             }
 
