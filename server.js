@@ -683,7 +683,7 @@ const AFISHA_DAY_BUTTONS = {
     thursday: '💙 Четвер',
     friday: "💚 П'ятниця",
     saturday: '💛 Субота',
-    sunday: '🧡 Неділя'
+    sunday: '❤️ Неділя'
 };
 
 // Правильна граматика для множини заходів
@@ -4265,6 +4265,22 @@ bot.on('message', async (msg) => {
                     return;
                 }
 
+                if (isFriendRegistrationMode(user)) {
+                    user.step = 0;
+                    user.registrationMode = false;
+                    user.context = 'afisha';
+
+                    await bot.sendMessage(chatId,
+                        "✅ <b>Подругу зареєстровано.</b>\n\nТепер оберіть дні та заходи для запису.", {
+                        parse_mode: 'HTML',
+                        reply_markup: {
+                            keyboard: getAfishaDaysKeyboard(),
+                            resize_keyboard: true
+                        }
+                    });
+                    return;
+                }
+
                 // Показуємо меню з кнопками
                 await bot.sendMessage(chatId, "✅ <b>Реєстрація завершена!</b>\n\n👤 " + registrationDraft.name + "\n📱 " + registrationDraft.phone + "\n\nТепер вибери, що далі:", {
                     parse_mode: 'HTML',
@@ -4273,10 +4289,6 @@ bot.on('message', async (msg) => {
                         resize_keyboard: true
                     }
                 });
-
-                if (isFriendRegistrationMode(user)) {
-                    clearFriendRegistrationState(user);
-                }
                 
                 user.step = 0;
                 user.registrationMode = false;
@@ -4343,17 +4355,18 @@ bot.on('message', async (msg) => {
         resetSelectedEventsFlow(user);
         user.friendRegistrationMode = true;
         user.friendRegistrationDraft = createEmptyFriendRegistrationDraft();
-        user.step = 0;
-        user.registrationMode = false;
+        user.step = 1;
+        user.registrationMode = true;
+        user.context = null;
 
         await bot.sendMessage(chatId,
-            "Оберіть заходи для подруги. Після вибору я попрошу її дані. Основний профіль і нагадування за вашим акаунтом не зміняться.", {
+            "👭 <b>Реєстрація подруги</b>\n\nСпочатку внесіть її дані, а потім оберемо заходи.\n\n📝 <b>Крок 1/6:</b> Введіть ПІБ подруги (Прізвище Ім'я По батькові):", {
+            parse_mode: 'HTML',
             reply_markup: {
-                keyboard: getAfishaDaysKeyboard(),
+                keyboard: [[{ text: "❌ Скасувати реєстрацію" }]],
                 resize_keyboard: true
             }
         });
-        user.context = 'afisha';
         return;
     }
 
