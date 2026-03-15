@@ -494,8 +494,7 @@ function buildReminderSettingsKeyboard(chatId) {
             { text: settings.reminder1h.enabled ? '🔕 Вимкнути 1 год' : '🔔 Увімкнути 1 год' },
             { text: '⏱ Змінити 1 год' }
         ],
-        [{ text: '⬅️ До нагадувань' }],
-        [{ text: NAVIGATION_BUTTONS.menu }]
+        [{ text: '⬅️ До нагадувань' }]
     ];
 }
 
@@ -1179,8 +1178,7 @@ async function showDayAgenda(chatId, dayName) {
         bot.sendMessage(chatId, `На ${dayForms[normalizedDay]?.lower || dayName} немає заходів.`, {
             reply_markup: {
                 keyboard: [
-                    [{ text: NAVIGATION_BUTTONS.backToDays }],
-                    [{ text: NAVIGATION_BUTTONS.menu }]
+                    [{ text: NAVIGATION_BUTTONS.backToDays }]
                 ],
                 resize_keyboard: true
             }
@@ -1200,7 +1198,6 @@ async function showDayAgenda(chatId, dayName) {
         eventButtonMap[buttonText] = ev.id;
     }
     buttons.push([{ text: NAVIGATION_BUTTONS.backToDays }]);
-    buttons.push([{ text: NAVIGATION_BUTTONS.menu }]);
 
     if (!users[chatId]) {
         users[chatId] = { step: 0 };
@@ -3755,9 +3752,7 @@ async function processParsedEvents(parsedEvents) {
             await bot.sendMessage(chatId, "📅 У вас немає запланованих заходів для відписання.", {
                 reply_markup: {
                     keyboard: [
-                        [{ text: NAVIGATION_BUTTONS.back }],
-                        [{ text: MAIN_MENU_BUTTONS.afisha }],
-                        [{ text: NAVIGATION_BUTTONS.menu }]
+                        [{ text: NAVIGATION_BUTTONS.back }]
                     ],
                     resize_keyboard: true
                 }
@@ -3783,8 +3778,6 @@ async function processParsedEvents(parsedEvents) {
         user.unregButtonMap = unregButtonMap;
         user.context = 'unregister';
         buttons.push([{ text: NAVIGATION_BUTTONS.back }]);
-        buttons.push([{ text: NAVIGATION_BUTTONS.menu }]);
-        buttons.push([{ text: "❌ Скасувати" }]);
 
         await bot.sendMessage(chatId, "🔴 <b>Виберіть захід для відписання:</b>", {
             parse_mode: 'HTML',
@@ -3802,9 +3795,7 @@ async function processParsedEvents(parsedEvents) {
             await bot.sendMessage(chatId, "👭 Наразі немає реєстрацій подруги для відписки.", {
                 reply_markup: {
                     keyboard: [
-                        [{ text: NAVIGATION_BUTTONS.back }],
-                        [{ text: MAIN_MENU_BUTTONS.friend }],
-                        [{ text: NAVIGATION_BUTTONS.menu }]
+                        [{ text: NAVIGATION_BUTTONS.back }]
                     ],
                     resize_keyboard: true
                 }
@@ -3831,8 +3822,6 @@ async function processParsedEvents(parsedEvents) {
         user.friendUnregButtonMap = friendUnregButtonMap;
         user.context = 'friend-unregister';
         buttons.push([{ text: NAVIGATION_BUTTONS.back }]);
-        buttons.push([{ text: NAVIGATION_BUTTONS.menu }]);
-        buttons.push([{ text: '❌ Скасувати' }]);
 
         await bot.sendMessage(chatId, '👭 <b>Виберіть реєстрацію подруги для відписки:</b>', {
             parse_mode: 'HTML',
