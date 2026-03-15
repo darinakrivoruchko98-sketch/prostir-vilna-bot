@@ -183,6 +183,7 @@ let knownUsers = {}; // Кеш з персональними даними кор
 let appealMessagesMap = {}; // Мапа: message_id звернення в групі → chatId користувача
 let events = []; // масив для зберігання заходів
 let userEventRegistrations = {}; // Мапа: chatId → [{eventId, eventName, eventDate, reminded24h: false, reminded1h: false}]
+let friendEventRegistrations = {}; // Мапа: chatId → [{registrationKey, eventId, eventName, eventDate, registrantName, registrantPhone}]
 let lastWeeklyScheduleNotesCleanupKey = null;
 const REMINDER_RESTORE_CACHE_MS = 60 * 1000;
 const reminderRestoreInFlight = new Map();
@@ -379,6 +380,29 @@ function normalizeReminderRegistration(raw) {
     };
 }
 
+function normalizeFriendRegistration(raw) {
+    if (!raw || !raw.eventId || !raw.eventDate) {
+        return null;
+    }
+
+    const parsedDate = new Date(raw.eventDate);
+    if (Number.isNaN(parsedDate.getTime())) {
+        return null;
+    }
+
+    const registrantName = String(raw.registrantName || '').trim();
+    const registrantPhone = String(raw.registrantPhone || '').trim();
+
+    return {
+        registrationKey: String(raw.registrationKey || buildFriendRegistrationKey(raw.eventId, registrantName, registrantPhone)),
+        eventId: String(raw.eventId),
+        eventName: String(raw.eventName || '').trim(),
+        eventDate: parsedDate,
+        registrantName,
+        registrantPhone
+    };
+}
+
 function loadReminderStateFromDisk() {
     if (!fs.existsSync(REMINDERS_STATE_PATH)) {
         return;
@@ -388,6 +412,7 @@ function loadReminderStateFromDisk() {
         const raw = fs.readFileSync(REMINDERS_STATE_PATH, 'utf8');
         const parsed = JSON.parse(raw || '{}');
         const restored = {};
+        const restoredFriendRegistrations = {};
         const now = new Date();
 
         for (const chatId of Object.keys(parsed || {})) {
@@ -397,8 +422,14 @@ function loadReminderStateFromDisk() {
                 : Array.isArray(entry && entry.registrations)
                     ? entry.registrations
                     : [];
+            const rawFriendRegistrations = Array.isArray(entry && entry.friendRegistrations)
+                ? entry.friendRegistrations
+                : [];
             const normalized = rawRegistrations
                 .map(normalizeReminderRegistration)
+                .filter((item) => item && item.eventDate > now);
+            const normalizedFriendRegistrations = rawFriendRegistrations
+                .map(normalizeFriendRegistration)
                 .filter((item) => item && item.eventDate > now);
 
             if (!users[chatId]) {
@@ -416,11 +447,17 @@ function loadReminderStateFromDisk() {
             if (normalized.length > 0) {
                 restored[String(chatId)] = normalized;
             }
+
+            if (normalizedFriendRegistrations.length > 0) {
+                restoredFriendRegistrations[String(chatId)] = normalizedFriendRegistrations;
+            }
         }
 
         userEventRegistrations = restored;
+        friendEventRegistrations = restoredFriendRegistrations;
         const restoredCount = Object.values(userEventRegistrations).reduce((sum, items) => sum + items.length, 0);
-        console.log(`♻️ Відновлено ${restoredCount} реєстрацій нагадувань з ${REMINDERS_STATE_PATH}`);
+        const restoredFriendCount = Object.values(friendEventRegistrations).reduce((sum, items) => sum + items.length, 0);
+        console.log(`♻️ Відновлено ${restoredCount} реєстрацій нагадувань та ${restoredFriendCount} реєстрацій подруг з ${REMINDERS_STATE_PATH}`);
     } catch (error) {
         console.error(`❌ Не вдалося відновити стан нагадувань (${REMINDERS_STATE_PATH}):`, error && error.message ? error.message : error);
     }
@@ -587,12 +624,16 @@ function saveReminderStateToDisk() {
         const payload = {};
         const chatIds = new Set([
             ...Object.keys(userEventRegistrations || {}),
+            ...Object.keys(friendEventRegistrations || {}),
             ...Object.keys(users || {})
         ]);
 
         for (const chatId of chatIds) {
             const registrations = Array.isArray(userEventRegistrations[chatId])
                 ? userEventRegistrations[chatId]
+                : [];
+            const friendRegistrations = Array.isArray(friendEventRegistrations[chatId])
+                ? friendEventRegistrations[chatId]
                 : [];
             const serializedRegistrations = registrations
                 .map((registration) => {
@@ -619,18 +660,51 @@ function saveReminderStateToDisk() {
                     };
                 })
                 .filter(Boolean);
+            const serializedFriendRegistrations = friendRegistrations
+                .map((registration) => {
+                    if (!registration || !registration.eventDate) {
+                        return null;
+                    }
+
+                    const date = registration.eventDate instanceof Date
+                        ? registration.eventDate
+                        : new Date(registration.eventDate);
+
+                    if (Number.isNaN(date.getTime())) {
+                        return null;
+                    }
+
+                    const registrationKey = String(
+                        registration.registrationKey || buildFriendRegistrationKey(
+                            registration.eventId,
+                            registration.registrantName,
+                            registration.registrantPhone
+                        )
+                    );
+
+                    return {
+                        registrationKey,
+                        eventId: String(registration.eventId || ''),
+                        eventName: String(registration.eventName || ''),
+                        eventDate: date.toISOString(),
+                        registrantName: String(registration.registrantName || ''),
+                        registrantPhone: String(registration.registrantPhone || '')
+                    };
+                })
+                .filter(Boolean);
 
             const userSettings = users[chatId]
                 ? normalizeReminderSettings(users[chatId])
                 : createDefaultReminderSettings();
             const shouldPersistSettings = users[chatId] && hasCustomReminderSettings(userSettings);
 
-            if (serializedRegistrations.length === 0 && !shouldPersistSettings) {
+            if (serializedRegistrations.length === 0 && serializedFriendRegistrations.length === 0 && !shouldPersistSettings) {
                 continue;
             }
 
             payload[chatId] = {
                 registrations: serializedRegistrations,
+                friendRegistrations: serializedFriendRegistrations,
                 settings: serializeReminderSettings(userSettings)
             };
         }
@@ -715,6 +789,7 @@ const MAIN_MENU_BUTTONS = {
     afisha: '🎭 Афіша заходів',
     unsubscribe: '❌ Відписатись від заходів',
     friend: '👭 Зареєструвати подругу',
+    unsubscribeFriend: '👭❌ Відписати подругу',
     reminders: '🔔 Нагадування',
     contacts: '📞 Контакти'
 };
@@ -723,6 +798,11 @@ const NAVIGATION_BUTTONS = {
     menu: '🏠 Повернутися в меню',
     back: '⬅️ Назад',
     backToDays: '💞 Назад до вибору днів'
+};
+
+const UNSUBSCRIBE_MENU_BUTTONS = {
+    self: '❌ Відписатись',
+    friend: '👭❌ Відписати подругу'
 };
 
 const AFISHA_DAY_BUTTONS = {
@@ -1545,6 +1625,13 @@ function normalizeRegistrantName(value) {
 
 function normalizeRegistrantPhone(value) {
     return String(value || '').replace(/\D+/g, '');
+}
+
+function buildFriendRegistrationKey(eventId, registrantName, registrantPhone) {
+    const eventKey = String(eventId || '').trim();
+    const nameKey = normalizeRegistrantName(registrantName);
+    const phoneKey = normalizeRegistrantPhone(registrantPhone);
+    return `${eventKey}::${nameKey}::${phoneKey}`;
 }
 
 function isSameRegistrant(item, candidateNameKey, candidatePhoneKey) {
@@ -3174,6 +3261,7 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
     }
 
     const registrantProfile = await resolveRegistrantProfile(chatId, user, providedName || '', providedPhone || '');
+    const friendRegistrationKey = buildFriendRegistrationKey(eventId, registrantProfile.name, registrantProfile.phone);
 
     const evObj = events.find(e => e.id === eventId);
 
@@ -3188,6 +3276,13 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
     // Перевіряємо дублікати в пам'яті (не в таблиці)
     if (!skipReminders && evObj && userEventRegistrations[chatId]) {
         const alreadyAdded = userEventRegistrations[chatId].some(r => r.eventId === eventId);
+        if (alreadyAdded) {
+            return { status: 'already-registered' };
+        }
+    }
+
+    if (skipReminders && evObj && friendEventRegistrations[chatId]) {
+        const alreadyAdded = friendEventRegistrations[chatId].some((registration) => registration.registrationKey === friendRegistrationKey);
         if (alreadyAdded) {
             return { status: 'already-registered' };
         }
@@ -3225,6 +3320,26 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
             });
             saveReminderStateToDisk();
             console.log(`📝 Збережено реєстрацію для нагадувань: ${chatId} → ${eventName} (${evObj.date})`);
+        }
+    }
+
+    if (skipReminders && evObj && evObj.date) {
+        if (!friendEventRegistrations[chatId]) {
+            friendEventRegistrations[chatId] = [];
+        }
+
+        const alreadyAdded = friendEventRegistrations[chatId].some((registration) => registration.registrationKey === friendRegistrationKey);
+        if (!alreadyAdded) {
+            friendEventRegistrations[chatId].push({
+                registrationKey: friendRegistrationKey,
+                eventId,
+                eventName,
+                eventDate: evObj.date,
+                registrantName: registrantProfile.name,
+                registrantPhone: registrantProfile.phone
+            });
+            saveReminderStateToDisk();
+            console.log(`👭 Збережено реєстрацію подруги: ${chatId} → ${eventName} (${registrantProfile.name || 'без імені'})`);
         }
     }
 
@@ -3290,6 +3405,46 @@ async function unregisterFromEvent(chatId, eventId) {
     }
 
     return { status: 'ok', eventName: registration.eventName };
+}
+
+async function unregisterFriendFromEvent(chatId, registrationKey) {
+    if (!friendEventRegistrations[chatId]) {
+        return { status: 'not-registered' };
+    }
+
+    const regIndex = friendEventRegistrations[chatId].findIndex((registration) => registration.registrationKey === registrationKey);
+    if (regIndex === -1) {
+        return { status: 'not-found' };
+    }
+
+    const registration = friendEventRegistrations[chatId][regIndex];
+    friendEventRegistrations[chatId].splice(regIndex, 1);
+
+    if (friendEventRegistrations[chatId].length === 0) {
+        delete friendEventRegistrations[chatId];
+    }
+    saveReminderStateToDisk();
+
+    const event = events.find((eventItem) => eventItem.id === registration.eventId);
+    if (event) {
+        event.registrations = Math.max(0, (event.registrations || 1) - 1);
+        if (typeof event.seats === 'number') {
+            event.seats = event.seats + 1;
+        }
+
+        await decrementSheetRegistration(event, {
+            userId: String(chatId || ''),
+            name: String(registration.registrantName || '').trim(),
+            phone: String(registration.registrantPhone || '').trim()
+        });
+        console.log(`👭 Подругу відписано від "${registration.eventName}" (chatId=${chatId})`);
+    }
+
+    return {
+        status: 'ok',
+        eventName: registration.eventName,
+        registrantName: registration.registrantName
+    };
 }
 
 // Отримує заходи користувача на цьому тижні
@@ -3403,6 +3558,28 @@ async function processParsedEvents(parsedEvents) {
             [{ text: MAIN_MENU_BUTTONS.reminders }],
             [{ text: MAIN_MENU_BUTTONS.contacts }]
         ];
+    }
+
+    async function showUnsubscribeMenu(chatId, user) {
+        delete user.unregButtonMap;
+        delete user.friendUnregButtonMap;
+        delete user.pendingUnregEventId;
+        delete user.pendingUnregEventName;
+        delete user.pendingFriendUnregKey;
+        delete user.pendingFriendUnregEventName;
+        delete user.pendingFriendRegistrantName;
+        user.context = 'unsubscribe-root';
+
+        await bot.sendMessage(chatId, 'Оберіть, кого потрібно відписати від заходу:', {
+            reply_markup: {
+                keyboard: [
+                    [{ text: UNSUBSCRIBE_MENU_BUTTONS.self }],
+                    [{ text: UNSUBSCRIBE_MENU_BUTTONS.friend }],
+                    [{ text: NAVIGATION_BUTTONS.menu }]
+                ],
+                resize_keyboard: true
+            }
+        });
     }
 
     function normalizeAiIntentTag(value) {
@@ -3578,8 +3755,9 @@ async function processParsedEvents(parsedEvents) {
             await bot.sendMessage(chatId, "📅 У вас немає запланованих заходів для відписання.", {
                 reply_markup: {
                     keyboard: [
+                        [{ text: NAVIGATION_BUTTONS.back }],
                         [{ text: MAIN_MENU_BUTTONS.afisha }],
-                        [{ text: "Повернутися в меню" }]
+                        [{ text: NAVIGATION_BUTTONS.menu }]
                     ],
                     resize_keyboard: true
                 }
@@ -3604,9 +3782,59 @@ async function processParsedEvents(parsedEvents) {
 
         user.unregButtonMap = unregButtonMap;
         user.context = 'unregister';
+        buttons.push([{ text: NAVIGATION_BUTTONS.back }]);
+        buttons.push([{ text: NAVIGATION_BUTTONS.menu }]);
         buttons.push([{ text: "❌ Скасувати" }]);
 
         await bot.sendMessage(chatId, "🔴 <b>Виберіть захід для відписання:</b>", {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: buttons,
+                resize_keyboard: true
+            }
+        });
+    }
+
+    async function handleFriendUnsubscribeIntent(chatId, user) {
+        const registrations = friendEventRegistrations[chatId] || [];
+
+        if (registrations.length === 0) {
+            await bot.sendMessage(chatId, "👭 Наразі немає реєстрацій подруги для відписки.", {
+                reply_markup: {
+                    keyboard: [
+                        [{ text: NAVIGATION_BUTTONS.back }],
+                        [{ text: MAIN_MENU_BUTTONS.friend }],
+                        [{ text: NAVIGATION_BUTTONS.menu }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        const friendUnregButtonMap = {};
+        const buttons = registrations.map((registration, index) => {
+            const dateStr = registration.eventDate.toLocaleDateString('uk-UA', {
+                day: '2-digit',
+                month: '2-digit'
+            });
+            const timeStr = registration.eventDate.toLocaleTimeString('uk-UA', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            const friendLabel = registration.registrantName ? ` — ${registration.registrantName}` : '';
+            const buttonText = `${index + 1}. ${registration.eventName}${friendLabel} (${dateStr} ${timeStr})`;
+            friendUnregButtonMap[buttonText] = registration.registrationKey;
+            return [{ text: buttonText }];
+        });
+
+        user.friendUnregButtonMap = friendUnregButtonMap;
+        user.context = 'friend-unregister';
+        buttons.push([{ text: NAVIGATION_BUTTONS.back }]);
+        buttons.push([{ text: NAVIGATION_BUTTONS.menu }]);
+        buttons.push([{ text: '❌ Скасувати' }]);
+
+        await bot.sendMessage(chatId, '👭 <b>Виберіть реєстрацію подруги для відписки:</b>', {
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: buttons,
@@ -4913,6 +5141,48 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    if (user.context === 'friend-unregister' && user.friendUnregButtonMap && user.friendUnregButtonMap[text]) {
+        const registrationKey = user.friendUnregButtonMap[text];
+        const registration = (friendEventRegistrations[chatId] || []).find((item) => item.registrationKey === registrationKey);
+
+        if (!registration) {
+            bot.sendMessage(chatId, "❌ Реєстрацію подруги не знайдено.", {
+                reply_markup: {
+                    keyboard: [[{ text: MAIN_MENU_BUTTONS.unsubscribeFriend }], [{ text: NAVIGATION_BUTTONS.menu }]],
+                    resize_keyboard: true
+                }
+            });
+            delete user.friendUnregButtonMap;
+            user.context = null;
+            return;
+        }
+
+        user.pendingFriendUnregKey = registrationKey;
+        user.pendingFriendUnregEventName = registration.eventName;
+        user.pendingFriendRegistrantName = registration.registrantName;
+
+        const registrantSuffix = registration.registrantName
+            ? `👭 <b>${registration.registrantName}</b>\n`
+            : '';
+        const confirmMsg =
+            `❓ <b>Ви впевнені, що хочете відписати подругу від заходу?</b>\n\n` +
+            `${registrantSuffix}` +
+            `📌 <b>${registration.eventName}</b>\n\n` +
+            `Місце звільниться для інших учасниць.`;
+
+        bot.sendMessage(chatId, confirmMsg, {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: '✅ Так, відписати подругу' }],
+                    [{ text: '❌ Скасувати' }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
     // Повертаємось до афіші для додавання ще одного заходу
     if (text === "➕ Додати ще один" || text === "➕ Додати ще захід") {
         await showAfishaDaysMenu(chatId);
@@ -4926,19 +5196,26 @@ bot.on('message', async (msg) => {
 
     // Скасування реєстрації
     if (text === "❌ Скасувати" || text === "❌ Відмінити") {
-        resetSelectedEventsFlow(user);
-        clearFriendRegistrationState(user);
-        
-        bot.sendMessage(chatId, "Вибір заходів скасовано. Оберіть захід з афіші.", {
-            reply_markup: {
-                keyboard: [
-                    [{ text: "Афіша заходів" }],
-                    [{ text: "Повернутися в меню" }]
-                ],
-                resize_keyboard: true
-            }
-        });
-        return;
+        const inUnregisterFlow = user.context === 'unregister'
+            || user.context === 'friend-unregister'
+            || user.pendingUnregEventId
+            || user.pendingFriendUnregKey;
+
+        if (!inUnregisterFlow) {
+            resetSelectedEventsFlow(user);
+            clearFriendRegistrationState(user);
+
+            bot.sendMessage(chatId, "Вибір заходів скасовано. Оберіть захід з афіші.", {
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "Афіша заходів" }],
+                        [{ text: "Повернутися в меню" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
     }
 
     if (text === "Обрати ще захід" && user.step === 7) {
@@ -4991,6 +5268,17 @@ bot.on('message', async (msg) => {
         delete user.afishaPendingEventId;
         delete user.afishaPendingEventName;
 
+        if (
+            user.context === 'unsubscribe-root'
+            || user.context === 'unregister'
+            || user.context === 'friend-unregister'
+            || user.pendingUnregEventId
+            || user.pendingFriendUnregKey
+        ) {
+            await showUnsubscribeMenu(chatId, user);
+            return;
+        }
+
         if (user.context === 'afisha') {
             delete user.selectedEventName;
             delete user.selectedEventId;
@@ -5015,7 +5303,17 @@ bot.on('message', async (msg) => {
 
     // Кнопка відписання від заходів
     if (matchesCommand(text, MAIN_MENU_BUTTONS.unsubscribe, '❌ Відписатись від заходу')) {
+        await showUnsubscribeMenu(chatId, user);
+        return;
+    }
+
+    if (matchesCommand(text, UNSUBSCRIBE_MENU_BUTTONS.self, 'Відписатись')) {
         await handleUnsubscribeIntent(chatId, user);
+        return;
+    }
+
+    if (matchesCommand(text, UNSUBSCRIBE_MENU_BUTTONS.friend, MAIN_MENU_BUTTONS.unsubscribeFriend, '👭 Відписати подругу', 'Відписати подругу')) {
+        await handleFriendUnsubscribeIntent(chatId, user);
         return;
     }
 
@@ -5054,12 +5352,51 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    if (text === '✅ Так, відписати подругу' && user.pendingFriendUnregKey) {
+        const result = await unregisterFriendFromEvent(chatId, user.pendingFriendUnregKey);
+
+        if (result.status === 'ok') {
+            const registrantSuffix = result.registrantName ? `👭 ${result.registrantName}\n` : '';
+            bot.sendMessage(chatId,
+                `✅ <b>Подругу успішно відписано від заходу!</b>\n\n${registrantSuffix}📌 ${result.eventName}\n\nМісце звільнено для інших учасниць. 🩵`, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: MAIN_MENU_BUTTONS.unsubscribeFriend }],
+                        [{ text: NAVIGATION_BUTTONS.menu }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+        } else {
+            bot.sendMessage(chatId, '❌ Помилка при відписанні подруги. Спробуйте ще раз.', {
+                reply_markup: {
+                    keyboard: [[{ text: MAIN_MENU_BUTTONS.unsubscribeFriend }], [{ text: NAVIGATION_BUTTONS.menu }]],
+                    resize_keyboard: true
+                }
+            });
+        }
+
+        delete user.pendingFriendUnregKey;
+        delete user.pendingFriendUnregEventName;
+        delete user.pendingFriendRegistrantName;
+        delete user.friendUnregButtonMap;
+        user.context = null;
+        return;
+    }
+
     // Скасування під час вибору для відписання
-    if ((text === "❌ Скасувати" && user.context === 'unregister') || 
-        (text === "❌ Скасувати" && user.pendingUnregEventId)) {
+    if (((text === "❌ Скасувати" || text === "❌ Відмінити") && user.context === 'unregister') ||
+        ((text === "❌ Скасувати" || text === "❌ Відмінити") && user.pendingUnregEventId) ||
+        ((text === "❌ Скасувати" || text === "❌ Відмінити") && user.context === 'friend-unregister') ||
+        ((text === "❌ Скасувати" || text === "❌ Відмінити") && user.pendingFriendUnregKey)) {
         delete user.unregButtonMap;
+        delete user.friendUnregButtonMap;
         delete user.pendingUnregEventId;
         delete user.pendingUnregEventName;
+        delete user.pendingFriendUnregKey;
+        delete user.pendingFriendUnregEventName;
+        delete user.pendingFriendRegistrantName;
         user.context = null;
         
         bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
@@ -5165,6 +5502,13 @@ bot.on('message', async (msg) => {
             delete users[chatId].selectedEventId;
             delete users[chatId].selectedEventName;
             delete users[chatId].awaitingReminderHoursFor;
+            delete users[chatId].unregButtonMap;
+            delete users[chatId].friendUnregButtonMap;
+            delete users[chatId].pendingUnregEventId;
+            delete users[chatId].pendingUnregEventName;
+            delete users[chatId].pendingFriendUnregKey;
+            delete users[chatId].pendingFriendUnregEventName;
+            delete users[chatId].pendingFriendRegistrantName;
             clearFriendRegistrationState(users[chatId]);
             users[chatId].step = 0;
             users[chatId].registrationMode = false;
