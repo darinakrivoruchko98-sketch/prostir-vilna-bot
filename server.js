@@ -1,3 +1,5 @@
+process.env.TZ = process.env.TZ || 'Europe/Kyiv';
+
 const config = require('./src/config');
 require('dotenv').config();
 
@@ -17,6 +19,10 @@ const AI_API_URL = process.env.AI_API_URL || 'https://api.openai.com/v1/chat/com
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
 const AI_HTTP_TIMEOUT_MS = Number(process.env.AI_HTTP_TIMEOUT_MS || 12000);
 const AI_ENABLED = Boolean(AI_API_KEY);
+const APP_TIME_ZONE = process.env.TZ || 'Europe/Kyiv';
+const REMINDER_DELIVERY_WINDOW_MINUTES = 10;
+const REMINDER_HOURS_MIN = 1;
+const REMINDER_HOURS_MAX = 168;
 // Таблиця для розкладу та реєстрацій на заходи
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || config.SPREADSHEET_ID;
 const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || config.SCHEDULE_SHEET_NAME;
@@ -36,6 +42,7 @@ console.log("📋 Таблиця розкладу (тільки читання):
 console.log("📄 Аркуш розкладу:", SCHEDULE_SHEET_NAME);
 console.log("👤 Таблиця персональних даних (запис ПІБ + всі реєстрації):", PERSONAL_DATA_SPREADSHEET_ID);
 console.log("📄 Аркуш персональних даних:", PERSONAL_DATA_SHEET_NAME);
+console.log("🕐 Часова зона бота:", APP_TIME_ZONE);
 console.log(`🧠 AI режим: ${AI_ENABLED ? `увімкнено (${AI_MODEL})` : 'вимкнено (не задано AI_API_KEY)'}`);
 
 if (!TOKEN) {
@@ -173,7 +180,129 @@ let knownUsers = {}; // Кеш з персональними даними кор
 let appealMessagesMap = {}; // Мапа: message_id звернення в групі → chatId користувача
 let events = []; // масив для зберігання заходів
 let userEventRegistrations = {}; // Мапа: chatId → [{eventId, eventName, eventDate, reminded24h: false, reminded1h: false}]
+let lastWeeklyScheduleNotesCleanupKey = null;
 const REMINDERS_STATE_PATH = process.env.REMINDERS_STATE_PATH || path.join(__dirname, 'data', 'reminders-state.json');
+
+function createDefaultReminderSettings(enabled = true) {
+    return {
+        enabled,
+        reminder24h: {
+            enabled,
+            hoursBefore: 24
+        },
+        reminder1h: {
+            enabled,
+            hoursBefore: 1
+        }
+    };
+}
+
+function normalizeReminderSettings(rawUser) {
+    const defaults = createDefaultReminderSettings();
+    const rawSettings = rawUser && rawUser.reminderSettings ? rawUser.reminderSettings : {};
+    const globalEnabled = rawSettings.enabled !== undefined
+        ? rawSettings.enabled !== false
+        : rawUser && rawUser.remindersEnabled === false
+            ? false
+            : defaults.enabled;
+
+    const reminder24hRaw = rawSettings.reminder24h || {};
+    const reminder1hRaw = rawSettings.reminder1h || {};
+
+    const reminder24hHours = Number.isInteger(reminder24hRaw.hoursBefore)
+        ? reminder24hRaw.hoursBefore
+        : Number.isInteger(rawSettings.reminder24hHoursBefore)
+            ? rawSettings.reminder24hHoursBefore
+            : defaults.reminder24h.hoursBefore;
+    const reminder1hHours = Number.isInteger(reminder1hRaw.hoursBefore)
+        ? reminder1hRaw.hoursBefore
+        : Number.isInteger(rawSettings.reminder1hHoursBefore)
+            ? rawSettings.reminder1hHoursBefore
+            : defaults.reminder1h.hoursBefore;
+
+    return {
+        enabled: globalEnabled,
+        reminder24h: {
+            enabled: reminder24hRaw.enabled !== undefined
+                ? reminder24hRaw.enabled !== false
+                : rawSettings.reminder24hEnabled !== undefined
+                    ? rawSettings.reminder24hEnabled !== false
+                    : defaults.reminder24h.enabled,
+            hoursBefore: Math.min(REMINDER_HOURS_MAX, Math.max(REMINDER_HOURS_MIN, reminder24hHours))
+        },
+        reminder1h: {
+            enabled: reminder1hRaw.enabled !== undefined
+                ? reminder1hRaw.enabled !== false
+                : rawSettings.reminder1hEnabled !== undefined
+                    ? rawSettings.reminder1hEnabled !== false
+                    : defaults.reminder1h.enabled,
+            hoursBefore: Math.min(REMINDER_HOURS_MAX, Math.max(REMINDER_HOURS_MIN, reminder1hHours))
+        }
+    };
+}
+
+function getReminderSettingsForChat(chatId) {
+    if (!users[chatId]) {
+        users[chatId] = { step: 0 };
+    }
+
+    const settings = normalizeReminderSettings(users[chatId]);
+    users[chatId].reminderSettings = settings;
+    users[chatId].remindersEnabled = settings.enabled;
+    return settings;
+}
+
+function serializeReminderSettings(settings) {
+    return {
+        enabled: settings.enabled !== false,
+        reminder24h: {
+            enabled: settings.reminder24h.enabled !== false,
+            hoursBefore: settings.reminder24h.hoursBefore
+        },
+        reminder1h: {
+            enabled: settings.reminder1h.enabled !== false,
+            hoursBefore: settings.reminder1h.hoursBefore
+        }
+    };
+}
+
+function hasCustomReminderSettings(settings) {
+    const defaults = createDefaultReminderSettings();
+    return settings.enabled !== defaults.enabled ||
+        settings.reminder24h.enabled !== defaults.reminder24h.enabled ||
+        settings.reminder24h.hoursBefore !== defaults.reminder24h.hoursBefore ||
+        settings.reminder1h.enabled !== defaults.reminder1h.enabled ||
+        settings.reminder1h.hoursBefore !== defaults.reminder1h.hoursBefore;
+}
+
+function pluralizeHoursUa(value) {
+    const count = Math.abs(Number(value) || 0);
+    const mod10 = count % 10;
+    const mod100 = count % 100;
+
+    if (mod10 === 1 && mod100 !== 11) {
+        return 'годину';
+    }
+    if (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)) {
+        return 'години';
+    }
+    return 'годин';
+}
+
+function formatHoursBeforeLabel(hours) {
+    return `${hours} ${pluralizeHoursUa(hours)}`;
+}
+
+function formatReminderSlotSummary(label, slotSettings) {
+    const status = slotSettings.enabled ? '✅' : '❌';
+    return `${status} ${label}: за ${formatHoursBeforeLabel(slotSettings.hoursBefore)}`;
+}
+
+function shouldSendReminder(minutesUntilEvent, hoursBefore) {
+    const targetMinutes = hoursBefore * 60;
+    return minutesUntilEvent >= targetMinutes - REMINDER_DELIVERY_WINDOW_MINUTES &&
+        minutesUntilEvent <= targetMinutes + REMINDER_DELIVERY_WINDOW_MINUTES;
+}
 
 function normalizeReminderRegistration(raw) {
     if (!raw || !raw.eventId || !raw.eventDate) {
@@ -208,10 +337,27 @@ function loadReminderStateFromDisk() {
         const now = new Date();
 
         for (const chatId of Object.keys(parsed || {})) {
-            const rawRegistrations = Array.isArray(parsed[chatId]) ? parsed[chatId] : [];
+            const entry = parsed[chatId];
+            const rawRegistrations = Array.isArray(entry)
+                ? entry
+                : Array.isArray(entry && entry.registrations)
+                    ? entry.registrations
+                    : [];
             const normalized = rawRegistrations
                 .map(normalizeReminderRegistration)
                 .filter((item) => item && item.eventDate > now);
+
+            if (!users[chatId]) {
+                users[chatId] = { step: 0 };
+            }
+
+            if (entry && !Array.isArray(entry) && entry.settings) {
+                users[chatId].reminderSettings = normalizeReminderSettings({
+                    remindersEnabled: users[chatId].remindersEnabled,
+                    reminderSettings: entry.settings
+                });
+                users[chatId].remindersEnabled = users[chatId].reminderSettings.enabled;
+            }
 
             if (normalized.length > 0) {
                 restored[String(chatId)] = normalized;
@@ -226,16 +372,159 @@ function loadReminderStateFromDisk() {
     }
 }
 
+function buildReminderSettingsMessage(chatId, noticeText) {
+    const settings = getReminderSettingsForChat(chatId);
+    const lines = [];
+
+    if (noticeText) {
+        lines.push(noticeText.trim(), '');
+    }
+
+    lines.push('⚙️ <b>Налаштування нагадувань про заходи</b>', '');
+    lines.push(`Загальний статус: ${settings.enabled ? '✅ увімкнено' : '❌ вимкнено'}`);
+    lines.push(formatReminderSlotSummary('Нагадування 24 год', settings.reminder24h));
+    lines.push(formatReminderSlotSummary('Нагадування 1 год', settings.reminder1h));
+    lines.push('');
+    lines.push(`Можна задати власний інтервал від ${REMINDER_HOURS_MIN} до ${REMINDER_HOURS_MAX} годин.`);
+
+    return lines.join('\n');
+}
+
+function buildReminderSettingsKeyboard(chatId) {
+    const settings = getReminderSettingsForChat(chatId);
+    return [
+        [{ text: settings.enabled ? '🔕 Вимкнути всі нагадування' : '🔔 Увімкнути всі нагадування' }],
+        [
+            { text: settings.reminder24h.enabled ? '🔕 Вимкнути 24 год' : '🔔 Увімкнути 24 год' },
+            { text: '⏱ Змінити 24 год' }
+        ],
+        [
+            { text: settings.reminder1h.enabled ? '🔕 Вимкнути 1 год' : '🔔 Увімкнути 1 год' },
+            { text: '⏱ Змінити 1 год' }
+        ],
+        [{ text: '⬅️ До нагадувань' }],
+        [{ text: 'Повернутися в меню' }]
+    ];
+}
+
+async function showReminderSettingsMenu(chatId, noticeText = '') {
+    await bot.sendMessage(chatId, buildReminderSettingsMessage(chatId, noticeText), {
+        parse_mode: 'HTML',
+        reply_markup: {
+            keyboard: buildReminderSettingsKeyboard(chatId),
+            resize_keyboard: true
+        }
+    });
+}
+
+async function showUserRemindersOverview(chatId, user) {
+    await restoreUserRegistrationsFromSheet(chatId, user);
+    const reminderSettings = getReminderSettingsForChat(chatId);
+    const userRegistrations = userEventRegistrations[chatId] || [];
+
+    if (userRegistrations.length === 0) {
+        await bot.sendMessage(chatId,
+            "📅 У вас немає запланованих заходів.\n\n" +
+            "Зареєструйтесь на захід через меню «Афіша заходів», і ми нагадаємо вам про нього! 🩵\n\n" +
+            `${reminderSettings.enabled ? '✅' : '❌'} Загальні нагадування\n` +
+            `${formatReminderSlotSummary('Нагадування 24 год', reminderSettings.reminder24h)}\n` +
+            `${formatReminderSlotSummary('Нагадування 1 год', reminderSettings.reminder1h)}`, {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: "⚙️ Налаштування нагадувань" }],
+                    [{ text: "Повернутися в меню" }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
+    const sortedEvents = [...userRegistrations].sort((a, b) => a.eventDate - b.eventDate);
+    let message = "📅 <b>Ваші майбутні заходи:</b>\n\n";
+
+    sortedEvents.forEach((reg, index) => {
+        const dateStr = reg.eventDate.toLocaleDateString('uk-UA', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            timeZone: APP_TIME_ZONE
+        });
+        const timeStr = reg.eventDate.toLocaleTimeString('uk-UA', {
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZone: APP_TIME_ZONE
+        });
+
+        const timeUntilEvent = reg.eventDate - new Date();
+        const hoursUntilEvent = Math.floor(timeUntilEvent / (1000 * 60 * 60));
+        const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
+
+        let timeLeftStr = '';
+        if (daysUntilEvent > 0) {
+            timeLeftStr = `через ${daysUntilEvent} ${daysUntilEvent === 1 ? 'день' : 'днів'}`;
+        } else if (hoursUntilEvent > 0) {
+            timeLeftStr = `через ${hoursUntilEvent} год`;
+        } else {
+            timeLeftStr = 'сьогодні';
+        }
+
+        message += `${index + 1}. <b>${reg.eventName}</b>\n`;
+        message += `   🕐 ${dateStr} о ${timeStr}\n`;
+        message += `   ⏱ ${timeLeftStr}\n`;
+
+        if (reg.reminded24h) {
+            message += `   ✅ Нагадування 24 год надіслано\n`;
+        }
+        if (reg.reminded1h) {
+            message += `   ✅ Нагадування 1 год надіслано\n`;
+        }
+        message += '\n';
+    });
+
+    message += "\n🔔 <b>Автоматичні нагадування:</b>\n";
+    message += `${reminderSettings.enabled ? '✅' : '❌'} Загальні нагадування\n`;
+    message += `• ${formatReminderSlotSummary('Нагадування 24 год', reminderSettings.reminder24h)}\n`;
+    message += `• ${formatReminderSlotSummary('Нагадування 1 год', reminderSettings.reminder1h)}\n\n`;
+    message += "Ми обов'язково нагадаємо вам! 🩵";
+
+    await bot.sendMessage(chatId, message, {
+        parse_mode: 'HTML',
+        reply_markup: {
+            keyboard: [
+                [{ text: "❌ Відписатись від заходу" }],
+                [{ text: "⚙️ Налаштування нагадувань" }],
+                [{ text: "Повернутися в меню" }]
+            ],
+            resize_keyboard: true
+        }
+    });
+}
+
+function getReminderSlotConfig(slotKey) {
+    if (slotKey === 'reminder24h') {
+        return { field: 'reminded24h', label: '24 год' };
+    }
+    if (slotKey === 'reminder1h') {
+        return { field: 'reminded1h', label: '1 год' };
+    }
+    return null;
+}
+
 function saveReminderStateToDisk() {
     try {
         const payload = {};
+        const chatIds = new Set([
+            ...Object.keys(userEventRegistrations || {}),
+            ...Object.keys(users || {})
+        ]);
 
-        for (const [chatId, registrations] of Object.entries(userEventRegistrations || {})) {
-            if (!Array.isArray(registrations) || registrations.length === 0) {
-                continue;
-            }
-
-            payload[chatId] = registrations
+        for (const chatId of chatIds) {
+            const registrations = Array.isArray(userEventRegistrations[chatId])
+                ? userEventRegistrations[chatId]
+                : [];
+            const serializedRegistrations = registrations
                 .map((registration) => {
                     if (!registration || !registration.eventDate) {
                         return null;
@@ -260,6 +549,20 @@ function saveReminderStateToDisk() {
                     };
                 })
                 .filter(Boolean);
+
+            const userSettings = users[chatId]
+                ? normalizeReminderSettings(users[chatId])
+                : createDefaultReminderSettings();
+            const shouldPersistSettings = users[chatId] && hasCustomReminderSettings(userSettings);
+
+            if (serializedRegistrations.length === 0 && !shouldPersistSettings) {
+                continue;
+            }
+
+            payload[chatId] = {
+                registrations: serializedRegistrations,
+                settings: serializeReminderSettings(userSettings)
+            };
         }
 
         fs.mkdirSync(path.dirname(REMINDERS_STATE_PATH), { recursive: true });
@@ -326,14 +629,51 @@ function cleanupPastEvents() {
     }
 }
 
+function syncReminderRegistrationsWithEvents() {
+    const eventsById = new Map(getAllEvents().map((event) => [event.id, event]));
+    let hasReminderChanges = false;
+
+    for (const chatId in userEventRegistrations) {
+        const registrations = userEventRegistrations[chatId];
+        if (!Array.isArray(registrations) || registrations.length === 0) {
+            continue;
+        }
+
+        for (const registration of registrations) {
+            const actualEvent = eventsById.get(registration.eventId);
+            if (!actualEvent || !actualEvent.date) {
+                continue;
+            }
+
+            const registrationTime = registration.eventDate instanceof Date
+                ? registration.eventDate.getTime()
+                : new Date(registration.eventDate).getTime();
+            const actualTime = actualEvent.date.getTime();
+
+            if (registrationTime !== actualTime || registration.eventName !== actualEvent.name) {
+                registration.eventDate = actualEvent.date;
+                registration.eventName = actualEvent.name;
+                hasReminderChanges = true;
+            }
+        }
+    }
+
+    if (hasReminderChanges) {
+        saveReminderStateToDisk();
+        console.log('♻️ Оновлено збережені нагадування відповідно до актуального розкладу');
+    }
+}
+
 // Перевірка та відправка нагадувань про заходи
 async function checkAndSendReminders() {
     const now = new Date();
     let hasReminderChanges = false;
     
     for (const chatId in userEventRegistrations) {
+        const reminderSettings = getReminderSettingsForChat(chatId);
+
         // Перевіряємо чи користувач не вимкнув нагадування
-        if (users[chatId] && users[chatId].remindersEnabled === false) {
+        if (reminderSettings.enabled === false) {
             console.log(`ℹ️ Нагадування вимкнені для ${chatId}, пропускаємо`);
             continue;
         }
@@ -343,28 +683,36 @@ async function checkAndSendReminders() {
         for (const reg of registrations) {
             const timeUntilEvent = reg.eventDate - now;
             const hoursUntilEvent = timeUntilEvent / (1000 * 60 * 60);
-            const minutesUntilEvent = Math.round(timeUntilEvent / (1000 * 60));
+            const minutesUntilEvent = timeUntilEvent / (1000 * 60);
+            const roundedMinutesUntilEvent = Math.round(minutesUntilEvent);
             
             // Нагадування за 24 години (вікно: 23-25 годин до заходу)
             // Це гарантує, що якщо користувач заходить в час X, а захід в час X+24, він отримає нагадування
-            if (!reg.reminded24h && hoursUntilEvent >= 23 && hoursUntilEvent <= 25) {
+            if (
+                reminderSettings.reminder24h.enabled &&
+                !reg.reminded24h &&
+                shouldSendReminder(minutesUntilEvent, reminderSettings.reminder24h.hoursBefore)
+            ) {
                 try {
                     const dateStr = reg.eventDate.toLocaleDateString('uk-UA', { 
                         weekday: 'long', 
                         day: 'numeric', 
-                        month: 'long' 
+                        month: 'long',
+                        timeZone: APP_TIME_ZONE
                     });
                     const timeStr = reg.eventDate.toLocaleTimeString('uk-UA', { 
                         hour: '2-digit', 
-                        minute: '2-digit' 
+                        minute: '2-digit',
+                        timeZone: APP_TIME_ZONE
                     });
                     
                     await bot.sendMessage(chatId, 
-                        `⏰ <b>Нагадування за 24 години</b>\n\n` +
-                        `Завтра у вас захід:\n` +
+                        `⏰ <b>Нагадування про захід</b>\n\n` +
+                        `Незабаром у вас захід:\n` +
                         `📅 ${reg.eventName}\n` +
                         `🕐 ${dateStr} о ${timeStr}\n\n` +
-                        `До початку залишилось: 24 години\n\n` +
+                        `До початку ${hoursUntilEvent >= 1 ? `залишилось приблизно ${Math.round(hoursUntilEvent)} ${pluralizeHoursUa(Math.round(hoursUntilEvent))}` : `залишилось ${roundedMinutesUntilEvent} хвилин`}\n` +
+                        `Налаштовано: за ${formatHoursBeforeLabel(reminderSettings.reminder24h.hoursBefore)} до початку\n\n` +
                         `Чекаємо на вас у Просторі «Вільна»! 🩵`,
                         { parse_mode: 'HTML' }
                     );
@@ -377,13 +725,18 @@ async function checkAndSendReminders() {
                 }
             }
             
-            // Нагадування за 1 годину (вікно: 0-2 години до заходу)
-            // Це гарантує, що нагадування прийде для всіх, хто зареєструвався на будь-якому етапі
-            if (!reg.reminded1h && hoursUntilEvent >= 0 && hoursUntilEvent <= 2) {
+            // Нагадування за 1 годину: відправляємо лише поблизу позначки 60 хвилин,
+            // а не в будь-який момент перед самим стартом заходу.
+            if (
+                reminderSettings.reminder1h.enabled &&
+                !reg.reminded1h &&
+                shouldSendReminder(minutesUntilEvent, reminderSettings.reminder1h.hoursBefore)
+            ) {
                 try {
                     const timeStr = reg.eventDate.toLocaleTimeString('uk-UA', { 
                         hour: '2-digit', 
-                        minute: '2-digit' 
+                        minute: '2-digit',
+                        timeZone: APP_TIME_ZONE
                     });
                     
                     // Розраховуємо релевантну інформацію про залишений час
@@ -393,15 +746,16 @@ async function checkAndSendReminders() {
                         const remainingMins = Math.round((hoursUntilEvent - remainingHours) * 60);
                         timeLeftMsg = `залишилось ${remainingHours} ${remainingHours === 1 ? 'година' : 'години'} ${remainingMins} хвилин`;
                     } else {
-                        timeLeftMsg = `залишилось ${minutesUntilEvent} хвилин`;
+                        timeLeftMsg = `залишилось ${roundedMinutesUntilEvent} хвилин`;
                     }
                     
                     await bot.sendMessage(chatId, 
-                        `⏰ <b>Нагадування за 1 годину</b>\n\n` +
+                        `⏰ <b>Нагадування про захід</b>\n\n` +
                         `Скоро починається захід:\n` +
                         `📅 ${reg.eventName}\n` +
                         `🕐 Сьогодні о ${timeStr}\n\n` +
-                        `До початку ${timeLeftMsg}\n\n` +
+                        `До початку ${timeLeftMsg}\n` +
+                        `Налаштовано: за ${formatHoursBeforeLabel(reminderSettings.reminder1h.hoursBefore)} до початку\n\n` +
                         `Не забудьте! Чекаємо на вас 🩵\n\n` +
                         `📍 м. Дніпро, вул. Дмитра Донцова, 4`,
                         { parse_mode: 'HTML' }
@@ -1148,6 +1502,98 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
     });
 }
 
+function getLocalDateKey(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function isSameLocalDate(left, right) {
+    return left.getFullYear() === right.getFullYear()
+        && left.getMonth() === right.getMonth()
+        && left.getDate() === right.getDate();
+}
+
+async function clearWeeklyScheduleRegistrationNotesIfNeeded() {
+    if (!sheetsClient || !SPREADSHEET_ID) {
+        return;
+    }
+
+    const now = new Date();
+    if (now.getDay() !== 0) {
+        return;
+    }
+
+    const cleanupKey = getLocalDateKey(now);
+    if (lastWeeklyScheduleNotesCleanupKey === cleanupKey) {
+        return;
+    }
+
+    const hasRemainingSundayEvents = getAllEvents().some((event) => {
+        return event && event.date instanceof Date && event.date > now && isSameLocalDate(event.date, now);
+    });
+
+    if (hasRemainingSundayEvents) {
+        return;
+    }
+
+    try {
+        for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
+            const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, scheduleSheet);
+            if (sheetId === null || typeof sheetId === 'undefined') {
+                continue;
+            }
+
+            const resp = await sheetsClient.spreadsheets.values.get({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `${scheduleSheet}!A:E`
+            });
+
+            const rows = resp.data.values || [];
+            let dateContext = null;
+            const requests = [];
+
+            for (const [rowIndex, row] of rows.entries()) {
+                const parsed = parseEventFromRow(row, dateContext);
+                dateContext = parsed.nextDateContext;
+
+                if (!parsed.event) {
+                    continue;
+                }
+
+                requests.push({
+                    repeatCell: {
+                        range: {
+                            sheetId,
+                            startRowIndex: rowIndex,
+                            endRowIndex: rowIndex + 1,
+                            startColumnIndex: 4,
+                            endColumnIndex: 5
+                        },
+                        cell: {
+                            note: ''
+                        },
+                        fields: 'note'
+                    }
+                });
+            }
+
+            if (requests.length > 0) {
+                await sheetsClient.spreadsheets.batchUpdate({
+                    spreadsheetId: SPREADSHEET_ID,
+                    requestBody: { requests }
+                });
+                console.log(`🧹 Очищено нотатки реєстрацій у листі ${scheduleSheet} (${requests.length} рядків)`);
+            }
+        }
+
+        lastWeeklyScheduleNotesCleanupKey = cleanupKey;
+    } catch (error) {
+        console.error('❌ Не вдалося очистити тижневі нотатки реєстрацій у розкладі:', error && error.message ? error.message : error);
+    }
+}
+
 // Фільтрувати та сортувати заходи
 function getUpcomingEvents() {
     const now = new Date();
@@ -1194,6 +1640,172 @@ function formatEventDate(date) {
     const min = String(date.getMinutes()).padStart(2, '0');
     
     return `${d} ${m} | ${h}:${min}`;
+}
+
+function formatSelectedEventLine(event) {
+    if (!event) {
+        return '';
+    }
+
+    if (event.date instanceof Date && !Number.isNaN(event.date.getTime())) {
+        return `• ${formatEventDate(event.date)} — ${event.name}`;
+    }
+
+    return `• ${event.name}`;
+}
+
+function getSelectedEventsDetails(selectedEventsList) {
+    return (selectedEventsList || []).map((selectedEvent) => {
+        const currentEvent = getAllEvents().find((eventItem) => eventItem.id === selectedEvent.id);
+        return {
+            id: selectedEvent.id,
+            name: currentEvent ? currentEvent.name : selectedEvent.name,
+            date: currentEvent ? currentEvent.date : selectedEvent.date || null
+        };
+    });
+}
+
+function buildSelectedEventsMessage(selectedEventsList, headline) {
+    const selectedEvents = getSelectedEventsDetails(selectedEventsList);
+    let message = `${headline}\n\n`;
+
+    selectedEvents.forEach((event) => {
+        message += `${formatSelectedEventLine(event)}\n`;
+    });
+
+    return message.trim();
+}
+
+function getSelectedEventsKeyboard() {
+    return [
+        [{ text: '➕ Додати ще захід' }],
+        [{ text: '📝 Зареєструватися' }],
+        [{ text: '❌ Відмінити' }]
+    ];
+}
+
+function resetSelectedEventsFlow(user) {
+    delete user.afishaMultiRegistration;
+    delete user.afishaEventIndex;
+    delete user.currentMultiEventId;
+    delete user.currentMultiEventName;
+    delete user.selectedEventsList;
+    delete user.currentSelectedEventName;
+    delete user.currentSelectedEventId;
+    delete user.selectedEventId;
+    delete user.selectedEventName;
+}
+
+async function completeSelectedEventsRegistration(chatId, user, registrantName, registrantPhone) {
+    const selectedEvents = [...(user.selectedEventsList || [])];
+    const successEvents = [];
+    const failedEvents = [];
+
+    for (const selectedEvent of selectedEvents) {
+        user.selectedEventId = selectedEvent.id;
+        user.selectedEventName = selectedEvent.name;
+
+        const eventMeta = getAllEvents().find((eventItem) => eventItem.id === selectedEvent.id);
+        const result = await registerForSelectedEvent(chatId, user, registrantName, registrantPhone);
+        const details = {
+            name: eventMeta ? eventMeta.name : selectedEvent.name,
+            date: eventMeta ? eventMeta.date : selectedEvent.date || null
+        };
+
+        if (result.status === 'success' || result.status === 'ok') {
+            successEvents.push(details);
+        } else if (result.status === 'already-registered') {
+            failedEvents.push(`${formatSelectedEventLine(details)} — ви вже зареєстровані`);
+        } else if (result.status === 'no-seats') {
+            failedEvents.push(`${formatSelectedEventLine(details)} — місця закінчилися`);
+        } else {
+            failedEvents.push(`${formatSelectedEventLine(details)} — не вдалося зареєструвати`);
+        }
+    }
+
+    resetSelectedEventsFlow(user);
+    user.step = 0;
+    user.registrationMode = false;
+
+    return { successEvents, failedEvents };
+}
+
+function buildRegistrationResultsMessage(successEvents, failedEvents) {
+    let message = '';
+
+    if (successEvents.length > 0) {
+        message += '✅ <b>Ви успішно зареєстровані на:</b>\n\n';
+        successEvents.forEach((event) => {
+            message += `${formatSelectedEventLine(event)}\n`;
+        });
+    }
+
+    if (failedEvents.length > 0) {
+        if (message) {
+            message += '\n';
+        }
+        message += 'ℹ️ <b>Не вдалося додати:</b>\n\n';
+        failedEvents.forEach((line) => {
+            message += `${line}\n`;
+        });
+    }
+
+    return message.trim();
+}
+
+async function startSelectedEventsRegistration(chatId, user) {
+    if (!user.selectedEventsList || user.selectedEventsList.length === 0) {
+        await bot.sendMessage(chatId, '❌ Немає вибраних заходів. Оберіть захід з афіші.', {
+            reply_markup: {
+                keyboard: [
+                    [{ text: 'Афіша заходів' }],
+                    [{ text: 'Повернутися в меню' }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
+    user.afishaMultiRegistration = true;
+    const registrantData = await resolveRegistrantFormData(chatId, user);
+
+    user.name = registrantData.name;
+    user.phone = registrantData.phone;
+    user.birth = registrantData.birth;
+    user.visited = registrantData.visited;
+    user.status = registrantData.status;
+    user.health = registrantData.health;
+
+    const missingStep = !registrantData.name ? 1
+        : !registrantData.phone ? 2
+        : !registrantData.birth ? 3
+        : !registrantData.visited ? 4
+        : !registrantData.status ? 5
+        : !registrantData.health ? 6
+        : 0;
+
+    if (missingStep > 0) {
+        user.step = missingStep;
+        user.registrationMode = true;
+        showAfishaRegistrationForm(chatId, user);
+        return;
+    }
+
+    const { successEvents, failedEvents } = await completeSelectedEventsRegistration(
+        chatId,
+        user,
+        registrantData.name,
+        registrantData.phone
+    );
+
+    await bot.sendMessage(chatId, buildRegistrationResultsMessage(successEvents, failedEvents), {
+        parse_mode: 'HTML',
+        reply_markup: {
+            keyboard: [[{ text: 'Повернутися в меню' }]],
+            resize_keyboard: true
+        }
+    });
 }
 
 /* ===== GOOGLE SHEETS ===== */
@@ -1443,6 +2055,7 @@ async function initSheets() {
         // Початкове завантаження розкладу та періодичне оновлення
         try {
             await loadEventsFromSheet();
+            await clearWeeklyScheduleRegistrationNotesIfNeeded();
         } catch (e) {
             console.error('Initial loadEventsFromSheet failed', e);
         }
@@ -1451,7 +2064,11 @@ async function initSheets() {
             clearInterval(sheetsRefreshInterval);
         }
         sheetsRefreshInterval = setInterval(() => {
-            loadEventsFromSheet();
+            loadEventsFromSheet()
+                .then(() => clearWeeklyScheduleRegistrationNotesIfNeeded())
+                .catch((error) => {
+                    console.error('❌ Помилка оновлення розкладу або очищення нотаток:', error && error.message ? error.message : error);
+                });
         }, 60000);
         
         // Разова перевірка одразу після ініціалізації
@@ -1610,6 +2227,7 @@ async function loadEventsFromSheet() {
         // Додаткова діагностика
         const now = new Date();
         const futureCount = events.filter(e => e.date > now).length;
+        syncReminderRegistrationsWithEvents();
         console.log(`   📊 Поточний час: ${now.toLocaleString('uk-UA')}`);
         console.log(`   📊 Майбутніх заходів: ${futureCount} з ${events.length}`);
 
@@ -2281,69 +2899,11 @@ async function processParsedEvents(parsedEvents) {
 
     function getMainMenuKeyboard() {
         return [
-            [{ text: 'Реєстрація' }],
             [{ text: 'Афіша заходів' }],
             [{ text: 'Нагадування' }],
             [{ text: 'Контакти' }],
-            [{ text: '📲 Як зареєструватися' }],
             [{ text: 'Назад' }]
         ];
-    }
-
-    async function sendRegistrationGuide(chatId) {
-        const guideText = `📲 Як зареєструватися на заходи через чат-бот «Вільна»
-
-1️⃣ Відкрийте чат-бот «Вільна».
-📲Чат-бот Вільна для реєстрації: @vilna_chat_bot
-
-2️⃣ Зареєструйтесь у боті.
-Внесіть свої дані (👉🏻це потрібно зробити лише один раз).
-Бот запам'ятає вас, тому надалі повторно вводити дані не потрібно, тож не спішіть та вносьте інформацію уважно.
-
-3️⃣ Після реєстрації в меню натисніть кнопку «Афіша заходів».
-
-4️⃣ Оберіть день, який вас цікавить.
-Наприклад: середа.
-Бот покаже розклад заходів на цей день.
-
-5️⃣ Оберіть захід, на який хочете зареєструватися.
-Наприклад: «Коло весняного співу».
-
-6️⃣ Натисніть кнопку «Додати до реєстрації».
-
-7️⃣ Якщо хочете записатися на кілька заходів:
-— натисніть «Додати ще один»,
-— знову оберіть день і захід,
-— додайте його до реєстрації.
-
-👉🏻Або можна одразу завершити запис, натиснувши «Перейти до реєстрації».
-
-8️⃣ Бот покаже список обраних вами заходів.
-Натисніть «Продовжити реєстрацію».
-
-✅ Готово! Ви успішно зареєстровані.
-Чат-бот надішле вам підтвердження реєстрації повідомленням.
-
-❗️ Якщо зміняться обставини і потрібно відписатися від заходу:
-👉🏻 У боті натисніть «Повернутися в меню» -> «Нагадування» -> «❌ Відписатись від заходу».
-👉🏻 Оберіть захід, від якого хочете відписатися.
-👉🏻 Натисніть «✅ Так, відписатись» та підтвердьте дію.
-
-🎉 Ось і все — ви навчилися користуватися чат-ботом Вільна!
-
-Якщо виникнуть запитання або потрібно буде змінити запис на захід — бот завжди допоможе 🤍
-З будь-яких технічних питань звертатись до соціальної фахівчині Дарини Криворучко: @DarynaVilna🌷`;
-
-        await bot.sendMessage(chatId, guideText, {
-            reply_markup: {
-                keyboard: [
-                    [{ text: 'Афіша заходів' }],
-                    [{ text: 'Нагадування' }],
-                    [{ text: 'Повернутися в меню' }]
-                ],
-                resize_keyboard: true
-            }
-        });
     }
 
     function normalizeAiIntentTag(value) {
@@ -2816,7 +3376,6 @@ bot.on('message', async (msg) => {
                         [{ text: "Афіша заходів" }],
                         [{ text: "Нагадування" }],
                         [{ text: "Контакти" }],
-                        [{ text: "📲 Як зареєструватися" }],
                         [{ text: "Назад" }]
                     ],
                     resize_keyboard: true
@@ -3301,55 +3860,20 @@ bot.on('message', async (msg) => {
                 };
 
                 if (user.afishaMultiRegistration && user.selectedEventsList && user.selectedEventsList.length > 0) {
-                    let successCount = 0;
-                    let failureCount = 0;
-                    const registrationResults = [];
+                    const { successEvents, failedEvents } = await completeSelectedEventsRegistration(
+                        chatId,
+                        user,
+                        user.name,
+                        user.phone
+                    );
 
-                    for (const event of user.selectedEventsList) {
-                        user.selectedEventId = event.id;
-                        user.selectedEventName = event.name;
-
-                        const result = await registerForSelectedEvent(chatId, user, user.name, user.phone);
-                        if (result.status === 'success' || result.status === 'ok') {
-                            successCount += 1;
-                            registrationResults.push(`✅ ${event.name}`);
-                        } else if (result.status === 'already-registered') {
-                            failureCount += 1;
-                            registrationResults.push(`ℹ️ ${event.name} - вже зареєстровані`);
-                        } else if (result.status === 'no-seats') {
-                            failureCount += 1;
-                            registrationResults.push(`❌ ${event.name} - місця закінчилися`);
-                        } else {
-                            failureCount += 1;
-                            registrationResults.push(`❌ ${event.name} - помилка`);
-                        }
-                    }
-
-                    let message = `📝 <b>Результати реєстрації:</b>\n\n`;
-                    registrationResults.forEach((item) => {
-                        message += `${item}\n`;
-                    });
-                    message += `\n✅ Успішно: ${successCount}\n❌ Помилок: ${failureCount}`;
-
-                    await bot.sendMessage(chatId, message, {
+                    await bot.sendMessage(chatId, buildRegistrationResultsMessage(successEvents, failedEvents), {
                         parse_mode: 'HTML',
                         reply_markup: {
                             keyboard: [[{ text: "Повернутися в меню" }]],
                             resize_keyboard: true
                         }
                     });
-
-                    delete user.afishaMultiRegistration;
-                    delete user.afishaEventIndex;
-                    delete user.currentMultiEventId;
-                    delete user.currentMultiEventName;
-                    delete user.selectedEventsList;
-                    delete user.currentSelectedEventName;
-                    delete user.currentSelectedEventId;
-                    delete user.selectedEventId;
-                    delete user.selectedEventName;
-                    user.step = 0;
-                    user.registrationMode = false;
                     return;
                 }
 
@@ -3412,16 +3936,10 @@ bot.on('message', async (msg) => {
     }
 
     if (text === "Реєстрація") {
-        // Запускаємо форму реєстрації одразу
-        user.step = 1;
-        user.registrationMode = true;
-        
-        await bot.sendMessage(chatId, "📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
+        await bot.sendMessage(chatId, "Ваш профіль уже створюється один раз при вході в бот. Для запису на заходи відкрийте афішу.", {
             parse_mode: 'HTML',
             reply_markup: {
-                keyboard: [
-                    [{ text: "❌ Скасувати реєстрацію" }]
-                ],
+                keyboard: [[{ text: "Афіша заходів" }], [{ text: "Повернутися в меню" }]],
                 resize_keyboard: true
             }
         });
@@ -3433,96 +3951,42 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    if (text === "📲 Як зареєструватися" || normalizedUserText.includes('як зареєстру') || normalizedUserText.includes('інструкц')) {
-        await sendRegistrationGuide(chatId);
+    if (text === "Нагадування") {
+        await showUserRemindersOverview(chatId, user);
         return;
     }
 
-    if (text === "Нагадування") {
-        // Після рестарту відновлюємо реєстрації з нотаток таблиці для цього користувача.
-        await restoreUserRegistrationsFromSheet(chatId, user);
+    if (user.awaitingReminderHoursFor) {
+        if (text === '⬅️ Назад до налаштувань') {
+            delete user.awaitingReminderHoursFor;
+            await showReminderSettingsMenu(chatId);
+            return;
+        }
 
-        // Показуємо майбутні заходи користувача з нагадуваннями
-        const userRegistrations = userEventRegistrations[chatId] || [];
-        
-        if (userRegistrations.length === 0) {
-            bot.sendMessage(chatId, 
-                "📅 У вас немає запланованих заходів.\n\n" +
-                "Зареєструйтесь на захід через меню «Афіша заходів», і ми нагадаємо вам про нього! 🩵", {
+        const slotKey = user.awaitingReminderHoursFor;
+        const slotConfig = getReminderSlotConfig(slotKey);
+        const parsedHours = parseInt(String(text || '').trim(), 10);
+
+        if (!slotConfig || Number.isNaN(parsedHours) || parsedHours < REMINDER_HOURS_MIN || parsedHours > REMINDER_HOURS_MAX) {
+            await bot.sendMessage(chatId,
+                `❌ Введіть ціле число від ${REMINDER_HOURS_MIN} до ${REMINDER_HOURS_MAX}.`, {
                 reply_markup: {
-                    keyboard: [
-                        [{ text: "Повернутися в меню" }]
-                    ],
+                    keyboard: [[{ text: '⬅️ Назад до налаштувань' }]],
                     resize_keyboard: true
                 }
             });
             return;
         }
-        
-        // Сортуємо за датою
-        const sortedEvents = [...userRegistrations].sort((a, b) => a.eventDate - b.eventDate);
-        
-        let message = "📅 <b>Ваші майбутні заходи:</b>\n\n";
-        
-        sortedEvents.forEach((reg, index) => {
-            const dateStr = reg.eventDate.toLocaleDateString('uk-UA', { 
-                weekday: 'long', 
-                day: 'numeric', 
-                month: 'long' 
-            });
-            const timeStr = reg.eventDate.toLocaleTimeString('uk-UA', { 
-                hour: '2-digit', 
-                minute: '2-digit' 
-            });
-            
-            const timeUntilEvent = reg.eventDate - new Date();
-            const hoursUntilEvent = Math.floor(timeUntilEvent / (1000 * 60 * 60));
-            const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
-            
-            let timeLeftStr = '';
-            if (daysUntilEvent > 0) {
-                timeLeftStr = `через ${daysUntilEvent} ${daysUntilEvent === 1 ? 'день' : 'днів'}`;
-            } else if (hoursUntilEvent > 0) {
-                timeLeftStr = `через ${hoursUntilEvent} год`;
-            } else {
-                timeLeftStr = 'сьогодні';
-            }
-            
-            message += `${index + 1}. <b>${reg.eventName}</b>\n`;
-            message += `   🕐 ${dateStr} о ${timeStr}\n`;
-            message += `   ⏱ ${timeLeftStr}\n`;
-            
-            if (reg.reminded24h) {
-                message += `   ✅ Нагадування за 24 год надіслано\n`;
-            }
-            if (reg.reminded1h) {
-                message += `   ✅ Нагадування за 1 год надіслано\n`;
-            }
-            message += '\n';
-        });
-        
-        message += "\n🔔 <b>Автоматичні нагадування:</b>\n";
-        message += "• За 24 години до заходу\n";
-        message += "• За 1 годину до заходу\n\n";
-        message += "Ми обов'язково нагадаємо вам! 🩵";
-        
-        // Отримуємо налаштування користувача
-        if (!users[chatId]) users[chatId] = { step: 0 };
-        const remindersEnabled = users[chatId].remindersEnabled !== false; // за замовчуванням вмикнено
-        
-        let settingsStatus = remindersEnabled ? "✅ Нагадування увімкнені" : "❌ Нагадування вимкнені";
-        
-        bot.sendMessage(chatId, message + `\n\n${settingsStatus}`, {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [
-                    [{ text: "❌ Відписатись від заходу" }],
-                    [{ text: "⚙️ Налаштування нагадувань" }],
-                    [{ text: "Повернутися в меню" }]
-                ],
-                resize_keyboard: true
-            }
-        });
+
+        const settings = getReminderSettingsForChat(chatId);
+        settings[slotKey].hoursBefore = parsedHours;
+        settings[slotKey].enabled = true;
+        user.reminderSettings = settings;
+        user.remindersEnabled = settings.enabled;
+        delete user.awaitingReminderHoursFor;
+        saveReminderStateToDisk();
+
+        await showReminderSettingsMenu(chatId, `✅ Нагадування ${slotConfig.label} налаштовано за ${formatHoursBeforeLabel(parsedHours)} до заходу.`);
         return;
     }
 
@@ -3657,261 +4121,64 @@ bot.on('message', async (msg) => {
         selectedEvent = getAllEvents().find((eventItem) => eventItem.id === user.eventButtonMap[text]) || null;
     }
     if (selectedEvent) {
-        // compute seats left asynchronously before replying
-        const seatsLeft = await getSeatsLeft(selectedEvent.id);
-        const seatsInfo = seatsLeft > 0 
-            ? `💺 Місць залишилось: ${formatSeatsCount(seatsLeft)}\n` 
-            : `❌ Місця закінчилися\n`;
-        
-        // Отримуємо список вибраних заходів
         if (!user.selectedEventsList) {
             user.selectedEventsList = [];
         }
-        
-        // Перевіряємо чи цей захід вже в списку
-        const alreadySelected = user.selectedEventsList.some(e => e.id === selectedEvent.id);
-        
-        // build keyboard options
-        const buttons = [];
-        if (seatsLeft > 0 && !alreadySelected) {
-            buttons.push([{ text: "➕ Додати до реєстрації" }]);
-        } else if (alreadySelected) {
-            buttons.push([{ text: "✅ Вже додано" }]);
-        } else {
-            buttons.push([{ text: "❌ Місць немає" }]);
-        }
-        
-        // Додаємо кнопку для переходу до реєстрації якщо щось вибрано
-        if (user.selectedEventsList.length > 0) {
-            buttons.push([{ text: "📝 Перейти до реєстрації" }]);
-        }
-        buttons.push([{ text: "Назад до вибору днів" }]);
 
-        bot.sendMessage(chatId, `✅ Захід: ${selectedEvent.name}\n📅 ${formatEventDate(selectedEvent.date)}\n${seatsInfo}`, {
+        const seatsLeft = await getSeatsLeft(selectedEvent.id);
+        const alreadySelected = user.selectedEventsList.some((eventItem) => eventItem.id === selectedEvent.id);
+
+        if (seatsLeft <= 0) {
+            await bot.sendMessage(chatId, `На жаль, на захід "${selectedEvent.name}" місць уже немає.`, {
+                reply_markup: {
+                    keyboard: getSelectedEventsKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (!alreadySelected) {
+            user.selectedEventsList.push({
+                id: selectedEvent.id,
+                name: selectedEvent.name,
+                date: selectedEvent.date
+            });
+        }
+
+        const headline = alreadySelected
+            ? 'Цей захід уже є у вашому списку.'
+            : 'Захід додано до реєстрації.';
+
+        await bot.sendMessage(chatId, buildSelectedEventsMessage(user.selectedEventsList, headline), {
+            parse_mode: 'HTML',
             reply_markup: {
-                keyboard: buttons,
+                keyboard: getSelectedEventsKeyboard(),
                 resize_keyboard: true
             }
         });
-        
-        // Зберігаємо поточний захід для додавання
+
         user.currentSelectedEventName = selectedEvent.name;
         user.currentSelectedEventId = selectedEvent.id;
         return;
     }
 
-    // Додаємо захід до кошика
-    if (text === "➕ Додати до реєстрації") {
-        if (!user.selectedEventsList) {
-            user.selectedEventsList = [];
-        }
-        
-        const eventName = user.currentSelectedEventName;
-        const eventId = user.currentSelectedEventId;
-        
-        if (eventName && eventId && !user.selectedEventsList.some(e => e.id === eventId)) {
-            user.selectedEventsList.push({ id: eventId, name: eventName });
-            
-            let message = `✅ <b>Захід додано!</b>\n\n`;
-            message += `Вибрано заходів: ${user.selectedEventsList.length}\n\n`;
-            message += `📝 <b>Вибрані заходи:</b>\n`;
-            user.selectedEventsList.forEach((e, i) => {
-                message += `${i + 1}. ${e.name}\n`;
-            });
-            message += `\n<b>Виберіть дію:</b>`;
-            
-            bot.sendMessage(chatId, message, {
-                parse_mode: 'HTML',
-                reply_markup: {
-                    keyboard: [
-                        [{ text: "➕ Додати ще один" }],
-                        [{ text: "📝 Перейти до реєстрації" }],
-                        [{ text: "Назад до вибору днів" }]
-                    ],
-                    resize_keyboard: true
-                }
-            });
-        }
-        return;
-    }
-
     // Повертаємось до афіші для додавання ще одного заходу
-    if (text === "➕ Додати ще один") {
+    if (text === "➕ Додати ще один" || text === "➕ Додати ще захід") {
         await showAfishaDaysMenu(chatId);
         return;
     }
 
-    // Перейти до реєстрації на всі вибрані заходи
-    if (text === "📝 Перейти до реєстрації") {
-        // Якщо щойно обрали захід і ще не натиснули "Додати", не губимо його.
-        if (user.currentSelectedEventId && user.currentSelectedEventName) {
-            if (!user.selectedEventsList) {
-                user.selectedEventsList = [];
-            }
-            const alreadyAddedCurrent = user.selectedEventsList.some((item) => item.id === user.currentSelectedEventId);
-            if (!alreadyAddedCurrent) {
-                user.selectedEventsList.push({
-                    id: user.currentSelectedEventId,
-                    name: user.currentSelectedEventName
-                });
-            }
-        }
-
-        if (!user.selectedEventsList || user.selectedEventsList.length === 0) {
-            bot.sendMessage(chatId, "❌ Немає вибраних заходів. Оберіть захід з афіші.", {
-                reply_markup: {
-                    keyboard: [
-                        [{ text: "Афіша заходів" }],
-                        [{ text: "Повернутися в меню" }]
-                    ],
-                    resize_keyboard: true
-                }
-            });
-            return;
-        }
-
-        // Показуємо що будемо реєструвати
-        let message = `📝 <b>Реєстрація на заходи</b>\n\n`;
-        message += `Ви реєструватиметесь на:\n`;
-        user.selectedEventsList.forEach((e, i) => {
-            message += `${i + 1}. ${e.name}\n`;
-        });
-        message += `\n<b>Заповніть форму один раз для всіх заходів:</b>`;
-
-        bot.sendMessage(chatId, message, {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [
-                    [{ text: "✅ Продовжити реєстрацію" }],
-                    [{ text: "❌ Скасувати" }]
-                ],
-                resize_keyboard: true
-            }
-        });
-        return;
-    }
-
-    // Обробка реєстрації на всі вибрані заходи
-    if (text === "✅ Продовжити реєстрацію") {
-        // Страховка від втрати стану між кнопками.
-        if (user.currentSelectedEventId && user.currentSelectedEventName) {
-            if (!user.selectedEventsList) {
-                user.selectedEventsList = [];
-            }
-            const alreadyAddedCurrent = user.selectedEventsList.some((item) => item.id === user.currentSelectedEventId);
-            if (!alreadyAddedCurrent) {
-                user.selectedEventsList.push({
-                    id: user.currentSelectedEventId,
-                    name: user.currentSelectedEventName
-                });
-            }
-        }
-
-        if (!user.selectedEventsList || user.selectedEventsList.length === 0) {
-            bot.sendMessage(chatId, "❌ Немає вибраних заходів.", {
-                reply_markup: {
-                    keyboard: [[{ text: "Повернутися в меню" }]],
-                    resize_keyboard: true
-                }
-            });
-            return;
-        }
-
-        // Запускаємо реєстрацію: якщо дані вже є, реєструємо одразу без повторних питань
-        user.afishaMultiRegistration = true;
-        const registrantData = await resolveRegistrantFormData(chatId, user);
-
-        user.name = registrantData.name;
-        user.phone = registrantData.phone;
-        user.birth = registrantData.birth;
-        user.visited = registrantData.visited;
-        user.status = registrantData.status;
-        user.health = registrantData.health;
-
-        const missingStep = !registrantData.name ? 1
-            : !registrantData.phone ? 2
-            : !registrantData.birth ? 3
-            : !registrantData.visited ? 4
-            : !registrantData.status ? 5
-            : !registrantData.health ? 6
-            : 0;
-
-        if (missingStep > 0) {
-            user.step = missingStep;
-            user.registrationMode = true;
-            showAfishaRegistrationForm(chatId, user);
-            return;
-        }
-
-        // Повні дані вже є: реєструємо на всі заходи без форми
-        let successCount = 0;
-        let failureCount = 0;
-        const registrationResults = [];
-
-        for (const event of user.selectedEventsList) {
-            user.selectedEventId = event.id;
-            user.selectedEventName = event.name;
-
-            const result = await registerForSelectedEvent(chatId, user, registrantData.name, registrantData.phone);
-            if (result.status === 'success' || result.status === 'ok') {
-                successCount += 1;
-                registrationResults.push(`✅ ${event.name}`);
-            } else if (result.status === 'already-registered') {
-                failureCount += 1;
-                registrationResults.push(`ℹ️ ${event.name} - вже зареєстровані`);
-            } else if (result.status === 'no-seats') {
-                failureCount += 1;
-                registrationResults.push(`❌ ${event.name} - місця закінчилися`);
-            } else {
-                failureCount += 1;
-                registrationResults.push(`❌ ${event.name} - помилка`);
-            }
-        }
-
-        let message = `📝 <b>Результати реєстрації:</b>\n\n`;
-        registrationResults.forEach((item) => {
-            message += `${item}\n`;
-        });
-        message += `\n✅ Успішно: ${successCount}\n❌ Помилок: ${failureCount}`;
-
-        bot.sendMessage(chatId, message, {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [[{ text: "Повернутися в меню" }]],
-                resize_keyboard: true
-            }
-        });
-
-        knownUsers[chatId] = {
-            name: user.name,
-            phone: user.phone,
-            birth: user.birth,
-            visited: user.visited,
-            status: user.status,
-            health: user.health,
-            username: user.username || ""
-        };
-
-        delete user.afishaMultiRegistration;
-        delete user.afishaEventIndex;
-        delete user.currentMultiEventId;
-        delete user.currentMultiEventName;
-        delete user.selectedEventsList;
-        delete user.currentSelectedEventName;
-        delete user.currentSelectedEventId;
-        delete user.selectedEventId;
-        delete user.selectedEventName;
-        user.step = 0;
+    if (text === "📝 Перейти до реєстрації" || text === "✅ Продовжити реєстрацію" || text === "📝 Зареєструватися" || text === "Реєструватися") {
+        await startSelectedEventsRegistration(chatId, user);
         return;
     }
 
     // Скасування реєстрації
-    if (text === "❌ Скасувати") {
-        user.selectedEventsList = [];
-        user.currentSelectedEventName = undefined;
-        user.currentSelectedEventId = undefined;
+    if (text === "❌ Скасувати" || text === "❌ Відмінити") {
+        resetSelectedEventsFlow(user);
         
-        bot.sendMessage(chatId, "Реєстрацію скасовано. Оберіть захід з афіші.", {
+        bot.sendMessage(chatId, "Вибір заходів скасовано. Оберіть захід з афіші.", {
             reply_markup: {
                 keyboard: [
                     [{ text: "Афіша заходів" }],
@@ -3920,29 +4187,6 @@ bot.on('message', async (msg) => {
                 resize_keyboard: true
             }
         });
-        return;
-    }
-
-    // Старий обробник реєстрації (сумісність зі старими кнопками)
-    if (text === "Реєструватися") {
-        if (!user.selectedEventsList) {
-            user.selectedEventsList = [];
-        }
-
-        if (user.selectedEventId && user.selectedEventName && !user.selectedEventsList.some((e) => e.id === user.selectedEventId)) {
-            user.selectedEventsList.push({
-                id: user.selectedEventId,
-                name: user.selectedEventName
-            });
-        }
-
-        if (user.selectedEventsList.length === 0) {
-            bot.sendMessage(chatId, "❌ Немає вибраних заходів. Оберіть захід з афіші.");
-            return;
-        }
-
-        user.afishaMultiRegistration = true;
-        showAfishaRegistrationForm(chatId, user);
         return;
     }
 
@@ -4078,71 +4322,84 @@ bot.on('message', async (msg) => {
 
     // Налаштування нагадувань
     if (text === "⚙️ Налаштування нагадувань") {
-        if (!users[chatId]) users[chatId] = { step: 0 };
-        
-        const remindersEnabled = users[chatId].remindersEnabled !== false;
-        const statusText = remindersEnabled ? "✅ увімкнені" : "❌ вимкнені";
-        
-        const settingsMsg = `⚙️ <b>Налаштування нагадувань про заходи</b>\n\n` +
-            `Поточний статус: ${statusText}\n\n` +
-            `<b>Оберіть дію:</b>`;
-        
-        const buttons = remindersEnabled 
-            ? [
-                [{ text: "🔔 Вимкнути нагадування" }],
-                [{ text: "Повернутися в меню" }]
-            ]
-            : [
-                [{ text: "🔊 Увімкнути нагадування" }],
-                [{ text: "Повернутися в меню" }]
-            ];
-        
-        bot.sendMessage(chatId, settingsMsg, {
-            parse_mode: 'HTML',
-            reply_markup: { keyboard: buttons, resize_keyboard: true }
-        });
+        await showReminderSettingsMenu(chatId);
         return;
     }
 
-    // Вмикаємо нагадування
-    if (text === "🔊 Увімкнути нагадування") {
-        if (!users[chatId]) users[chatId] = { step: 0 };
-        users[chatId].remindersEnabled = true;
-        
-        bot.sendMessage(chatId, 
-            "✅ <b>Нагадування увімкнені!</b>\n\n" +
-            "Ви будете отримувати сповіщення за 24 години та за 1 годину до кожного заходу.\n\n" +
-            "Дякуємо! 🩵", {
+    if (text === '🔔 Увімкнути всі нагадування' || text === '🔊 Увімкнути нагадування') {
+        const settings = getReminderSettingsForChat(chatId);
+        settings.enabled = true;
+        user.reminderSettings = settings;
+        user.remindersEnabled = true;
+        saveReminderStateToDisk();
+
+        await showReminderSettingsMenu(chatId, '✅ Загальні нагадування увімкнено.');
+        return;
+    }
+
+    if (text === '🔕 Вимкнути всі нагадування' || text === '🔔 Вимкнути нагадування') {
+        const settings = getReminderSettingsForChat(chatId);
+        settings.enabled = false;
+        user.reminderSettings = settings;
+        user.remindersEnabled = false;
+        saveReminderStateToDisk();
+
+        await showReminderSettingsMenu(chatId, '❌ Загальні нагадування вимкнено.');
+        return;
+    }
+
+    if (text === '🔔 Увімкнути 24 год' || text === '🔕 Вимкнути 24 год') {
+        const settings = getReminderSettingsForChat(chatId);
+        settings.reminder24h.enabled = text === '🔔 Увімкнути 24 год';
+        user.reminderSettings = settings;
+        saveReminderStateToDisk();
+
+        await showReminderSettingsMenu(
+            chatId,
+            settings.reminder24h.enabled
+                ? `✅ Нагадування 24 год увімкнено за ${formatHoursBeforeLabel(settings.reminder24h.hoursBefore)}.`
+                : '❌ Нагадування 24 год вимкнено.'
+        );
+        return;
+    }
+
+    if (text === '🔔 Увімкнути 1 год' || text === '🔕 Вимкнути 1 год') {
+        const settings = getReminderSettingsForChat(chatId);
+        settings.reminder1h.enabled = text === '🔔 Увімкнути 1 год';
+        user.reminderSettings = settings;
+        saveReminderStateToDisk();
+
+        await showReminderSettingsMenu(
+            chatId,
+            settings.reminder1h.enabled
+                ? `✅ Нагадування 1 год увімкнено за ${formatHoursBeforeLabel(settings.reminder1h.hoursBefore)}.`
+                : '❌ Нагадування 1 год вимкнено.'
+        );
+        return;
+    }
+
+    if (text === '⏱ Змінити 24 год' || text === '⏱ Змінити 1 год') {
+        const slotKey = text === '⏱ Змінити 24 год' ? 'reminder24h' : 'reminder1h';
+        const slotConfig = getReminderSlotConfig(slotKey);
+        const settings = getReminderSettingsForChat(chatId);
+        user.awaitingReminderHoursFor = slotKey;
+
+        await bot.sendMessage(chatId,
+            `⏱ <b>Налаштування нагадування ${slotConfig.label}</b>\n\n` +
+            `Зараз воно надсилається за ${formatHoursBeforeLabel(settings[slotKey].hoursBefore)} до початку.\n` +
+            `Введіть нове значення в годинах від ${REMINDER_HOURS_MIN} до ${REMINDER_HOURS_MAX}.`, {
             parse_mode: 'HTML',
             reply_markup: {
-                keyboard: [
-                    [{ text: "Нагадування" }],
-                    [{ text: "Повернутися в меню" }]
-                ],
+                keyboard: [[{ text: '⬅️ Назад до налаштувань' }]],
                 resize_keyboard: true
             }
         });
         return;
     }
 
-    // Вимикаємо нагадування
-    if (text === "🔔 Вимкнути нагадування") {
-        if (!users[chatId]) users[chatId] = { step: 0 };
-        users[chatId].remindersEnabled = false;
-        
-        bot.sendMessage(chatId, 
-            "❌ <b>Нагадування вимкнені</b>\n\n" +
-            "Ви більше не будете отримувати сповіщення про заходи.\n\n" +
-            "Ви можете увімкнути їх в будь-який час через меню «Нагадування». 🩵", {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [
-                    [{ text: "Нагадування" }],
-                    [{ text: "Повернутися в меню" }]
-                ],
-                resize_keyboard: true
-            }
-        });
+    if (text === '⬅️ До нагадувань') {
+        delete user.awaitingReminderHoursFor;
+        await showUserRemindersOverview(chatId, user);
         return;
     }
 
@@ -4156,6 +4413,7 @@ bot.on('message', async (msg) => {
             delete users[chatId].selectedEventsList;
             delete users[chatId].selectedEventId;
             delete users[chatId].selectedEventName;
+            delete users[chatId].awaitingReminderHoursFor;
             users[chatId].step = 0;
             users[chatId].registrationMode = false;
             users[chatId].context = null;
