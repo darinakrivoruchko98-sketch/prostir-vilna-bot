@@ -181,6 +181,8 @@ let appealMessagesMap = {}; // Мапа: message_id звернення в гру
 let events = []; // масив для зберігання заходів
 let userEventRegistrations = {}; // Мапа: chatId → [{eventId, eventName, eventDate, reminded24h: false, reminded1h: false}]
 let lastWeeklyScheduleNotesCleanupKey = null;
+const REMINDER_RESTORE_CACHE_MS = 60 * 1000;
+const reminderRestoreInFlight = new Map();
 const REMINDERS_STATE_PATH = process.env.REMINDERS_STATE_PATH || path.join(__dirname, 'data', 'reminders-state.json');
 
 function createDefaultReminderSettings(enabled = true) {
@@ -1530,11 +1532,19 @@ async function clearWeeklyScheduleRegistrationNotesIfNeeded() {
         return;
     }
 
-    const hasRemainingSundayEvents = getAllEvents().some((event) => {
-        return event && event.date instanceof Date && event.date > now && isSameLocalDate(event.date, now);
+    const sundayEventsToday = getAllEvents().filter((event) => {
+        return event && event.date instanceof Date && isSameLocalDate(event.date, now);
     });
 
-    if (hasRemainingSundayEvents) {
+    if (sundayEventsToday.length > 0) {
+        const lastSundayEventTime = sundayEventsToday.reduce((latest, event) => {
+            return event.date > latest ? event.date : latest;
+        }, sundayEventsToday[0].date);
+
+        if (now < lastSundayEventTime) {
+            return;
+        }
+    } else {
         return;
     }
 
@@ -2400,53 +2410,78 @@ async function restoreUserRegistrationsFromSheet(chatId, user) {
         return 0;
     }
 
-    const profile = await resolveRegistrantProfile(chatId, user, user && user.name, user && user.phone);
-    const normalizedName = normalizeRegistrantName(profile.name);
-    const normalizedPhone = normalizeRegistrantPhone(profile.phone);
-    if (!normalizedName && !normalizedPhone) {
+    if (!user) {
         return 0;
     }
 
-    if (!userEventRegistrations[chatId]) {
-        userEventRegistrations[chatId] = [];
+    const now = Date.now();
+    if (user.lastReminderRestoreAt && now - user.lastReminderRestoreAt < REMINDER_RESTORE_CACHE_MS) {
+        return 0;
     }
 
-    const existingIds = new Set(userEventRegistrations[chatId].map((item) => item.eventId));
-    let restoredCount = 0;
+    if (reminderRestoreInFlight.has(chatId)) {
+        return reminderRestoreInFlight.get(chatId);
+    }
 
-    for (const event of getAllEvents()) {
-        if (!event || !event.date || event.date <= new Date() || existingIds.has(event.id)) {
-            continue;
+    const restorePromise = (async () => {
+        const profile = await resolveRegistrantProfile(chatId, user, user && user.name, user && user.phone);
+        const normalizedName = normalizeRegistrantName(profile.name);
+        const normalizedPhone = normalizeRegistrantPhone(profile.phone);
+        if (!normalizedName && !normalizedPhone) {
+            user.lastReminderRestoreAt = Date.now();
+            return 0;
         }
 
-        const inNote = await isRegistrantAlreadyInEventNote(event, profile);
-        if (!inNote) {
-            continue;
+        if (!userEventRegistrations[chatId]) {
+            userEventRegistrations[chatId] = [];
         }
 
-        userEventRegistrations[chatId].push({
-            eventId: event.id,
-            eventName: event.name,
-            eventDate: event.date,
-            registrantName: profile.name,
-            registrantPhone: profile.phone,
-            reminded24h: false,
-            reminded1h: false
-        });
-        existingIds.add(event.id);
-        restoredCount += 1;
-    }
+        const existingIds = new Set(userEventRegistrations[chatId].map((item) => item.eventId));
+        let restoredCount = 0;
 
-    if (userEventRegistrations[chatId].length === 0) {
-        delete userEventRegistrations[chatId];
-    }
+        for (const event of getAllEvents()) {
+            if (!event || !event.date || event.date <= new Date() || existingIds.has(event.id)) {
+                continue;
+            }
 
-    if (restoredCount > 0) {
-        console.log(`♻️ Відновлено ${restoredCount} реєстрацій з нотаток для chatId=${chatId}`);
-        saveReminderStateToDisk();
-    }
+            const inNote = await isRegistrantAlreadyInEventNote(event, profile);
+            if (!inNote) {
+                continue;
+            }
 
-    return restoredCount;
+            userEventRegistrations[chatId].push({
+                eventId: event.id,
+                eventName: event.name,
+                eventDate: event.date,
+                registrantName: profile.name,
+                registrantPhone: profile.phone,
+                reminded24h: false,
+                reminded1h: false
+            });
+            existingIds.add(event.id);
+            restoredCount += 1;
+        }
+
+        if (userEventRegistrations[chatId].length === 0) {
+            delete userEventRegistrations[chatId];
+        }
+
+        if (restoredCount > 0) {
+            console.log(`♻️ Відновлено ${restoredCount} реєстрацій з нотаток для chatId=${chatId}`);
+            saveReminderStateToDisk();
+        }
+
+        user.lastReminderRestoreAt = Date.now();
+        return restoredCount;
+    })();
+
+    reminderRestoreInFlight.set(chatId, restorePromise);
+
+    try {
+        return await restorePromise;
+    } finally {
+        reminderRestoreInFlight.delete(chatId);
+    }
 }
 
 async function resolveRegistrantFormData(chatId, user) {
