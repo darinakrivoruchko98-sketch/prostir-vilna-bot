@@ -346,6 +346,13 @@ function formatReminderSlotSummary(slotKey, label, slotSettings) {
     return `${status} ${label}: за ${formatReminderLeadTime(slotKey, slotSettings[slotConfig.valueKey])}`;
 }
 
+function setAllReminderSlotsEnabled(settings, enabled) {
+    settings.enabled = enabled;
+    settings.reminder24h.enabled = enabled;
+    settings.reminder1h.enabled = enabled;
+    return settings;
+}
+
 function shouldSendReminder(minutesUntilEvent, targetMinutes, deliveryWindowMinutes) {
     return minutesUntilEvent >= targetMinutes - deliveryWindowMinutes &&
         minutesUntilEvent <= targetMinutes + deliveryWindowMinutes;
@@ -658,6 +665,46 @@ function normalizeCommandText(text) {
         .toLowerCase()
         .replace(/\s+/g, ' ')
         .trim();
+}
+
+function normalizeUaPhoneForRegistration(input) {
+    const digits = String(input || '').replace(/\D/g, '');
+    if (!digits) return null;
+
+    let normalized = digits;
+
+    if (digits.startsWith('380') && digits.length === 12) {
+        normalized = digits;
+    } else if (digits.startsWith('0') && digits.length === 10) {
+        normalized = `38${digits}`;
+    } else if (digits.startsWith('80') && digits.length === 11) {
+        normalized = `3${digits}`;
+    } else if (digits.length === 10) {
+        normalized = `38${digits}`;
+    } else if (digits.length === 9) {
+        normalized = `380${digits}`;
+    }
+
+    return /^380\d{9}$/.test(normalized) ? normalized : null;
+}
+
+function normalizeBirthDateStrict(input) {
+    const raw = String(input || '').trim();
+    const match = raw.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+    if (!match) return null;
+
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const year = Number(match[3]);
+    const date = new Date(year, month - 1, day);
+
+    const isValidDate = date.getFullYear() === year &&
+        date.getMonth() === month - 1 &&
+        date.getDate() === day;
+
+    if (!isValidDate) return null;
+
+    return `${match[1]}.${match[2]}.${match[3]}`;
 }
 
 function matchesCommand(text, ...variants) {
@@ -1917,7 +1964,10 @@ function createEmptyFriendRegistrationDraft() {
         birth: '',
         visited: '',
         status: '',
-        health: ''
+        health: '',
+        childrenCount: '',
+        employment: '',
+        gbvAffected: ''
     };
 }
 
@@ -1964,6 +2014,9 @@ function getMissingRegistrantStep(registrantData) {
         : !registrantData.visited ? 4
         : !registrantData.status ? 5
         : !registrantData.health ? 6
+    : !registrantData.childrenCount ? 7
+    : !registrantData.employment ? 8
+    : !registrantData.gbvAffected ? 9
         : 0;
 }
 
@@ -2063,6 +2116,9 @@ async function startSelectedEventsRegistration(chatId, user) {
         user.visited = registrantData.visited;
         user.status = registrantData.status;
         user.health = registrantData.health;
+        user.childrenCount = registrantData.childrenCount;
+        user.employment = registrantData.employment;
+        user.gbvAffected = registrantData.gbvAffected;
     }
 
     const missingStep = getMissingRegistrantStep(registrantData);
@@ -2542,7 +2598,10 @@ async function appendRegistrationRow(chatId, user) {
         user.birth || "",
         user.visited || "",
         user.status || "",
-        user.health || ""
+        user.health || "",
+        user.childrenCount || "",
+        user.employment || "",
+        user.gbvAffected || ""
     ];
 
     const findFirstFreeRow = (rows) => {
@@ -2551,7 +2610,7 @@ async function appendRegistrationRow(chatId, user) {
 
         for (let i = searchStartIndex; i < rows.length; i++) {
             const row = rows[i] || [];
-            const personalDataHasValues = [0, 1, 2, 3, 4, 5, 6].some((idx) => String(row[idx] || '').trim() !== '');
+            const personalDataHasValues = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].some((idx) => String(row[idx] || '').trim() !== '');
             if (!personalDataHasValues) {
                 targetRow = i + 1;
                 break;
@@ -2584,11 +2643,11 @@ async function appendRegistrationRow(chatId, user) {
             console.log(`\n📝 Спроба ${attempt}/${maxTries} запису в таблицю`);
             console.log(`Spreadsheet ID: ${PERSONAL_DATA_SPREADSHEET_ID}`);
             console.log(`Sheet Name: ${PERSONAL_DATA_SHEET_NAME}`);
-            console.log(`Range: ${PERSONAL_DATA_SHEET_NAME}!A:G`);
+            console.log(`Range: ${PERSONAL_DATA_SHEET_NAME}!A:J`);
             
             const existingResp = await sheetsClient.spreadsheets.values.get({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${PERSONAL_DATA_SHEET_NAME}!A:G`,
+                range: `${PERSONAL_DATA_SHEET_NAME}!A:J`,
             });
             const rows = existingResp.data.values || [];
             const targetRow = findFirstFreeRow(rows);
@@ -2598,7 +2657,7 @@ async function appendRegistrationRow(chatId, user) {
 
             await sheetsClient.spreadsheets.values.update({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${PERSONAL_DATA_SHEET_NAME}!A${targetRow}:G${targetRow}`,
+                range: `${PERSONAL_DATA_SHEET_NAME}!A${targetRow}:J${targetRow}`,
                 valueInputOption: "RAW",
                 requestBody: { values: [values] }
             });
@@ -2618,26 +2677,26 @@ async function appendRegistrationRow(chatId, user) {
             const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
             if ((msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('sheet') ) && attempt === 1) {
                 try {
-                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:G (перший аркуш)');
+                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:J (перший аркуш)');
 
                     const existingResp = await sheetsClient.spreadsheets.values.get({
                         spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                        range: "A:G",
+                        range: "A:J",
                     });
                     const rows = existingResp.data.values || [];
                     const targetRow = findFirstFreeRow(rows);
 
                     await sheetsClient.spreadsheets.values.update({
                         spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                        range: `A${targetRow}:G${targetRow}`,
+                        range: `A${targetRow}:J${targetRow}`,
                         valueInputOption: "RAW",
                         requestBody: { values: [values] }
                     });
-                    console.log(`Записано в таблицю (fallback A:G, рядок ${targetRow}) ✅`);
+                    console.log(`Записано в таблицю (fallback A:J, рядок ${targetRow}) ✅`);
                     return;
                 } catch (e2) {
                     lastErr = e2;
-                    console.error('Fallback append to A:G failed:', e2 && e2.message ? e2.message : e2);
+                    console.error('Fallback append to A:J failed:', e2 && e2.message ? e2.message : e2);
                 }
             }
 
@@ -2791,10 +2850,14 @@ async function resolveRegistrantFormData(chatId, user) {
         birth: String((user && user.birth) || '').trim(),
         visited: String((user && user.visited) || '').trim(),
         status: String((user && user.status) || '').trim(),
-        health: String((user && user.health) || '').trim()
+        health: String((user && user.health) || '').trim(),
+        childrenCount: String((user && user.childrenCount) || '').trim(),
+        employment: String((user && user.employment) || '').trim(),
+        gbvAffected: String((user && user.gbvAffected) || '').trim()
     };
 
-    const hasAll = resolved.name && resolved.phone && resolved.birth && resolved.visited && resolved.status && resolved.health;
+    const hasAll = resolved.name && resolved.phone && resolved.birth && resolved.visited && resolved.status && resolved.health &&
+        resolved.childrenCount && resolved.employment && resolved.gbvAffected;
     if (hasAll || !sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID) {
         return resolved;
     }
@@ -2803,7 +2866,7 @@ async function resolveRegistrantFormData(chatId, user) {
     const inputPhone = normalizePhone(resolved.phone);
     const inputName = String(resolved.name || '').trim().toLowerCase();
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:G`, 'A:G'];
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:J`, 'A:J'];
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -2828,6 +2891,9 @@ async function resolveRegistrantFormData(chatId, user) {
                 if (!resolved.visited) resolved.visited = String(row[4] || '').trim();
                 if (!resolved.status) resolved.status = String(row[5] || '').trim();
                 if (!resolved.health) resolved.health = String(row[6] || '').trim();
+                if (!resolved.childrenCount) resolved.childrenCount = String(row[7] || '').trim();
+                if (!resolved.employment) resolved.employment = String(row[8] || '').trim();
+                if (!resolved.gbvAffected) resolved.gbvAffected = String(row[9] || '').trim();
 
                 return resolved;
             }
@@ -2869,7 +2935,7 @@ async function loadKnownUserByPhone(phone) {
         return null;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:G`, 'A:G'];
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:J`, 'A:J'];
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -2889,6 +2955,9 @@ async function loadKnownUserByPhone(phone) {
                     visited: String(row[4] || '').trim(),
                     status: String(row[5] || '').trim(),
                     health: String(row[6] || '').trim(),
+                    childrenCount: String(row[7] || '').trim(),
+                    employment: String(row[8] || '').trim(),
+                    gbvAffected: String(row[9] || '').trim(),
                     username: String(row[0] || '').trim()
                 };
 
@@ -2915,7 +2984,7 @@ async function loadKnownUserByUsername(username) {
         return null;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:G`, 'A:G'];
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:J`, 'A:J'];
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -2935,6 +3004,9 @@ async function loadKnownUserByUsername(username) {
                     visited: String(row[4] || '').trim(),
                     status: String(row[5] || '').trim(),
                     health: String(row[6] || '').trim(),
+                    childrenCount: String(row[7] || '').trim(),
+                    employment: String(row[8] || '').trim(),
+                    gbvAffected: String(row[9] || '').trim(),
                     username: String(row[0] || '').trim()
                 };
 
@@ -2969,7 +3041,10 @@ function showAfishaRegistrationForm(chatId, user) {
     if (step === 3) question = "<b>3. Дата народження</b>";
     if (step === 4) question = "<b>4. Чи відвідували Простір раніше?</b>";
     if (step === 5) question = "<b>5. ВПО/МО</b>";
-    if (step === 6) question = "<b>6. Інвалідність/суттєві проблеми</b>";
+    if (step === 6) question = "<b>6. Інвалідність/суттєві проблеми зі здоров'ям</b>";
+    if (step === 7) question = "<b>7. Кількість дітей до 18 років</b>";
+    if (step === 8) question = "<b>8. Зайнятість</b>";
+    if (step === 9) question = "<b>9. Чи є постраждалою від гендерно зумовленого насильства?</b>";
 
     let keyboard = [[{ text: "❌ Скасувати реєстрацію" }]];
     if (step === 4) {
@@ -2979,8 +3054,26 @@ function showAfishaRegistrationForm(chatId, user) {
     } else if (step === 6) {
         keyboard = [
             [{ text: "Інвалідність" }],
-            [{ text: "Суттєві проблеми" }],
-            [{ text: "Немає" }],
+            [{ text: "Суттєві проблеми зі здоров'ям" }],
+            [{ text: "Немає проблем" }],
+            [{ text: "❌ Скасувати реєстрацію" }]
+        ];
+    } else if (step === 7) {
+        keyboard = [
+            [{ text: "0" }, { text: "1" }],
+            [{ text: "2" }, { text: "3 і більше" }],
+            [{ text: "❌ Скасувати реєстрацію" }]
+        ];
+    } else if (step === 8) {
+        keyboard = [
+            [{ text: "Працюю" }, { text: "Не працюю" }],
+            [{ text: "У декреті" }, { text: "Пенсіонерка" }],
+            [{ text: "❌ Скасувати реєстрацію" }]
+        ];
+    } else if (step === 9) {
+        keyboard = [
+            [{ text: "Так" }, { text: "Ні" }],
+            [{ text: "Відмовляюсь сказати" }],
             [{ text: "❌ Скасувати реєстрацію" }]
         ];
     }
@@ -3388,12 +3481,13 @@ async function processParsedEvents(parsedEvents) {
 
         const registrantData = await resolveRegistrantFormData(chatId, user);
         const hasAllData = registrantData.name && registrantData.phone && registrantData.birth &&
-            registrantData.visited && registrantData.status && registrantData.health;
+            registrantData.visited && registrantData.status && registrantData.health &&
+            registrantData.childrenCount && registrantData.employment && registrantData.gbvAffected;
 
         if (!hasAllData) {
             user.step = 1;
             user.registrationMode = true;
-            await bot.sendMessage(chatId, "Спочатку заповніть дані.\n\n📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
+            await bot.sendMessage(chatId, "Спочатку заповніть дані.\n\n📝 <b>Крок 1/9:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -3729,7 +3823,7 @@ bot.on('message', async (msg) => {
                 chatId: String(chatId)
             };
             
-            await bot.sendMessage(chatId, "Профіль не знайдено. 😔\n\nРозпочинаємо реєстрацію...\n\n📝 <b>Крок 1/6:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
+            await bot.sendMessage(chatId, "Профіль не знайдено. 😔\n\nРозпочинаємо реєстрацію...\n\n📝 <b>Крок 1/9:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -4112,7 +4206,7 @@ bot.on('message', async (msg) => {
     // === ОБРОБКА РЕЄСТРАЦІЙНОЇ ФОРМИ (КРОКИ 1-6) ===
     // ВАЖЛИВО: цей блок повинен бути ПЕРЕД всіма іншими обробниками меню!
     const registrationStep = Number(user.step);
-    if (user.registrationMode || (Number.isInteger(registrationStep) && registrationStep >= 1 && registrationStep <= 6)) {
+    if (user.registrationMode || (Number.isInteger(registrationStep) && registrationStep >= 1 && registrationStep <= 9)) {
         // Відновлюємо режим форми, якщо прапорець загубився, але крок лишився
         user.registrationMode = true;
         user.step = registrationStep;
@@ -4121,8 +4215,11 @@ bot.on('message', async (msg) => {
         if (user.step === 1) {
             registrationDraft.name = text;
             user.step = 2;
+            const phonePrompt = isFriendRegistrationMode(user)
+                ? "📝 <b>Крок 2/9:</b> Введіть <b>номер телефону подруги</b> (формат: 380...)"
+                : "📝 <b>Крок 2/9:</b> Введіть ваш <b>номер телефону</b> (формат: 380...)";
 
-            await bot.sendMessage(chatId, "📝 <b>Крок 2/6:</b> Введіть ваш <b>номер телефону</b> (формат: 380...)", {
+            await bot.sendMessage(chatId, phonePrompt, {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -4135,10 +4232,28 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 2) {
-            registrationDraft.phone = text;
-            user.step = 3;
+            const normalizedPhone = normalizeUaPhoneForRegistration(text);
+            if (!normalizedPhone) {
+                await bot.sendMessage(chatId,
+                    "❌ Некоректний номер телефону. Введіть у форматі <b>380XXXXXXXXX</b> або <b>0XXXXXXXXX</b>.", {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "❌ Скасувати реєстрацію" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
 
-            await bot.sendMessage(chatId, "📝 <b>Крок 3/6:</b> Введіть вашу <b>дату народження</b> (формат: ДД.ММ.РРРР)", {
+            registrationDraft.phone = normalizedPhone;
+            user.step = 3;
+            const birthPrompt = isFriendRegistrationMode(user)
+                ? "📝 <b>Крок 3/9:</b> Введіть <b>дату народження подруги</b> (формат: ДД.ММ.РРРР)"
+                : "📝 <b>Крок 3/9:</b> Введіть вашу <b>дату народження</b> (формат: ДД.ММ.РРРР)";
+
+            await bot.sendMessage(chatId, birthPrompt, {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -4151,10 +4266,28 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 3) {
-            registrationDraft.birth = text;
-            user.step = 4;
+            const normalizedBirth = normalizeBirthDateStrict(text);
+            if (!normalizedBirth) {
+                await bot.sendMessage(chatId,
+                    "❌ Некоректна дата. Введіть дату лише у форматі <b>ДД.ММ.РРРР</b> (наприклад, <b>05.11.1960</b>).", {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "❌ Скасувати реєстрацію" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
 
-            await bot.sendMessage(chatId, "📝 <b>Крок 4/6:</b> Чи відвідували ви Простір раніше?", {
+            registrationDraft.birth = normalizedBirth;
+            user.step = 4;
+            const visitedPrompt = isFriendRegistrationMode(user)
+                ? "📝 <b>Крок 4/9:</b> Чи відвідувала подруга Простір раніше?"
+                : "📝 <b>Крок 4/9:</b> Чи відвідували ви Простір раніше?";
+
+            await bot.sendMessage(chatId, visitedPrompt, {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -4168,10 +4301,27 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 4) {
+            if (text !== 'Так' && text !== 'Ні') {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть один із варіантів кнопками: <b>Так</b> або <b>Ні</b>.", {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "Так" }, { text: "Ні" }],
+                            [{ text: "❌ Скасувати реєстрацію" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
             registrationDraft.visited = text;
             user.step = 5;
+            const statusPrompt = isFriendRegistrationMode(user)
+                ? "📝 <b>Крок 5/9:</b> Статус подруги:"
+                : "📝 <b>Крок 5/9:</b> Ваш статус:";
 
-            await bot.sendMessage(chatId, "📝 <b>Крок 5/6:</b> Ваш статус:", {
+            await bot.sendMessage(chatId, statusPrompt, {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -4185,16 +4335,33 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 5) {
+            if (text !== 'ВПО' && text !== 'Місцева') {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть статус кнопками: <b>ВПО</b> або <b>Місцева</b>.", {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "ВПО" }, { text: "Місцева" }],
+                            [{ text: "❌ Скасувати реєстрацію" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
             registrationDraft.status = text;
             user.step = 6;
+            const healthPrompt = isFriendRegistrationMode(user)
+                ? "📝 <b>Крок 6/9:</b> Інвалідність/суттєві проблеми зі здоров'ям у подруги:"
+                : "📝 <b>Крок 6/9:</b> Інвалідність/суттєві проблеми зі здоров'ям:";
 
-            await bot.sendMessage(chatId, "📝 <b>Крок 6/6:</b> Інвалідність/суттєві проблеми зі здоров'ям:", {
+            await bot.sendMessage(chatId, healthPrompt, {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
                         [{ text: "Інвалідність" }],
-                        [{ text: "Суттєві проблеми" }],
-                        [{ text: "Немає" }],
+                        [{ text: "Суттєві проблеми зі здоров'ям" }],
+                        [{ text: "Немає проблем" }],
                         [{ text: "❌ Скасувати реєстрацію" }]
                     ],
                     resize_keyboard: true
@@ -4204,7 +4371,126 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 6) {
+            const healthOptions = ['Інвалідність', "Суттєві проблеми зі здоров'ям", 'Немає проблем'];
+            if (!healthOptions.includes(text)) {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть варіант кнопками: <b>Інвалідність</b>, <b>Суттєві проблеми зі здоров'ям</b> або <b>Немає проблем</b>.", {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "Інвалідність" }],
+                            [{ text: "Суттєві проблеми зі здоров'ям" }],
+                            [{ text: "Немає проблем" }],
+                            [{ text: "❌ Скасувати реєстрацію" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
             registrationDraft.health = text;
+            user.step = 7;
+
+            await bot.sendMessage(chatId, "📝 <b>Крок 7/9:</b> Кількість дітей до 18 років:", {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "0" }, { text: "1" }],
+                        [{ text: "2" }, { text: "3 і більше" }],
+                        [{ text: "❌ Скасувати реєстрацію" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (user.step === 7) {
+            const childrenOptions = ['0', '1', '2', '3 і більше'];
+            if (!childrenOptions.includes(text)) {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть кількість дітей кнопками: <b>0</b>, <b>1</b>, <b>2</b> або <b>3 і більше</b>.", {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "0" }, { text: "1" }],
+                            [{ text: "2" }, { text: "3 і більше" }],
+                            [{ text: "❌ Скасувати реєстрацію" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
+            registrationDraft.childrenCount = text;
+            user.step = 8;
+
+            await bot.sendMessage(chatId, "📝 <b>Крок 8/9:</b> Зайнятість:", {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "Працюю" }, { text: "Не працюю" }],
+                        [{ text: "У декреті" }, { text: "Пенсіонерка" }],
+                        [{ text: "❌ Скасувати реєстрацію" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (user.step === 8) {
+            const employmentOptions = ['Працюю', 'Не працюю', 'У декреті', 'Пенсіонерка'];
+            if (!employmentOptions.includes(text)) {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть зайнятість кнопками: <b>Працюю</b>, <b>Не працюю</b>, <b>У декреті</b> або <b>Пенсіонерка</b>.", {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "Працюю" }, { text: "Не працюю" }],
+                            [{ text: "У декреті" }, { text: "Пенсіонерка" }],
+                            [{ text: "❌ Скасувати реєстрацію" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
+            registrationDraft.employment = text;
+            user.step = 9;
+
+            await bot.sendMessage(chatId, "📝 <b>Крок 9/9:</b> Чи є постраждалою від гендерно зумовленого насильства?", {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "Так" }, { text: "Ні" }],
+                        [{ text: "Відмовляюсь сказати" }],
+                        [{ text: "❌ Скасувати реєстрацію" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (user.step === 9) {
+            const gbvOptions = ['Так', 'Ні', 'Відмовляюсь сказати'];
+            if (!gbvOptions.includes(text)) {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть варіант кнопками: <b>Так</b>, <b>Ні</b> або <b>Відмовляюсь сказати</b>.", {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "Так" }, { text: "Ні" }],
+                            [{ text: "Відмовляюсь сказати" }],
+                            [{ text: "❌ Скасувати реєстрацію" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
+            registrationDraft.gbvAffected = text;
 
             try {
                 console.log(`\n📝 === ЗБЕРЕЖЕННЯ РЕЄСТРАЦІЇ ===`);
@@ -4216,6 +4502,9 @@ bot.on('message', async (msg) => {
                     visited: registrationDraft.visited,
                     status: registrationDraft.status,
                     health: registrationDraft.health,
+                    childrenCount: registrationDraft.childrenCount,
+                    employment: registrationDraft.employment,
+                    gbvAffected: registrationDraft.gbvAffected,
                     friendMode: isFriendRegistrationMode(user)
                 });
                 
@@ -4234,6 +4523,9 @@ bot.on('message', async (msg) => {
                         visited: registrationDraft.visited,
                         status: registrationDraft.status,
                         health: registrationDraft.health,
+                        childrenCount: registrationDraft.childrenCount,
+                        employment: registrationDraft.employment,
+                        gbvAffected: registrationDraft.gbvAffected,
                         username: user.username || ""
                     };
                 }
@@ -4302,7 +4594,10 @@ bot.on('message', async (msg) => {
                     birth: registrationDraft.birth,
                     visited: registrationDraft.visited,
                     status: registrationDraft.status,
-                    health: registrationDraft.health
+                    health: registrationDraft.health,
+                    childrenCount: registrationDraft.childrenCount,
+                    employment: registrationDraft.employment,
+                    gbvAffected: registrationDraft.gbvAffected
                 });
                 console.error(`Помилка:`, error);
                 console.error(`Stack:`, error.stack);
@@ -4360,7 +4655,7 @@ bot.on('message', async (msg) => {
         user.context = null;
 
         await bot.sendMessage(chatId,
-            "👭 <b>Реєстрація подруги</b>\n\nСпочатку внесіть її дані, а потім оберемо заходи.\n\n📝 <b>Крок 1/6:</b> Введіть ПІБ подруги (Прізвище Ім'я По батькові):", {
+            "👭 <b>Реєстрація подруги</b>\n\nСпочатку внесіть її дані, а потім оберемо заходи.\n\n📝 <b>Крок 1/9:</b> Введіть ПІБ подруги (Прізвище Ім'я По батькові):", {
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: [[{ text: "❌ Скасувати реєстрацію" }]],
@@ -4717,23 +5012,23 @@ bot.on('message', async (msg) => {
 
     if (text === '🔔 Увімкнути всі нагадування' || text === '🔊 Увімкнути нагадування') {
         const settings = getReminderSettingsForChat(chatId);
-        settings.enabled = true;
+        setAllReminderSlotsEnabled(settings, true);
         user.reminderSettings = settings;
         user.remindersEnabled = true;
         saveReminderStateToDisk();
 
-        await showReminderSettingsMenu(chatId, '✅ Загальні нагадування увімкнено.');
+        await showReminderSettingsMenu(chatId, '✅ Загальні нагадування увімкнено (включно з 24 год і 1 год).');
         return;
     }
 
     if (text === '🔕 Вимкнути всі нагадування' || text === '🔔 Вимкнути нагадування') {
         const settings = getReminderSettingsForChat(chatId);
-        settings.enabled = false;
+        setAllReminderSlotsEnabled(settings, false);
         user.reminderSettings = settings;
         user.remindersEnabled = false;
         saveReminderStateToDisk();
 
-        await showReminderSettingsMenu(chatId, '❌ Загальні нагадування вимкнено.');
+        await showReminderSettingsMenu(chatId, '❌ Загальні нагадування вимкнено (включно з 24 год і 1 год).');
         return;
     }
 
@@ -4937,6 +5232,16 @@ bot.on('message', async (msg) => {
     if (text === "Спробувати інший username" && user.registrationStarted) {
         user.step = 0;
         bot.sendMessage(chatId, "📱 Введіть ім'я акаунту або номер телефону");
+        return;
+    }
+
+    // Якщо реєстрація активна, не показуємо fallback-меню.
+    // Це захищає сценарій анкети від випадкового "Не зовсім зрозумілий запит".
+    const activeRegistrationStep = Number(user.step);
+    const isRegistrationInProgress = user.registrationMode === true ||
+        (Number.isInteger(activeRegistrationStep) && activeRegistrationStep >= 1 && activeRegistrationStep <= 9);
+
+    if (isRegistrationInProgress) {
         return;
     }
 
