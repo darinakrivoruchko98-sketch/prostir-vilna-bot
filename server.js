@@ -548,7 +548,6 @@ async function showUserRemindersOverview(chatId, user) {
         parse_mode: 'HTML',
         reply_markup: {
             keyboard: [
-                [{ text: "❌ Відписатись від заходу" }],
                 [{ text: "⚙️ Налаштування нагадувань" }],
                 [{ text: NAVIGATION_BUTTONS.menu }]
             ],
@@ -714,6 +713,7 @@ function matchesCommand(text, ...variants) {
 
 const MAIN_MENU_BUTTONS = {
     afisha: '🎭 Афіша заходів',
+    unsubscribe: '❌ Відписатись від заходів',
     friend: '👭 Зареєструвати подругу',
     reminders: '🔔 Нагадування',
     contacts: '📞 Контакти'
@@ -2604,6 +2604,66 @@ async function appendRegistrationRow(chatId, user) {
         user.gbvAffected || ""
     ];
 
+    const normalizeUsername = (value) => String(value || '').trim().toLowerCase().replace(/^@+/, '');
+    const normalizeName = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const normalizePhone = (value) => String(value || '').replace(/\D/g, '');
+
+    const phonesMatch = (left, right) => {
+        if (!left || !right) {
+            return false;
+        }
+
+        if (left === right) {
+            return true;
+        }
+
+        if (left.length >= 10 && right.length >= 10) {
+            return left.slice(-10) === right.slice(-10);
+        }
+
+        return false;
+    };
+
+    const findExistingRowByIdentity = (rows) => {
+        const inputUsername = normalizeUsername(values[0]);
+        const inputName = normalizeName(values[1]);
+        const inputPhone = normalizePhone(values[2]);
+
+        if (!inputUsername && !inputName && !inputPhone) {
+            return null;
+        }
+
+        for (let i = rows.length - 1; i >= 1; i--) {
+            const row = rows[i] || [];
+            const rowUsername = normalizeUsername(row[0]);
+            const rowName = normalizeName(row[1]);
+            const rowPhone = normalizePhone(row[2]);
+
+            const hasData = rowUsername || rowName || rowPhone;
+            if (!hasData) {
+                continue;
+            }
+
+            const usernameMatch = inputUsername && rowUsername && inputUsername === rowUsername;
+            const phoneMatch = phonesMatch(inputPhone, rowPhone);
+            const nameMatch = inputName && rowName && inputName === rowName;
+
+            if (usernameMatch || phoneMatch || nameMatch) {
+                return i + 1;
+            }
+        }
+
+        return null;
+    };
+
+    const mergeWithExistingRow = (existingRow) => values.map((incomingValue, idx) => {
+        const incomingText = String(incomingValue || '').trim();
+        if (incomingText !== '') {
+            return incomingValue;
+        }
+        return (existingRow && existingRow[idx]) ? existingRow[idx] : '';
+    });
+
     const findFirstFreeRow = (rows) => {
         const searchStartIndex = 1;
         let targetRow = Math.max(2, rows.length + 1);
@@ -2650,16 +2710,19 @@ async function appendRegistrationRow(chatId, user) {
                 range: `${PERSONAL_DATA_SHEET_NAME}!A:J`,
             });
             const rows = existingResp.data.values || [];
-            const targetRow = findFirstFreeRow(rows);
+            const existingRowNumber = findExistingRowByIdentity(rows);
+            const targetRow = existingRowNumber || findFirstFreeRow(rows);
+            const rowSnapshot = rows[targetRow - 1] || [];
+            const valuesToWrite = mergeWithExistingRow(rowSnapshot);
             
-            console.log(`Знайдено рядок для запису: ${targetRow}`);
-            console.log(`Дані для запису:`, values);
+            console.log(`${existingRowNumber ? '♻️ Оновлення існуючого' : '🆕 Новий'} рядка: ${targetRow}`);
+            console.log(`Дані для запису:`, valuesToWrite);
 
             await sheetsClient.spreadsheets.values.update({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
                 range: `${PERSONAL_DATA_SHEET_NAME}!A${targetRow}:J${targetRow}`,
                 valueInputOption: "RAW",
-                requestBody: { values: [values] }
+                requestBody: { values: [valuesToWrite] }
             });
             console.log(`✅ Записано в таблицю ${PERSONAL_DATA_SHEET_NAME} (рядок ${targetRow})`);
             return;
@@ -2684,13 +2747,16 @@ async function appendRegistrationRow(chatId, user) {
                         range: "A:J",
                     });
                     const rows = existingResp.data.values || [];
-                    const targetRow = findFirstFreeRow(rows);
+                    const existingRowNumber = findExistingRowByIdentity(rows);
+                    const targetRow = existingRowNumber || findFirstFreeRow(rows);
+                    const rowSnapshot = rows[targetRow - 1] || [];
+                    const valuesToWrite = mergeWithExistingRow(rowSnapshot);
 
                     await sheetsClient.spreadsheets.values.update({
                         spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
                         range: `A${targetRow}:J${targetRow}`,
                         valueInputOption: "RAW",
-                        requestBody: { values: [values] }
+                        requestBody: { values: [valuesToWrite] }
                     });
                     console.log(`Записано в таблицю (fallback A:J, рядок ${targetRow}) ✅`);
                     return;
@@ -3332,6 +3398,7 @@ async function processParsedEvents(parsedEvents) {
     function getMainMenuKeyboard() {
         return [
             [{ text: MAIN_MENU_BUTTONS.afisha }],
+            [{ text: MAIN_MENU_BUTTONS.unsubscribe }],
             [{ text: MAIN_MENU_BUTTONS.friend }],
             [{ text: MAIN_MENU_BUTTONS.reminders }],
             [{ text: MAIN_MENU_BUTTONS.contacts }]
@@ -3511,7 +3578,7 @@ async function processParsedEvents(parsedEvents) {
             await bot.sendMessage(chatId, "📅 У вас немає запланованих заходів для відписання.", {
                 reply_markup: {
                     keyboard: [
-                        [{ text: "Нагадування" }],
+                        [{ text: MAIN_MENU_BUTTONS.afisha }],
                         [{ text: "Повернутися в меню" }]
                     ],
                     resize_keyboard: true
@@ -4646,7 +4713,7 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    if (matchesCommand(text, MAIN_MENU_BUTTONS.friend, 'Зареєструвати подругу')) {
+    if (matchesCommand(text, MAIN_MENU_BUTTONS.friend, 'Зареєструвати подругу') && (!user.selectedEventsList || user.selectedEventsList.length === 0)) {
         resetSelectedEventsFlow(user);
         user.friendRegistrationMode = true;
         user.friendRegistrationDraft = createEmptyFriendRegistrationDraft();
@@ -4946,8 +5013,8 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // Кнопка відписання від заходу
-    if (text === "❌ Відписатись від заходу") {
+    // Кнопка відписання від заходів
+    if (matchesCommand(text, MAIN_MENU_BUTTONS.unsubscribe, '❌ Відписатись від заходу')) {
         await handleUnsubscribeIntent(chatId, user);
         return;
     }
@@ -4965,7 +5032,7 @@ bot.on('message', async (msg) => {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
-                        [{ text: MAIN_MENU_BUTTONS.reminders }],
+                        [{ text: MAIN_MENU_BUTTONS.afisha }],
                         [{ text: NAVIGATION_BUTTONS.menu }]
                     ],
                     resize_keyboard: true
@@ -4974,7 +5041,7 @@ bot.on('message', async (msg) => {
         } else {
             bot.sendMessage(chatId, "❌ Помилка при відписанні. Спробуйте ще раз.", {
                 reply_markup: {
-                    keyboard: [[{ text: MAIN_MENU_BUTTONS.reminders }], [{ text: NAVIGATION_BUTTONS.menu }]],
+                    keyboard: [[{ text: MAIN_MENU_BUTTONS.afisha }], [{ text: NAVIGATION_BUTTONS.menu }]],
                     resize_keyboard: true
                 }
             });
