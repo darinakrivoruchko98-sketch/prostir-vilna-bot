@@ -919,6 +919,40 @@ function formatEventDetails(event) {
     return `Назва: ${event.name}\nЧас: ${time}\nМісць залишилось: ${seatsLabel}`;
 }
 
+function resolveAfishaEventIdFromButtonText(user, text) {
+    if (!user || !user.eventButtonMap || !text) {
+        return null;
+    }
+
+    if (user.eventButtonMap[text]) {
+        return user.eventButtonMap[text];
+    }
+
+    const normalizedInput = normalizeCommandText(text);
+    for (const [buttonText, eventId] of Object.entries(user.eventButtonMap)) {
+        if (normalizeCommandText(buttonText) === normalizedInput) {
+            return eventId;
+        }
+    }
+
+    const parts = String(text).split('|').map((part) => String(part || '').trim());
+    if (parts.length >= 2) {
+        const titleKey = normalizeTitle(parts[0]);
+        const parsedTime = normalizeTimeValue(parts[1]);
+        if (titleKey && parsedTime) {
+            const matchedEvent = getAllEvents().find((eventItem) => {
+                return normalizeTitle(eventItem.name) === titleKey && formatSheetTime(eventItem.date) === parsedTime.text;
+            });
+
+            if (matchedEvent) {
+                return matchedEvent.id;
+            }
+        }
+    }
+
+    return null;
+}
+
 function getAfishaDaysKeyboard() {
     return [
         [{ text: AFISHA_DAY_BUTTONS.wednesday }],
@@ -4403,6 +4437,55 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    // Перевіряємо чи натиснута кнопка з заходом (робимо це до перевірки дня тижня)
+    let selectedEvent = null;
+    const selectedEventId = resolveAfishaEventIdFromButtonText(user, text);
+    if (selectedEventId) {
+        selectedEvent = getAllEvents().find((eventItem) => eventItem.id === selectedEventId) || null;
+    }
+    if (selectedEvent) {
+        if (!user.selectedEventsList) {
+            user.selectedEventsList = [];
+        }
+
+        const seatsLeft = await getSeatsLeft(selectedEvent.id);
+        const alreadySelected = user.selectedEventsList.some((eventItem) => eventItem.id === selectedEvent.id);
+
+        if (seatsLeft <= 0) {
+            await bot.sendMessage(chatId, `На жаль, на захід "${selectedEvent.name}" місць уже немає.`, {
+                reply_markup: {
+                    keyboard: getSelectedEventsKeyboardForUser(user),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (!alreadySelected) {
+            user.selectedEventsList.push({
+                id: selectedEvent.id,
+                name: selectedEvent.name,
+                date: selectedEvent.date
+            });
+        }
+
+        const headline = alreadySelected
+            ? 'Цей захід уже є у вашому списку.'
+            : 'Захід додано до реєстрації.';
+
+        await bot.sendMessage(chatId, buildSelectedEventsMessage(user.selectedEventsList, headline), {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: getSelectedEventsKeyboardForUser(user),
+                resize_keyboard: true
+            }
+        });
+
+        user.currentSelectedEventName = selectedEvent.name;
+        user.currentSelectedEventId = selectedEvent.id;
+        return;
+    }
+
     // якщо натиснутий день тижня, делегуємо показ загального меню на відповідну функцію
     const normalizedText = normalizeWeekdayKey(text);
     const weekdays = { 'неділя':0, 'понеділок':1, 'вівторок':2, 'середа':3, 'четвер':4, "п'ятниця":5, 'субота':6 };
@@ -4452,54 +4535,6 @@ bot.on('message', async (msg) => {
                 resize_keyboard: true
             }
         });
-        return;
-    }
-
-    // Перевіряємо чи натиснута кнопка з заходом
-    let selectedEvent = null;
-    if (user.eventButtonMap && user.eventButtonMap[text]) {
-        selectedEvent = getAllEvents().find((eventItem) => eventItem.id === user.eventButtonMap[text]) || null;
-    }
-    if (selectedEvent) {
-        if (!user.selectedEventsList) {
-            user.selectedEventsList = [];
-        }
-
-        const seatsLeft = await getSeatsLeft(selectedEvent.id);
-        const alreadySelected = user.selectedEventsList.some((eventItem) => eventItem.id === selectedEvent.id);
-
-        if (seatsLeft <= 0) {
-            await bot.sendMessage(chatId, `На жаль, на захід "${selectedEvent.name}" місць уже немає.`, {
-                reply_markup: {
-                    keyboard: getSelectedEventsKeyboardForUser(user),
-                    resize_keyboard: true
-                }
-            });
-            return;
-        }
-
-        if (!alreadySelected) {
-            user.selectedEventsList.push({
-                id: selectedEvent.id,
-                name: selectedEvent.name,
-                date: selectedEvent.date
-            });
-        }
-
-        const headline = alreadySelected
-            ? 'Цей захід уже є у вашому списку.'
-            : 'Захід додано до реєстрації.';
-
-        await bot.sendMessage(chatId, buildSelectedEventsMessage(user.selectedEventsList, headline), {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: getSelectedEventsKeyboardForUser(user),
-                resize_keyboard: true
-            }
-        });
-
-        user.currentSelectedEventName = selectedEvent.name;
-        user.currentSelectedEventId = selectedEvent.id;
         return;
     }
 
