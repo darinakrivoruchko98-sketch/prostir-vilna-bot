@@ -1491,6 +1491,85 @@ function buildRegistrantsNoteFromList(registrationsCount, registrants) {
     return `${header}\n\n${people.join('\n')}`;
 }
 
+function getEventIdentityKey(event) {
+    if (!event || !event.date) {
+        return '';
+    }
+    return `${normalizeTitle(event.name)}|${event.date.getTime()}`;
+}
+
+function extractRowNote(rowDataRow, cellIndex = 0) {
+    if (!rowDataRow || !Array.isArray(rowDataRow.values)) {
+        return '';
+    }
+    const cell = rowDataRow.values[cellIndex];
+    return String((cell && cell.note) || '').trim();
+}
+
+async function buildScheduleEventNoteIndex() {
+    const index = new Map();
+
+    if (!SPREADSHEET_ID || !sheetsClient) {
+        return index;
+    }
+
+    for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
+        try {
+            const [valuesResp, notesResp] = await Promise.all([
+                sheetsClient.spreadsheets.values.get({
+                    spreadsheetId: SPREADSHEET_ID,
+                    range: `${scheduleSheet}!A:E`
+                }),
+                sheetsClient.spreadsheets.get({
+                    spreadsheetId: SPREADSHEET_ID,
+                    ranges: [`${scheduleSheet}!E:E`],
+                    includeGridData: true,
+                    fields: 'sheets(data(rowData(values(note))))'
+                })
+            ]);
+
+            const rows = valuesResp && valuesResp.data && Array.isArray(valuesResp.data.values)
+                ? valuesResp.data.values
+                : [];
+            const noteRows = notesResp
+                && notesResp.data
+                && notesResp.data.sheets
+                && notesResp.data.sheets[0]
+                && notesResp.data.sheets[0].data
+                && notesResp.data.sheets[0].data[0]
+                && Array.isArray(notesResp.data.sheets[0].data[0].rowData)
+                ? notesResp.data.sheets[0].data[0].rowData
+                : [];
+
+            let dateContext = null;
+            for (const [rowIndex, row] of rows.entries()) {
+                const parsed = parseEventFromRow(row, dateContext);
+                dateContext = parsed.nextDateContext;
+
+                if (!parsed.event) {
+                    continue;
+                }
+
+                const eventKey = getEventIdentityKey(parsed.event);
+                if (!eventKey) {
+                    continue;
+                }
+
+                const note = extractRowNote(noteRows[rowIndex], 0);
+                index.set(eventKey, note);
+            }
+        } catch (error) {
+            const message = (error && error.message ? String(error.message) : '').toLowerCase();
+            if (message.includes('unable to parse range') || message.includes('not found')) {
+                continue;
+            }
+            console.error(`❌ Помилка побудови індексу нотаток у листі ${scheduleSheet}:`, error && error.message ? error.message : error);
+        }
+    }
+
+    return index;
+}
+
 async function isRegistrantAlreadyInEventNote(event, registrantProfile) {
     if (!event || !registrantProfile || !SPREADSHEET_ID || !sheetsClient) {
         return false;
@@ -2605,17 +2684,35 @@ async function restoreUserRegistrationsFromSheet(chatId, user) {
         }
 
         const existingIds = new Set(userEventRegistrations[chatId].map((item) => item.eventId));
-        let restoredCount = 0;
+        const candidateEvents = [];
 
         for (const event of getAllEvents()) {
             if (!event || !event.date || event.date <= new Date() || existingIds.has(event.id)) {
                 continue;
             }
-
-            const inNote = await isRegistrantAlreadyInEventNote(event, profile);
-            if (!inNote) {
+            const eventKey = getEventIdentityKey(event);
+            if (!eventKey) {
                 continue;
             }
+            candidateEvents.push(event);
+        }
+
+        if (candidateEvents.length === 0) {
+            user.lastReminderRestoreAt = Date.now();
+            return 0;
+        }
+
+        const noteIndex = await buildScheduleEventNoteIndex();
+        let restoredCount = 0;
+
+        for (const event of candidateEvents) {
+            const eventKey = getEventIdentityKey(event);
+            const noteText = noteIndex.get(eventKey);
+            if (!noteText) continue;
+
+            const registrants = parseRegistrantsFromNote(noteText);
+            const inNote = registrants.some((item) => isSameRegistrant(item, normalizedName, normalizedPhone));
+            if (!inNote) continue;
 
             userEventRegistrations[chatId].push({
                 eventId: event.id,
