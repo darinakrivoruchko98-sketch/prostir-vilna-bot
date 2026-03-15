@@ -804,6 +804,10 @@ const UNSUBSCRIBE_MENU_BUTTONS = {
     friend: '👭❌ Відписати подругу'
 };
 
+const FRIEND_FLOW_BUTTONS = {
+    addAnother: '👭 Зареєструвати ще подругу'
+};
+
 const AFISHA_DAY_BUTTONS = {
     wednesday: '💜 Середа',
     thursday: '💙 Четвер',
@@ -2080,6 +2084,24 @@ function clearFriendRegistrationState(user) {
     delete user.friendRegistrationDraft;
 }
 
+async function startFriendRegistrationFlow(chatId, user) {
+    resetSelectedEventsFlow(user);
+    user.friendRegistrationMode = true;
+    user.friendRegistrationDraft = createEmptyFriendRegistrationDraft();
+    user.step = 1;
+    user.registrationMode = true;
+    user.context = null;
+
+    await bot.sendMessage(chatId,
+        "👭 <b>Реєстрація подруги</b>\n\nСпочатку внесіть її дані, а потім оберемо заходи.\n\n📝 <b>Крок 1/9:</b> Введіть ПІБ подруги (Прізвище Ім'я По батькові):", {
+        parse_mode: 'HTML',
+        reply_markup: {
+            keyboard: [[{ text: "❌ Скасувати реєстрацію" }]],
+            resize_keyboard: true
+        }
+    });
+}
+
 function getActiveRegistrationDraft(user) {
     if (isFriendRegistrationMode(user)) {
         if (!user.friendRegistrationDraft) {
@@ -2229,7 +2251,9 @@ async function startSelectedEventsRegistration(chatId, user) {
     ), {
         parse_mode: 'HTML',
         reply_markup: {
-            keyboard: [[{ text: 'Повернутися в меню' }]],
+            keyboard: isFriendMode
+                ? [[{ text: FRIEND_FLOW_BUTTONS.addAnother }], [{ text: NAVIGATION_BUTTONS.menu }]]
+                : [[{ text: NAVIGATION_BUTTONS.menu }]],
             resize_keyboard: true
         }
     });
@@ -4830,7 +4854,9 @@ bot.on('message', async (msg) => {
                     ), {
                         parse_mode: 'HTML',
                         reply_markup: {
-                            keyboard: [[{ text: "Повернутися в меню" }]],
+                            keyboard: isFriendRegistrationMode(user)
+                                ? [[{ text: FRIEND_FLOW_BUTTONS.addAnother }], [{ text: NAVIGATION_BUTTONS.menu }]]
+                                : [[{ text: NAVIGATION_BUTTONS.menu }]],
                             resize_keyboard: true
                         }
                     });
@@ -4931,21 +4957,12 @@ bot.on('message', async (msg) => {
     }
 
     if (matchesCommand(text, MAIN_MENU_BUTTONS.friend, 'Зареєструвати подругу') && (!user.selectedEventsList || user.selectedEventsList.length === 0)) {
-        resetSelectedEventsFlow(user);
-        user.friendRegistrationMode = true;
-        user.friendRegistrationDraft = createEmptyFriendRegistrationDraft();
-        user.step = 1;
-        user.registrationMode = true;
-        user.context = null;
+        await startFriendRegistrationFlow(chatId, user);
+        return;
+    }
 
-        await bot.sendMessage(chatId,
-            "👭 <b>Реєстрація подруги</b>\n\nСпочатку внесіть її дані, а потім оберемо заходи.\n\n📝 <b>Крок 1/9:</b> Введіть ПІБ подруги (Прізвище Ім'я По батькові):", {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [[{ text: "❌ Скасувати реєстрацію" }]],
-                resize_keyboard: true
-            }
-        });
+    if (matchesCommand(text, FRIEND_FLOW_BUTTONS.addAnother, 'Зареєструвати ще подругу')) {
+        await startFriendRegistrationFlow(chatId, user);
         return;
     }
 
