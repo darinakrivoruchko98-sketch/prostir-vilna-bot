@@ -36,7 +36,8 @@ const SOCIAL_CONSULTATIONS_SHEET_NAME = process.env.SOCIAL_CONSULTATIONS_SHEET_N
 const PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME = process.env.PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME || config.PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME || 'Псих';
 const SOCIAL_SPECIALIST_CHAT_ID = process.env.SOCIAL_SPECIALIST_CHAT_ID || config.SOCIAL_SPECIALIST_CHAT_ID || '';
 const DARYNA_CHAT_ID = process.env.DARYNA_CHAT_ID || config.DARYNA_CHAT_ID || '375328037';
-const PSYCHOLOGIST_CHAT_ID = process.env.PSYCHOLOGIST_CHAT_ID || config.PSYCHOLOGIST_CHAT_ID || '7231089169';
+const PSYCHOLOGIST_CHAT_ID = process.env.PSYCHOLOGIST_CHAT_ID || config.PSYCHOLOGIST_CHAT_ID || '';
+const MYKOLA_CHAT_ID = process.env.MYKOLA_CHAT_ID || config.MYKOLA_CHAT_ID || '7231089169';
 const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
 
 // Таблиця розкладу: https://docs.google.com/spreadsheets/d/1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8/edit
@@ -198,9 +199,15 @@ if (DARYNA_CHAT_ID) {
 }
 
 if (PSYCHOLOGIST_CHAT_ID) {
-    console.log(`✅ PSYCHOLOGIST_CHAT_ID встановлено: ${PSYCHOLOGIST_CHAT_ID}`);
+    console.log(`✅ PSYCHOLOGIST_CHAT_ID встановлено: ${PSYCHOLOGIST_CHAT_ID} (для таблиці)`);
 } else {
-    console.log('⚠️ PSYCHOLOGIST_CHAT_ID не встановлено (сповіщення психологині вимкнені)');
+    console.log('⚠️ PSYCHOLOGIST_CHAT_ID не встановлено');
+}
+
+if (MYKOLA_CHAT_ID) {
+    console.log(`✅ MYKOLA_CHAT_ID встановлено: ${MYKOLA_CHAT_ID} (для DM сповіщень)`);
+} else {
+    console.log('⚠️ MYKOLA_CHAT_ID не встановлено (сповіщення психологу вимкнені)');
 }
 
 let users = {};
@@ -3692,7 +3699,7 @@ async function processParsedEvents(parsedEvents) {
                 key: 'psychologist',
                 label: 'Психологиня',
                 sheetName: PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME,
-                specialistChatId: String(PSYCHOLOGIST_CHAT_ID || '').trim()
+                specialistChatId: String(MYKOLA_CHAT_ID || '').trim()
             };
         }
 
