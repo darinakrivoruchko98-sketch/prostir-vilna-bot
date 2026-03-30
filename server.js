@@ -5410,7 +5410,7 @@ bot.on('message', async (msg) => {
                     : 'соціальної фахівчині';
                 
                 await bot.sendMessage(chatId,
-                    `Наразі немає вільних місць до ${genitiveLabel}. Спробуйте пізніше або оберіть іншу фахівчиню.`, {
+                    `Наразі немає вільних місць до ${genitiveLabel}. Спробуйте пізніше.`, {
                     reply_markup: {
                         keyboard: buildConsultationSpecialistMenuKeyboard(),
                         resize_keyboard: true
@@ -5651,32 +5651,6 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    if (user.context === 'consultation-day' && !matchesCommand(text, NAVIGATION_BUTTONS.back, NAVIGATION_BUTTONS.menu)) {
-        const dateButtons = Array.isArray(user.consultationDraft && user.consultationDraft.dateButtons)
-            ? user.consultationDraft.dateButtons
-            : [];
-        await bot.sendMessage(chatId, 'Будь ласка, оберіть дату кнопками.', {
-            reply_markup: {
-                keyboard: buildConsultationDatesKeyboard(dateButtons),
-                resize_keyboard: true
-            }
-        });
-        return;
-    }
-
-    if (user.context === 'consultation-time') {
-        const timeOptions = Array.isArray(user.consultationDraft && user.consultationDraft.timeOptions)
-            ? user.consultationDraft.timeOptions
-            : [];
-        await bot.sendMessage(chatId, 'Будь ласка, оберіть час кнопками.', {
-            reply_markup: {
-                keyboard: buildConsultationTimeKeyboard(timeOptions),
-                resize_keyboard: true
-            }
-        });
-        return;
-    }
-
     if (text === "Написати звернення") {
         user.context = 'appeal';
         user.step = 1;
@@ -5755,7 +5729,7 @@ bot.on('message', async (msg) => {
     const normalizedText = normalizeWeekdayKey(text);
     const weekdays = { 'неділя':0, 'понеділок':1, 'вівторок':2, 'середа':3, 'четвер':4, "п'ятниця":5, 'субота':6 };
 
-    if (user.context === 'consultation-day') {
+    if (user.context === 'consultation-day' && !matchesCommand(text, NAVIGATION_BUTTONS.back, NAVIGATION_BUTTONS.menu)) {
         if (!user.consultationDraft || !user.consultationDraft.specialistKey) {
             clearConsultationState(user);
             user.context = 'consultation-specialist';
@@ -6024,7 +5998,7 @@ bot.on('message', async (msg) => {
             return;
         }
 
-        if (user.context === 'consultation-time') {
+        if (user.context === 'consultation-time' && !matchesCommand(text, NAVIGATION_BUTTONS.back, NAVIGATION_BUTTONS.menu)) {
             user.context = 'consultation-day';
             delete user.consultationDraft?.dateText;
             delete user.consultationDraft?.timeText;
