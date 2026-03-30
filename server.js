@@ -3909,11 +3909,17 @@ async function processParsedEvents(parsedEvents) {
             `<i>${String(requestText || '').trim()}</i>`
         ].join('\n');
 
-        await bot.sendMessage(specialistChatId, message, {
-            parse_mode: 'HTML'
-        });
-
-        return true;
+        try {
+            console.log(`📤 Відправляю сповіщення спеціалісту ${specialistLabel} (Chat ID: ${specialistChatId})...`);
+            await bot.sendMessage(specialistChatId, message, {
+                parse_mode: 'HTML'
+            });
+            console.log(`✅ Сповіщення успішно відправлено спеціалісту ${specialistLabel}`);
+            return true;
+        } catch (error) {
+            console.error(`❌ Помилка при відправці сповіщення спеціалісту ${specialistLabel}:`, error && error.message ? error.message : error);
+            return false;
+        }
     }
 
     async function showConsultationSpecialistMenu(chatId, noticeText = '') {
