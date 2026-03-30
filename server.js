@@ -2844,7 +2844,7 @@ async function appendRegistrationRow(chatId, user) {
                 console.error(`appendRegistrationRow attempt ${attempt} failed (unable to stringify error):`, e);
             }
 
-            // Если ошибка связана с неверным range (напр., листа "Березень" нет), пробуем fallback на общий диапазон листа
+            // Якщо помилка пов'язана з невірним range (напр., аркуша "Зареєстровані" немає), пробуємо fallback на загальний діапазон листа
             const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
             if ((msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('sheet') ) && attempt === 1) {
                 try {
@@ -3966,7 +3966,7 @@ bot.on('message', async (msg) => {
 
     // ДІАГНОСТИКА: тест запису в таблицю персональних даних
     if (text === '/test_write' || text === '/test_table') {
-        bot.sendMessage(chatId, '⏳ Тестую запис в таблицю "Березень"...');
+        bot.sendMessage(chatId, '⏳ Тестую запис в таблицю "Зареєстровані"...');
         
         try {
             const testUser = {

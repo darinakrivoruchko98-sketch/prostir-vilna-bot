@@ -7,7 +7,7 @@ async function appendRegistrationRow(chatId, user) {
         throw new Error('PERSONAL_DATA_SPREADSHEET_ID not set');
     }
 
-    // Структура таблиці "Березень":
+    // Структура таблиці "Зареєстровані":
     // A: Прізвище Ім'я По-батькові (ПІБ)
     // B: Телефон
     // C: Дата народження
