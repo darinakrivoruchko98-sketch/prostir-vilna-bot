@@ -4266,6 +4266,11 @@ bot.on('message', async (msg) => {
     if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
         console.log(`\n[GROUP MSG] ID: ${chatId}, Type: ${msg.chat.type}, Reply: ${!!msg.reply_to_message}`);
     }
+
+    // ТИМЧАСОВО: логуємо chat ID приватних повідомлень для отримання ID психолога
+    if (msg.chat.type === 'private') {
+        console.log(`\n[PRIVATE MSG] Chat ID: ${chatId}, From: ${msg.from?.first_name || ''} ${msg.from?.last_name || ''} (@${msg.from?.username || 'no username'}), Text: "${text.substring(0, 30)}"`);
+    }
     
     // ДІАГНОСТИКА: логуємо всі повідомлення з групи звернень
     if (chatId === APPEALS_GROUP_ID) {
