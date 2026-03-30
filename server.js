@@ -36,7 +36,7 @@ const SOCIAL_CONSULTATIONS_SHEET_NAME = process.env.SOCIAL_CONSULTATIONS_SHEET_N
 const PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME = process.env.PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME || config.PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME || 'Псих';
 const SOCIAL_SPECIALIST_CHAT_ID = process.env.SOCIAL_SPECIALIST_CHAT_ID || config.SOCIAL_SPECIALIST_CHAT_ID || '';
 const DARYNA_CHAT_ID = process.env.DARYNA_CHAT_ID || config.DARYNA_CHAT_ID || '375328037';
-const PSYCHOLOGIST_CHAT_ID = process.env.PSYCHOLOGIST_CHAT_ID || config.PSYCHOLOGIST_CHAT_ID || '';
+const PSYCHOLOGIST_CHAT_ID = process.env.PSYCHOLOGIST_CHAT_ID || config.PSYCHOLOGIST_CHAT_ID || '7231089169';
 const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
 
 // Таблиця розкладу: https://docs.google.com/spreadsheets/d/1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8/edit
@@ -4267,11 +4267,6 @@ bot.on('message', async (msg) => {
         console.log(`\n[GROUP MSG] ID: ${chatId}, Type: ${msg.chat.type}, Reply: ${!!msg.reply_to_message}`);
     }
 
-    // ТИМЧАСОВО: логуємо chat ID приватних повідомлень для отримання ID психолога
-    if (msg.chat.type === 'private') {
-        console.log(`\n[PRIVATE MSG] Chat ID: ${chatId}, From: ${msg.from?.first_name || ''} ${msg.from?.last_name || ''} (@${msg.from?.username || 'no username'}), Text: "${text.substring(0, 30)}"`);
-    }
-    
     // ДІАГНОСТИКА: логуємо всі повідомлення з групи звернень
     if (chatId === APPEALS_GROUP_ID) {
         console.log(`\n🔔 ПОВІДОМЛЕННЯ З ГРУПИ ЗВЕРНЕНЬ`);
