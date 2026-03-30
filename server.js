@@ -836,21 +836,29 @@ const AFISHA_DAY_BUTTONS = {
 };
 
 const CONSULTATION_SPECIALIST_BUTTONS = {
-    social: '👩🏻 Соціальна фахівчиня',
-    psychologist: '🧠 Психологиня'
+    social: '👩🏻🌷 Соціальна фахівчиня',
+    psychologist: '👩🏻🌹 Психологиня'
 };
 
-const CONSULTATION_TIME_OPTIONS = [
-    '11:00',
-    '12:00',
-    '13:00',
-    '14:00',
-    '15:00',
-    '16:00',
-    '17:00',
-    '18:00',
-    '19:00'
-];
+const CONSULTATION_WEEKDAY_LABELS = {
+    0: 'неділя',
+    1: 'понеділок',
+    2: 'вівторок',
+    3: 'середа',
+    4: 'четвер',
+    5: "п'ятниця",
+    6: 'субота'
+};
+
+const CONSULTATION_WEEKDAY_EMOJI = {
+    0: '❤️',
+    1: '🩷',
+    2: '🩵',
+    3: '💜',
+    4: '💙',
+    5: '💚',
+    6: '💛'
+};
 
 const CONSULTATION_ALLOWED_WEEKDAYS = new Set([0, 3, 4, 5, 6]);
 
@@ -3638,26 +3646,27 @@ async function processParsedEvents(parsedEvents) {
         ];
     }
 
-    function buildConsultationDaysKeyboard() {
-        return [
-            [{ text: AFISHA_DAY_BUTTONS.wednesday }],
-            [{ text: AFISHA_DAY_BUTTONS.thursday }],
-            [{ text: AFISHA_DAY_BUTTONS.friday }],
-            [{ text: AFISHA_DAY_BUTTONS.saturday }],
-            [{ text: AFISHA_DAY_BUTTONS.sunday }],
-            [{ text: NAVIGATION_BUTTONS.back }],
-            [{ text: NAVIGATION_BUTTONS.menu }]
-        ];
+    function buildConsultationDatesKeyboard(dateButtons) {
+        const dateRows = (dateButtons || []).map((buttonText) => [{ text: buttonText }]);
+        dateRows.push([{ text: NAVIGATION_BUTTONS.back }]);
+        dateRows.push([{ text: NAVIGATION_BUTTONS.menu }]);
+        return dateRows;
     }
 
-    function buildConsultationTimeKeyboard() {
-        return [
-            CONSULTATION_TIME_OPTIONS.slice(0, 3).map((timeText) => ({ text: timeText })),
-            CONSULTATION_TIME_OPTIONS.slice(3, 6).map((timeText) => ({ text: timeText })),
-            CONSULTATION_TIME_OPTIONS.slice(6, 9).map((timeText) => ({ text: timeText })),
-            [{ text: NAVIGATION_BUTTONS.back }],
-            [{ text: NAVIGATION_BUTTONS.menu }]
-        ];
+    function buildConsultationTimeKeyboard(timeOptions) {
+        const rows = [];
+        const options = Array.isArray(timeOptions) ? timeOptions : [];
+
+        for (let index = 0; index < options.length; index += 3) {
+            const chunk = options.slice(index, index + 3).map((timeText) => ({ text: timeText }));
+            if (chunk.length > 0) {
+                rows.push(chunk);
+            }
+        }
+
+        rows.push([{ text: NAVIGATION_BUTTONS.back }]);
+        rows.push([{ text: NAVIGATION_BUTTONS.menu }]);
+        return rows;
     }
 
     function getConsultationSpecialistConfigByButton(text) {
@@ -3682,19 +3691,6 @@ async function processParsedEvents(parsedEvents) {
         return null;
     }
 
-    function getNextDateForWeekday(weekdayNumber) {
-        const now = new Date();
-        const date = new Date(now);
-        const currentDay = now.getDay();
-        let delta = (weekdayNumber - currentDay + 7) % 7;
-        if (delta === 0) {
-            delta = 7;
-        }
-        date.setDate(now.getDate() + delta);
-        date.setHours(0, 0, 0, 0);
-        return date;
-    }
-
     function formatConsultationDate(date) {
         const day = String(date.getDate()).padStart(2, '0');
         const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -3702,7 +3698,15 @@ async function processParsedEvents(parsedEvents) {
         return `${day}.${month}.${year}`;
     }
 
-    async function appendIndividualConsultationRow({ sheetName, dateText, timeText, name, phone, requestText }) {
+    function formatConsultationDateButtonLabel(date) {
+        const weekdayNumber = date.getDay();
+        const weekdayLabel = CONSULTATION_WEEKDAY_LABELS[weekdayNumber] || 'дата';
+        const weekdayDisplay = weekdayLabel.charAt(0).toUpperCase() + weekdayLabel.slice(1);
+        const emoji = CONSULTATION_WEEKDAY_EMOJI[weekdayNumber] || '📅';
+        return `${emoji} ${weekdayDisplay} (${formatConsultationDate(date)})`;
+    }
+
+    async function loadAvailableConsultationSlots(sheetName) {
         if (!sheetsClient) {
             throw new Error('Google Sheets client не ініціалізовано');
         }
@@ -3711,20 +3715,170 @@ async function processParsedEvents(parsedEvents) {
             throw new Error('PERSONAL_DATA_SPREADSHEET_ID не встановлено');
         }
 
-        const values = [[
-            dateText || '',
-            timeText || '',
-            name || '',
-            phone || '',
-            requestText || ''
-        ]];
+        const response = await sheetsClient.spreadsheets.values.get({
+            spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+            range: `${sheetName}!A:E`
+        });
+
+        const now = new Date();
+        const rows = response.data.values || [];
+        const slots = [];
+
+        for (const [rowIndex, row] of rows.entries()) {
+            const dateCell = String((row && row[0]) || '').trim();
+            const timeCell = String((row && row[1]) || '').trim();
+            const nameCell = String((row && row[2]) || '').trim();
+            const phoneCell = String((row && row[3]) || '').trim();
+
+            if (!dateCell || !timeCell) {
+                continue;
+            }
+
+            const normalizedTime = normalizeTimeValue(timeCell);
+            if (!normalizedTime) {
+                continue;
+            }
+
+            const parsedDate = parseDateValue(dateCell, now.getFullYear());
+            if (!parsedDate || Number.isNaN(parsedDate.getTime())) {
+                continue;
+            }
+
+            const slotDateTime = new Date(
+                parsedDate.getFullYear(),
+                parsedDate.getMonth(),
+                parsedDate.getDate(),
+                normalizedTime.hour,
+                normalizedTime.minute,
+                0,
+                0
+            );
+
+            if (Number.isNaN(slotDateTime.getTime()) || slotDateTime <= now) {
+                continue;
+            }
+
+            const weekdayNumber = slotDateTime.getDay();
+            if (!CONSULTATION_ALLOWED_WEEKDAYS.has(weekdayNumber)) {
+                continue;
+            }
+
+            // Вважаємо слот вільним, якщо в C і D ще немає даних учасниці.
+            const isOccupied = Boolean(nameCell || phoneCell);
+            if (isOccupied) {
+                continue;
+            }
+
+            slots.push({
+                rowNumber: rowIndex + 1,
+                dateText: formatConsultationDate(slotDateTime),
+                timeText: normalizedTime.text,
+                weekdayNumber,
+                weekdayLabel: CONSULTATION_WEEKDAY_LABELS[weekdayNumber] || '',
+                dateSortValue: slotDateTime.getTime(),
+                displayDateButton: formatConsultationDateButtonLabel(slotDateTime)
+            });
+        }
+
+        slots.sort((left, right) => {
+            if (left.dateSortValue !== right.dateSortValue) {
+                return left.dateSortValue - right.dateSortValue;
+            }
+            return String(left.timeText).localeCompare(String(right.timeText), 'uk');
+        });
+
+        return slots;
+    }
+
+    function buildConsultationDateButtonMap(slots) {
+        const dateButtonMap = {};
+
+        for (const slot of slots) {
+            if (!slot || !slot.dateText) {
+                continue;
+            }
+
+            if (Object.values(dateButtonMap).includes(slot.dateText)) {
+                continue;
+            }
+
+            dateButtonMap[slot.displayDateButton] = slot.dateText;
+        }
+
+        return dateButtonMap;
+    }
+
+    async function refreshConsultationDraftSlots(draft) {
+        if (!draft || !draft.sheetName) {
+            return {
+                availableSlots: [],
+                dateButtonMap: {},
+                dateButtons: []
+            };
+        }
+
+        const availableSlots = await loadAvailableConsultationSlots(draft.sheetName);
+        const dateButtonMap = buildConsultationDateButtonMap(availableSlots);
+        const dateButtons = Object.keys(dateButtonMap);
+
+        draft.availableSlots = availableSlots;
+        draft.dateButtonMap = dateButtonMap;
+        draft.dateButtons = dateButtons;
+
+        if (draft.dateText) {
+            const hasDate = availableSlots.some((slot) => slot.dateText === draft.dateText);
+            if (!hasDate) {
+                delete draft.dateText;
+                delete draft.timeText;
+                delete draft.timeOptions;
+                delete draft.selectedSlotRowNumber;
+            }
+        }
+
+        return { availableSlots, dateButtonMap, dateButtons };
+    }
+
+    async function saveIndividualConsultationRow({ sheetName, rowNumber, dateText, timeText, name, phone, requestText }) {
+        if (!sheetsClient) {
+            throw new Error('Google Sheets client не ініціалізовано');
+        }
+
+        if (!PERSONAL_DATA_SPREADSHEET_ID) {
+            throw new Error('PERSONAL_DATA_SPREADSHEET_ID не встановлено');
+        }
+
+        if (Number.isInteger(rowNumber) && rowNumber > 0) {
+            const occupancyResponse = await sheetsClient.spreadsheets.values.get({
+                spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                range: `${sheetName}!C${rowNumber}:D${rowNumber}`
+            });
+            const occupancyRow = (occupancyResponse.data.values || [])[0] || [];
+            const existingName = String(occupancyRow[0] || '').trim();
+            const existingPhone = String(occupancyRow[1] || '').trim();
+
+            if (existingName || existingPhone) {
+                throw new Error('Обраний час уже зайнятий. Будь ласка, оберіть інший слот.');
+            }
+
+            await sheetsClient.spreadsheets.values.update({
+                spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                range: `${sheetName}!C${rowNumber}:E${rowNumber}`,
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: [[name || '', phone || '', requestText || '']]
+                }
+            });
+            return;
+        }
 
         await sheetsClient.spreadsheets.values.append({
             spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
             range: `${sheetName}!A:E`,
             valueInputOption: 'RAW',
             insertDataOption: 'INSERT_ROWS',
-            requestBody: { values }
+            requestBody: {
+                values: [[dateText || '', timeText || '', name || '', phone || '', requestText || '']]
+            }
         });
     }
 
@@ -5226,19 +5380,50 @@ bot.on('message', async (msg) => {
     if (user.context === 'consultation-specialist') {
         const specialistConfig = getConsultationSpecialistConfigByButton(text);
         if (specialistConfig) {
-            user.consultationDraft = {
+            const draft = {
                 specialistKey: specialistConfig.key,
                 specialistLabel: specialistConfig.label,
                 sheetName: specialistConfig.sheetName,
                 specialistChatId: specialistConfig.specialistChatId
             };
+
+            let availableSlots = [];
+            try {
+                const refreshed = await refreshConsultationDraftSlots(draft);
+                availableSlots = refreshed.availableSlots;
+            } catch (error) {
+                console.error('❌ Помилка зчитування слотів консультацій:', error && error.message ? error.message : error);
+                await bot.sendMessage(chatId,
+                    `❌ Не вдалося зчитати доступні дати/час з аркуша «${specialistConfig.sheetName}».
+Спробуйте ще раз трохи пізніше.`, {
+                    reply_markup: {
+                        keyboard: buildConsultationSpecialistMenuKeyboard(),
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
+            if (availableSlots.length === 0) {
+                await bot.sendMessage(chatId,
+                    `ℹ️ Наразі немає вільних слотів в аркуші «${specialistConfig.sheetName}».
+Оберіть іншу фахівчиню або спробуйте пізніше.`, {
+                    reply_markup: {
+                        keyboard: buildConsultationSpecialistMenuKeyboard(),
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
+            user.consultationDraft = draft;
             user.context = 'consultation-day';
 
             await bot.sendMessage(chatId,
-                `✅ Обрано: <b>${specialistConfig.label}</b>\n\nОберіть день консультації (середа-неділя):`, {
+                `✅ Обрано: <b>${specialistConfig.label}</b>\n\nОберіть дату консультації:`, {
                 parse_mode: 'HTML',
                 reply_markup: {
-                    keyboard: buildConsultationDaysKeyboard(),
+                    keyboard: buildConsultationDatesKeyboard(draft.dateButtons),
                     resize_keyboard: true
                 }
             });
@@ -5246,7 +5431,57 @@ bot.on('message', async (msg) => {
         }
     }
 
-    if (user.context === 'consultation-time' && CONSULTATION_TIME_OPTIONS.includes(String(text || '').trim())) {
+    if (user.context === 'consultation-time' && !matchesCommand(text, NAVIGATION_BUTTONS.back, NAVIGATION_BUTTONS.menu)) {
+        if (!user.consultationDraft || !user.consultationDraft.specialistKey || !user.consultationDraft.sheetName) {
+            clearConsultationState(user);
+            await showConsultationSpecialistMenu(chatId, '⚠️ Сесія вибору консультації скинуто. Оберіть фахівчиню ще раз.');
+            user.context = 'consultation-specialist';
+            user.consultationDraft = {};
+            return;
+        }
+
+        try {
+            await refreshConsultationDraftSlots(user.consultationDraft);
+        } catch (error) {
+            console.error('❌ Помилка оновлення слотів консультацій:', error && error.message ? error.message : error);
+            await bot.sendMessage(chatId, '❌ Не вдалося оновити вільний час. Спробуйте ще раз трохи пізніше.');
+            return;
+        }
+
+        const refreshedTimeOptions = [...new Set((user.consultationDraft.availableSlots || [])
+            .filter((slot) => slot.dateText === user.consultationDraft.dateText)
+            .map((slot) => slot.timeText))].sort((left, right) => left.localeCompare(right, 'uk'));
+        user.consultationDraft.timeOptions = refreshedTimeOptions;
+
+        const selectedTimeText = String(text || '').trim();
+        const timeOptions = Array.isArray(user.consultationDraft && user.consultationDraft.timeOptions)
+            ? user.consultationDraft.timeOptions
+            : [];
+
+        if (!timeOptions.includes(selectedTimeText)) {
+            if (timeOptions.length === 0) {
+                user.context = 'consultation-day';
+                delete user.consultationDraft?.dateText;
+                delete user.consultationDraft?.timeOptions;
+                await bot.sendMessage(chatId,
+                    'ℹ️ На цю дату вільного часу вже немає. Оберіть, будь ласка, іншу дату.', {
+                    reply_markup: {
+                        keyboard: buildConsultationDatesKeyboard(Array.isArray(user.consultationDraft.dateButtons) ? user.consultationDraft.dateButtons : []),
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
+            await bot.sendMessage(chatId, 'Будь ласка, оберіть час кнопками.', {
+                reply_markup: {
+                    keyboard: buildConsultationTimeKeyboard(timeOptions),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
         if (!user.consultationDraft || !user.consultationDraft.specialistKey || !user.consultationDraft.dateText) {
             clearConsultationState(user);
             await showConsultationSpecialistMenu(chatId, '⚠️ Сесія вибору консультації скинуто. Оберіть фахівчиню ще раз.');
@@ -5255,7 +5490,22 @@ bot.on('message', async (msg) => {
             return;
         }
 
-        user.consultationDraft.timeText = String(text || '').trim();
+        const matchingSlot = (user.consultationDraft.availableSlots || []).find((slot) => {
+            return slot.dateText === user.consultationDraft.dateText && slot.timeText === selectedTimeText;
+        });
+
+        if (!matchingSlot) {
+            await bot.sendMessage(chatId, '❌ Обраний час недоступний. Будь ласка, оберіть інший.', {
+                reply_markup: {
+                    keyboard: buildConsultationTimeKeyboard(timeOptions),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        user.consultationDraft.timeText = selectedTimeText;
+        user.consultationDraft.selectedSlotRowNumber = matchingSlot.rowNumber;
         user.context = 'consultation-description';
 
         await bot.sendMessage(chatId,
@@ -5297,8 +5547,9 @@ bot.on('message', async (msg) => {
         }
 
         try {
-            await appendIndividualConsultationRow({
+            await saveIndividualConsultationRow({
                 sheetName: draft.sheetName,
+                rowNumber: draft.selectedSlotRowNumber,
                 dateText: draft.dateText,
                 timeText: draft.timeText,
                 name: registrantName,
@@ -5333,6 +5584,46 @@ bot.on('message', async (msg) => {
             return;
         } catch (error) {
             console.error('❌ Помилка запису консультації:', error && error.message ? error.message : error);
+            if (String((error && error.message) || '').includes('Обраний час уже зайнятий')) {
+                try {
+                    await refreshConsultationDraftSlots(draft);
+                    const refreshedTimeOptions = [...new Set((draft.availableSlots || [])
+                        .filter((slot) => slot.dateText === draft.dateText)
+                        .map((slot) => slot.timeText))].sort((left, right) => left.localeCompare(right, 'uk'));
+
+                    if (refreshedTimeOptions.length > 0) {
+                        draft.timeOptions = refreshedTimeOptions;
+                        delete draft.timeText;
+                        delete draft.selectedSlotRowNumber;
+                        user.context = 'consultation-time';
+                        await bot.sendMessage(chatId,
+                            '⏱ Цей час щойно зайняли. Оберіть інший зі списку нижче:', {
+                            reply_markup: {
+                                keyboard: buildConsultationTimeKeyboard(refreshedTimeOptions),
+                                resize_keyboard: true
+                            }
+                        });
+                        return;
+                    }
+
+                    user.context = 'consultation-day';
+                    delete draft.dateText;
+                    delete draft.timeText;
+                    delete draft.timeOptions;
+                    delete draft.selectedSlotRowNumber;
+                    await bot.sendMessage(chatId,
+                        '⏱ Всі часи на цю дату вже зайняті. Оберіть, будь ласка, іншу дату.', {
+                        reply_markup: {
+                            keyboard: buildConsultationDatesKeyboard(Array.isArray(draft.dateButtons) ? draft.dateButtons : []),
+                            resize_keyboard: true
+                        }
+                    });
+                    return;
+                } catch (refreshError) {
+                    console.error('❌ Не вдалося оновити слоти після конфлікту часу:', refreshError && refreshError.message ? refreshError.message : refreshError);
+                }
+            }
+
             await bot.sendMessage(chatId,
                 `❌ Не вдалося завершити запис на консультацію.\nСпробуйте ще раз пізніше.\n\nДеталі: ${error && error.message ? error.message : 'невідома помилка'}`,
                 {
@@ -5357,10 +5648,13 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    if (user.context === 'consultation-day') {
-        await bot.sendMessage(chatId, 'Будь ласка, оберіть день кнопками (середа-неділя).', {
+    if (user.context === 'consultation-day' && !matchesCommand(text, NAVIGATION_BUTTONS.back, NAVIGATION_BUTTONS.menu)) {
+        const dateButtons = Array.isArray(user.consultationDraft && user.consultationDraft.dateButtons)
+            ? user.consultationDraft.dateButtons
+            : [];
+        await bot.sendMessage(chatId, 'Будь ласка, оберіть дату кнопками.', {
             reply_markup: {
-                keyboard: buildConsultationDaysKeyboard(),
+                keyboard: buildConsultationDatesKeyboard(dateButtons),
                 resize_keyboard: true
             }
         });
@@ -5368,9 +5662,12 @@ bot.on('message', async (msg) => {
     }
 
     if (user.context === 'consultation-time') {
+        const timeOptions = Array.isArray(user.consultationDraft && user.consultationDraft.timeOptions)
+            ? user.consultationDraft.timeOptions
+            : [];
         await bot.sendMessage(chatId, 'Будь ласка, оберіть час кнопками.', {
             reply_markup: {
-                keyboard: buildConsultationTimeKeyboard(),
+                keyboard: buildConsultationTimeKeyboard(timeOptions),
                 resize_keyboard: true
             }
         });
@@ -5455,13 +5752,7 @@ bot.on('message', async (msg) => {
     const normalizedText = normalizeWeekdayKey(text);
     const weekdays = { 'неділя':0, 'понеділок':1, 'вівторок':2, 'середа':3, 'четвер':4, "п'ятниця":5, 'субота':6 };
 
-    if (user.context === 'consultation-day' && weekdays[normalizedText] !== undefined) {
-        const weekdayNumber = weekdays[normalizedText];
-        if (!CONSULTATION_ALLOWED_WEEKDAYS.has(weekdayNumber)) {
-            await bot.sendMessage(chatId, '❌ Для індивідуальних консультацій доступні тільки дні з середи до неділі.');
-            return;
-        }
-
+    if (user.context === 'consultation-day') {
         if (!user.consultationDraft || !user.consultationDraft.specialistKey) {
             clearConsultationState(user);
             user.context = 'consultation-specialist';
@@ -5470,16 +5761,62 @@ bot.on('message', async (msg) => {
             return;
         }
 
-        const consultationDate = getNextDateForWeekday(weekdayNumber);
-        user.consultationDraft.weekdayLabel = normalizedText;
-        user.consultationDraft.dateText = formatConsultationDate(consultationDate);
+        const draft = user.consultationDraft;
+        try {
+            await refreshConsultationDraftSlots(draft);
+        } catch (error) {
+            console.error('❌ Помилка оновлення слотів консультацій:', error && error.message ? error.message : error);
+            await bot.sendMessage(chatId,
+                '❌ Не вдалося оновити доступні дати. Спробуйте ще раз трохи пізніше.', {
+                reply_markup: {
+                    keyboard: buildConsultationSpecialistMenuKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        const dateButtonMap = draft.dateButtonMap || {};
+        const selectedDateText = dateButtonMap[text];
+
+        if (!selectedDateText) {
+            const dateButtons = Array.isArray(draft.dateButtons) ? draft.dateButtons : [];
+            await bot.sendMessage(chatId, 'Будь ласка, оберіть дату кнопками.', {
+                reply_markup: {
+                    keyboard: buildConsultationDatesKeyboard(dateButtons),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        const dateSlots = (draft.availableSlots || []).filter((slot) => slot.dateText === selectedDateText);
+        const timeOptions = [...new Set(dateSlots.map((slot) => slot.timeText))].sort((left, right) => {
+            return left.localeCompare(right, 'uk');
+        });
+
+        if (timeOptions.length === 0) {
+            await bot.sendMessage(chatId,
+                '❌ Для обраної дати немає вільного часу. Оберіть іншу дату.', {
+                reply_markup: {
+                    keyboard: buildConsultationDatesKeyboard(draft.dateButtons || []),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        draft.dateText = selectedDateText;
+        draft.timeOptions = timeOptions;
+        delete draft.timeText;
+        delete draft.selectedSlotRowNumber;
         user.context = 'consultation-time';
 
         await bot.sendMessage(chatId,
-            `📅 Обрано день: <b>${normalizedText}</b> (${user.consultationDraft.dateText})\n\nОберіть зручний час:`, {
+            `📅 Обрано дату: <b>${draft.dateText}</b>\n\nОберіть зручний час:`, {
             parse_mode: 'HTML',
             reply_markup: {
-                keyboard: buildConsultationTimeKeyboard(),
+                keyboard: buildConsultationTimeKeyboard(timeOptions),
                 resize_keyboard: true
             }
         });
@@ -5672,9 +6009,12 @@ bot.on('message', async (msg) => {
     if (matchesCommand(text, NAVIGATION_BUTTONS.back, 'Назад')) {
         if (user.context === 'consultation-description') {
             user.context = 'consultation-time';
+            const timeOptions = Array.isArray(user.consultationDraft && user.consultationDraft.timeOptions)
+                ? user.consultationDraft.timeOptions
+                : [];
             await bot.sendMessage(chatId, 'Оберіть інший час консультації:', {
                 reply_markup: {
-                    keyboard: buildConsultationTimeKeyboard(),
+                    keyboard: buildConsultationTimeKeyboard(timeOptions),
                     resize_keyboard: true
                 }
             });
@@ -5683,10 +6023,16 @@ bot.on('message', async (msg) => {
 
         if (user.context === 'consultation-time') {
             user.context = 'consultation-day';
+            delete user.consultationDraft?.dateText;
             delete user.consultationDraft?.timeText;
-            await bot.sendMessage(chatId, 'Оберіть інший день консультації (середа-неділя):', {
+            delete user.consultationDraft?.timeOptions;
+            delete user.consultationDraft?.selectedSlotRowNumber;
+            const dateButtons = Array.isArray(user.consultationDraft && user.consultationDraft.dateButtons)
+                ? user.consultationDraft.dateButtons
+                : [];
+            await bot.sendMessage(chatId, 'Оберіть іншу дату консультації:', {
                 reply_markup: {
-                    keyboard: buildConsultationDaysKeyboard(),
+                    keyboard: buildConsultationDatesKeyboard(dateButtons),
                     resize_keyboard: true
                 }
             });
@@ -5695,8 +6041,13 @@ bot.on('message', async (msg) => {
 
         if (user.context === 'consultation-day') {
             user.context = 'consultation-specialist';
-            delete user.consultationDraft?.weekdayLabel;
+            delete user.consultationDraft?.dateButtons;
+            delete user.consultationDraft?.dateButtonMap;
+            delete user.consultationDraft?.availableSlots;
             delete user.consultationDraft?.dateText;
+            delete user.consultationDraft?.timeOptions;
+            delete user.consultationDraft?.timeText;
+            delete user.consultationDraft?.selectedSlotRowNumber;
             await showConsultationSpecialistMenu(chatId, 'Оберіть фахівчиню для консультації:');
             return;
         }
