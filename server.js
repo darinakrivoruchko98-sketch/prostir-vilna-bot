@@ -827,7 +827,8 @@ const NAVIGATION_BUTTONS = {
 
 const UNSUBSCRIBE_MENU_BUTTONS = {
     self: '❌ Відписатись',
-    friend: '👭❌ Відписати подругу'
+    friend: '👭❌ Відписати подругу',
+    consultation: '🗨️❌ Відписатись від консультації'
 };
 
 const FRIEND_FLOW_BUTTONS = {
@@ -3949,11 +3950,12 @@ async function processParsedEvents(parsedEvents) {
         delete user.pendingFriendRegistrantName;
         user.context = 'unsubscribe-root';
 
-        await bot.sendMessage(chatId, 'Оберіть, кого потрібно відписати від заходу:', {
+        await bot.sendMessage(chatId, 'Оберіть, від чого потрібно відписатись:', {
             reply_markup: {
                 keyboard: [
                     [{ text: UNSUBSCRIBE_MENU_BUTTONS.self }],
                     [{ text: UNSUBSCRIBE_MENU_BUTTONS.friend }],
+                    [{ text: UNSUBSCRIBE_MENU_BUTTONS.consultation }],
                     [{ text: NAVIGATION_BUTTONS.menu }]
                 ],
                 resize_keyboard: true
@@ -4165,6 +4167,25 @@ async function processParsedEvents(parsedEvents) {
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: buttons,
+                resize_keyboard: true
+            }
+        });
+    }
+
+    async function handleCancelConsultationIntent(chatId, user) {
+        user.context = 'cancel-consultation';
+        
+        await bot.sendMessage(chatId, 
+            '🗨️ <b>Скасування індивідуальної консультації</b>\n\n' +
+            'Для скасування вашої запlanованої консультації, будь ласка, повідомте про це:\n\n' +
+            '👩🏻🌷 Соціальна фахівчиня: @DarynaVilna\n' +
+            '👩🏻🌹 Психологиня: @luidmila_psi\n\n' +
+            'Вони допоможуть вам скасувати запис. 🩵', {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: NAVIGATION_BUTTONS.back }]
+                ],
                 resize_keyboard: true
             }
         });
@@ -6103,6 +6124,11 @@ bot.on('message', async (msg) => {
 
     if (matchesCommand(text, UNSUBSCRIBE_MENU_BUTTONS.friend, MAIN_MENU_BUTTONS.unsubscribeFriend, '👭 Відписати подругу', 'Відписати подругу')) {
         await handleFriendUnsubscribeIntent(chatId, user);
+        return;
+    }
+
+    if (matchesCommand(text, UNSUBSCRIBE_MENU_BUTTONS.consultation, '🗨️❌ Відписатись від консультації')) {
+        await handleCancelConsultationIntent(chatId, user);
         return;
     }
 
