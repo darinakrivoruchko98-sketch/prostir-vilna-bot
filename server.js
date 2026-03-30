@@ -34,7 +34,8 @@ const PERSONAL_DATA_SPREADSHEET_ID = process.env.PERSONAL_DATA_SPREADSHEET_ID ||
 const PERSONAL_DATA_SHEET_NAME = process.env.PERSONAL_DATA_SHEET_NAME || config.PERSONAL_DATA_SHEET_NAME;
 const SOCIAL_CONSULTATIONS_SHEET_NAME = process.env.SOCIAL_CONSULTATIONS_SHEET_NAME || config.SOCIAL_CONSULTATIONS_SHEET_NAME || 'Соц';
 const PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME = process.env.PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME || config.PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME || 'Псих';
-const SOCIAL_SPECIALIST_CHAT_ID = process.env.SOCIAL_SPECIALIST_CHAT_ID || config.SOCIAL_SPECIALIST_CHAT_ID || '375328037';
+const SOCIAL_SPECIALIST_CHAT_ID = process.env.SOCIAL_SPECIALIST_CHAT_ID || config.SOCIAL_SPECIALIST_CHAT_ID || '';
+const DARYNA_CHAT_ID = process.env.DARYNA_CHAT_ID || config.DARYNA_CHAT_ID || '375328037';
 const PSYCHOLOGIST_CHAT_ID = process.env.PSYCHOLOGIST_CHAT_ID || config.PSYCHOLOGIST_CHAT_ID || '';
 const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
 
@@ -185,9 +186,15 @@ if (APPEALS_GROUP_ID) {
 }
 
 if (SOCIAL_SPECIALIST_CHAT_ID) {
-    console.log(`✅ SOCIAL_SPECIALIST_CHAT_ID встановлено: ${SOCIAL_SPECIALIST_CHAT_ID}`);
+    console.log(`✅ SOCIAL_SPECIALIST_CHAT_ID встановлено: ${SOCIAL_SPECIALIST_CHAT_ID} (для таблиці)`);
 } else {
-    console.log('⚠️ SOCIAL_SPECIALIST_CHAT_ID не встановлено (сповіщення соцфахівчині вимкнені)');
+    console.log('⚠️ SOCIAL_SPECIALIST_CHAT_ID не встановлено');
+}
+
+if (DARYNA_CHAT_ID) {
+    console.log(`✅ DARYNA_CHAT_ID встановлено: ${DARYNA_CHAT_ID} (для DM сповіщень)`);
+} else {
+    console.log('⚠️ DARYNA_CHAT_ID не встановлено (сповіщення соцфахівчині вимкнені)');
 }
 
 if (PSYCHOLOGIST_CHAT_ID) {
@@ -3675,7 +3682,7 @@ async function processParsedEvents(parsedEvents) {
                 key: 'social',
                 label: 'Соціальна фахівчиня',
                 sheetName: SOCIAL_CONSULTATIONS_SHEET_NAME,
-                specialistChatId: String(SOCIAL_SPECIALIST_CHAT_ID || '').trim()
+                specialistChatId: String(DARYNA_CHAT_ID || '').trim()
             };
         }
 
