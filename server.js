@@ -4179,22 +4179,152 @@ async function processParsedEvents(parsedEvents) {
         });
     }
 
-    async function handleCancelConsultationIntent(chatId, user) {
-        user.context = 'cancel-consultation';
-        
-        await bot.sendMessage(chatId, 
-            '🗨️ <b>Скасування індивідуальної консультації</b>\n\n' +
-            'Для скасування вашої запlanованої консультації, будь ласка, повідомте про це:\n\n' +
-            '👩🏻🌷 Соціальна фахівчиня: @DarynaVilna\n' +
-            '👩🏻🌹 Психологиня: @luidmila_psi\n\n' +
-            'Вони допоможуть вам скасувати запис. 🩵', {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [
-                    [{ text: NAVIGATION_BUTTONS.back }]
-                ],
-                resize_keyboard: true
+    async function loadUserConsultationBookings(name, phone) {
+        if (!sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID) return [];
+
+        const sheetConfigs = [
+            { sheetName: SOCIAL_CONSULTATIONS_SHEET_NAME, specialistLabel: 'Соціальна фахівчиня', specialistChatId: String(DARYNA_CHAT_ID || '').trim() },
+            { sheetName: PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME, specialistLabel: 'Психологиня', specialistChatId: String(MYKOLA_CHAT_ID || '').trim() }
+        ];
+
+        const bookings = [];
+        const now = new Date();
+
+        for (const config of sheetConfigs) {
+            try {
+                const response = await sheetsClient.spreadsheets.values.get({
+                    spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                    range: `${config.sheetName}!A:E`
+                });
+                const rows = response.data.values || [];
+
+                for (const [rowIndex, row] of rows.entries()) {
+                    const dateCell = String((row && row[0]) || '').trim();
+                    const timeCell = String((row && row[1]) || '').trim();
+                    const nameCell = String((row && row[2]) || '').trim();
+                    const phoneCell = String((row && row[3]) || '').trim();
+                    const requestCell = String((row && row[4]) || '').trim();
+
+                    if (!dateCell || !timeCell || !nameCell) continue;
+
+                    const normalizedRowName = nameCell.toLowerCase().replace(/\s+/g, ' ').trim();
+                    const normalizedUserName = (name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+                    const normalizedRowPhone = phoneCell.replace(/\D/g, '');
+                    const normalizedUserPhone = (phone || '').replace(/\D/g, '');
+
+                    const nameMatches = normalizedRowName === normalizedUserName;
+                    const phoneMatches = normalizedRowPhone && normalizedUserPhone && normalizedRowPhone === normalizedUserPhone;
+
+                    if (!nameMatches && !phoneMatches) continue;
+
+                    const parsedDate = parseDateValue(dateCell, now.getFullYear());
+                    if (!parsedDate) continue;
+                    const normalizedTime = normalizeTimeValue(timeCell);
+                    if (!normalizedTime) continue;
+
+                    const slotDateTime = new Date(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate(), normalizedTime.hour, normalizedTime.minute);
+                    if (slotDateTime <= now) continue;
+
+                    bookings.push({
+                        rowNumber: rowIndex + 1,
+                        sheetName: config.sheetName,
+                        specialistLabel: config.specialistLabel,
+                        specialistChatId: config.specialistChatId,
+                        dateText: dateCell,
+                        timeText: normalizedTime.text,
+                        name: nameCell,
+                        phone: phoneCell,
+                        requestText: requestCell
+                    });
+                }
+            } catch (err) {
+                console.error(`❌ Помилка читання аркуша ${config.sheetName} для скасування:`, err && err.message ? err.message : err);
             }
+        }
+
+        return bookings;
+    }
+
+    async function cancelConsultationRow(sheetName, rowNumber) {
+        await sheetsClient.spreadsheets.values.update({
+            spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+            range: `${sheetName}!C${rowNumber}:E${rowNumber}`,
+            valueInputOption: 'RAW',
+            requestBody: { values: [['', '', '']] }
+        });
+    }
+
+    async function notifySpecialistAboutCancellation({ specialistLabel, specialistChatId, dateText, timeText, name, phone, userChatId }) {
+        if (!specialistChatId) {
+            console.warn(`⚠️ Не вказано chat ID для сповіщення про скасування: ${specialistLabel}`);
+            return;
+        }
+
+        const message = [
+            '❌ <b>Скасування запису на консультацію</b>',
+            '',
+            `👩🏻‍💼 Фахівчиня: ${specialistLabel}`,
+            `📅 Дата: ${dateText}`,
+            `🕐 Час: ${timeText}`,
+            `👤 ПІБ: ${name}`,
+            `📞 Телефон: ${phone}`,
+            `🆔 Chat ID: <code>${userChatId}</code>`,
+        ].join('\n');
+
+        try {
+            await bot.sendMessage(specialistChatId, message, { parse_mode: 'HTML' });
+        } catch (err) {
+            console.error(`❌ Помилка сповіщення про скасування для ${specialistLabel}:`, err && err.message ? err.message : err);
+        }
+    }
+
+    async function handleCancelConsultationIntent(chatId, user) {
+        const name = knownUsers[chatId]?.name || user.name || '';
+        const phone = knownUsers[chatId]?.phone || user.phone || '';
+
+        if (!name && !phone) {
+            await bot.sendMessage(chatId,
+                '⚠️ Не вдалося визначити ваші дані. Будь ласка, спочатку заповніть анкету через «Афіша заходів».', {
+                reply_markup: { keyboard: [[{ text: NAVIGATION_BUTTONS.menu }]], resize_keyboard: true }
+            });
+            return;
+        }
+
+        let bookings = [];
+        try {
+            bookings = await loadUserConsultationBookings(name, phone);
+        } catch (err) {
+            console.error('❌ Помилка завантаження бронювань:', err && err.message ? err.message : err);
+            await bot.sendMessage(chatId, '❌ Не вдалося завантажити ваші записи. Спробуйте пізніше.', {
+                reply_markup: { keyboard: [[{ text: NAVIGATION_BUTTONS.menu }]], resize_keyboard: true }
+            });
+            return;
+        }
+
+        if (bookings.length === 0) {
+            await bot.sendMessage(chatId,
+                '📅 У вас немає майбутніх записів на індивідуальну консультацію.', {
+                reply_markup: { keyboard: [[{ text: NAVIGATION_BUTTONS.back }], [{ text: NAVIGATION_BUTTONS.menu }]], resize_keyboard: true }
+            });
+            return;
+        }
+
+        const cancelButtonMap = {};
+        const buttons = bookings.map((booking, index) => {
+            const buttonText = `${index + 1}. ${booking.specialistLabel} — ${booking.dateText} ${booking.timeText}`;
+            cancelButtonMap[buttonText] = index;
+            return [{ text: buttonText }];
+        });
+
+        user.context = 'cancel-consultation-select';
+        user.cancelConsultationBookings = bookings;
+        user.cancelConsultationButtonMap = cancelButtonMap;
+
+        buttons.push([{ text: NAVIGATION_BUTTONS.back }]);
+
+        await bot.sendMessage(chatId, '🗨️ <b>Оберіть запис для скасування:</b>', {
+            parse_mode: 'HTML',
+            reply_markup: { keyboard: buttons, resize_keyboard: true }
         });
     }
 
@@ -6089,9 +6219,14 @@ bot.on('message', async (msg) => {
             user.context === 'unsubscribe-root'
             || user.context === 'unregister'
             || user.context === 'friend-unregister'
+            || user.context === 'cancel-consultation-select'
+            || user.context === 'cancel-consultation-confirm'
             || user.pendingUnregEventId
             || user.pendingFriendUnregKey
         ) {
+            delete user.pendingCancelBooking;
+            delete user.cancelConsultationBookings;
+            delete user.cancelConsultationButtonMap;
             await showUnsubscribeMenu(chatId, user);
             return;
         }
@@ -6136,6 +6271,80 @@ bot.on('message', async (msg) => {
 
     if (matchesCommand(text, UNSUBSCRIBE_MENU_BUTTONS.consultation, '🗨️❌ Відписатись від консультації')) {
         await handleCancelConsultationIntent(chatId, user);
+        return;
+    }
+
+    // Вибір запису консультації для скасування
+    if (user.context === 'cancel-consultation-select' && user.cancelConsultationButtonMap) {
+        const bookingIndex = user.cancelConsultationButtonMap[text];
+        if (bookingIndex !== undefined) {
+            const booking = user.cancelConsultationBookings[bookingIndex];
+            user.pendingCancelBooking = booking;
+            user.context = 'cancel-consultation-confirm';
+
+            await bot.sendMessage(chatId,
+                `❓ <b>Підтвердіть скасування запису:</b>\n\n` +
+                `👩🏻‍💼 ${booking.specialistLabel}\n` +
+                `📅 ${booking.dateText}\n` +
+                `🕐 ${booking.timeText}\n\n` +
+                `Ви впевнені, що хочете скасувати цей запис?`, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: '✅ Так, скасувати запис' }],
+                        [{ text: '❌ Ні, залишити' }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+    }
+
+    // Підтвердження скасування консультації
+    if (text === '✅ Так, скасувати запис' && user.pendingCancelBooking) {
+        const booking = user.pendingCancelBooking;
+        try {
+            await cancelConsultationRow(booking.sheetName, booking.rowNumber);
+
+            await notifySpecialistAboutCancellation({
+                specialistLabel: booking.specialistLabel,
+                specialistChatId: booking.specialistChatId,
+                dateText: booking.dateText,
+                timeText: booking.timeText,
+                name: booking.name,
+                phone: booking.phone,
+                userChatId: chatId
+            });
+
+            delete user.pendingCancelBooking;
+            delete user.cancelConsultationBookings;
+            delete user.cancelConsultationButtonMap;
+            user.context = null;
+
+            await bot.sendMessage(chatId,
+                `✅ <b>Запис скасовано!</b>\n\n` +
+                `👩🏻‍💼 ${booking.specialistLabel}\n` +
+                `📅 ${booking.dateText} о ${booking.timeText}\n\n` +
+                `Слот звільнено. Дякуємо, що попередили! 🩵`, {
+                parse_mode: 'HTML',
+                reply_markup: { keyboard: getMainMenuKeyboard(), resize_keyboard: true }
+            });
+        } catch (err) {
+            console.error('❌ Помилка скасування консультації:', err && err.message ? err.message : err);
+            await bot.sendMessage(chatId, '❌ Не вдалося скасувати запис. Спробуйте пізніше.', {
+                reply_markup: { keyboard: getMainMenuKeyboard(), resize_keyboard: true }
+            });
+        }
+        return;
+    }
+
+    if (text === '❌ Ні, залишити' && user.context === 'cancel-consultation-confirm') {
+        delete user.pendingCancelBooking;
+        user.context = null;
+        await bot.sendMessage(chatId, '👍 Запис залишено без змін.', {
+            reply_markup: { keyboard: getMainMenuKeyboard(), resize_keyboard: true }
+        });
         return;
     }
 
