@@ -807,7 +807,7 @@ const MAIN_MENU_BUTTONS = {
     unsubscribe: '❌ Відписатись від заходів',
     friend: '👭 Зареєструвати подругу',
     unsubscribeFriend: '👭❌ Відписати подругу',
-    consultations: '🩺 Індивідуальні консультації',
+    consultations: '🗨️ Індивідуальні консультації',
     reminders: '🔔 Нагадування',
     contacts: '📞 Контакти'
 };
@@ -3914,7 +3914,7 @@ async function processParsedEvents(parsedEvents) {
         if (noticeText) {
             messageLines.push(noticeText.trim(), '');
         }
-        messageLines.push('🩺 <b>Індивідуальні консультації</b>');
+        messageLines.push('🗨️ <b>Індивідуальні консультації</b>');
         messageLines.push('Оберіть фахівчиню:');
 
         await bot.sendMessage(chatId, messageLines.join('\n'), {
@@ -5405,9 +5405,12 @@ bot.on('message', async (msg) => {
             }
 
             if (availableSlots.length === 0) {
+                const genitiveLabel = specialistConfig.label === 'Психологиня'
+                    ? 'психологині'
+                    : 'соціальної фахівчині';
+                
                 await bot.sendMessage(chatId,
-                    `ℹ️ Наразі немає вільних слотів в аркуші «${specialistConfig.sheetName}».
-Оберіть іншу фахівчиню або спробуйте пізніше.`, {
+                    `Наразі немає вільних місць до ${genitiveLabel}. Спробуйте пізніше або оберіть іншу фахівчиню.`, {
                     reply_markup: {
                         keyboard: buildConsultationSpecialistMenuKeyboard(),
                         resize_keyboard: true
