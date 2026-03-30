@@ -32,6 +32,10 @@ const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || config.SCHEDULE_S
 // Таблиця для персональних даних (ПІБ, телефон тощо)
 const PERSONAL_DATA_SPREADSHEET_ID = process.env.PERSONAL_DATA_SPREADSHEET_ID || config.PERSONAL_DATA_SPREADSHEET_ID;
 const PERSONAL_DATA_SHEET_NAME = process.env.PERSONAL_DATA_SHEET_NAME || config.PERSONAL_DATA_SHEET_NAME;
+const SOCIAL_CONSULTATIONS_SHEET_NAME = process.env.SOCIAL_CONSULTATIONS_SHEET_NAME || config.SOCIAL_CONSULTATIONS_SHEET_NAME || 'Соц';
+const PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME = process.env.PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME || config.PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME || 'Псих';
+const SOCIAL_SPECIALIST_CHAT_ID = process.env.SOCIAL_SPECIALIST_CHAT_ID || config.SOCIAL_SPECIALIST_CHAT_ID || '';
+const PSYCHOLOGIST_CHAT_ID = process.env.PSYCHOLOGIST_CHAT_ID || config.PSYCHOLOGIST_CHAT_ID || '';
 const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
 
 // Таблиця розкладу: https://docs.google.com/spreadsheets/d/1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8/edit
@@ -45,6 +49,8 @@ console.log("📋 Таблиця розкладу (тільки читання):
 console.log("📄 Аркуш розкладу:", SCHEDULE_SHEET_NAME);
 console.log("👤 Таблиця персональних даних (запис ПІБ + всі реєстрації):", PERSONAL_DATA_SPREADSHEET_ID);
 console.log("📄 Аркуш персональних даних:", PERSONAL_DATA_SHEET_NAME);
+console.log("🗂️ Аркуш консультацій (Соц):", SOCIAL_CONSULTATIONS_SHEET_NAME);
+console.log("🗂️ Аркуш консультацій (Псих):", PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME);
 console.log("🕐 Часова зона бота:", APP_TIME_ZONE);
 console.log(`🧠 AI режим: ${AI_ENABLED ? `увімкнено (${AI_MODEL})` : 'вимкнено (не задано AI_API_KEY)'}`);
 
@@ -176,6 +182,18 @@ if (APPEALS_GROUP_ID) {
     console.log(`📬 APPEALS_GROUP_ID встановлено: ${APPEALS_GROUP_ID} (група "Відгуки")`);
 } else {
     console.log("⚠️ APPEALS_GROUP_ID не встановлено");
+}
+
+if (SOCIAL_SPECIALIST_CHAT_ID) {
+    console.log(`✅ SOCIAL_SPECIALIST_CHAT_ID встановлено: ${SOCIAL_SPECIALIST_CHAT_ID}`);
+} else {
+    console.log('⚠️ SOCIAL_SPECIALIST_CHAT_ID не встановлено (сповіщення соцфахівчині вимкнені)');
+}
+
+if (PSYCHOLOGIST_CHAT_ID) {
+    console.log(`✅ PSYCHOLOGIST_CHAT_ID встановлено: ${PSYCHOLOGIST_CHAT_ID}`);
+} else {
+    console.log('⚠️ PSYCHOLOGIST_CHAT_ID не встановлено (сповіщення психологині вимкнені)');
 }
 
 let users = {};
@@ -789,6 +807,7 @@ const MAIN_MENU_BUTTONS = {
     unsubscribe: '❌ Відписатись від заходів',
     friend: '👭 Зареєструвати подругу',
     unsubscribeFriend: '👭❌ Відписати подругу',
+    consultations: '🩺 Індивідуальні консультації',
     reminders: '🔔 Нагадування',
     contacts: '📞 Контакти'
 };
@@ -815,6 +834,25 @@ const AFISHA_DAY_BUTTONS = {
     saturday: '💛 Субота',
     sunday: '❤️ Неділя'
 };
+
+const CONSULTATION_SPECIALIST_BUTTONS = {
+    social: '👩🏻 Соціальна фахівчиня',
+    psychologist: '🧠 Психологиня'
+};
+
+const CONSULTATION_TIME_OPTIONS = [
+    '11:00',
+    '12:00',
+    '13:00',
+    '14:00',
+    '15:00',
+    '16:00',
+    '17:00',
+    '18:00',
+    '19:00'
+];
+
+const CONSULTATION_ALLOWED_WEEKDAYS = new Set([0, 3, 4, 5, 6]);
 
 // Правильна граматика для множини заходів
 function pluralizeEvents(count) {
@@ -3576,9 +3614,162 @@ async function processParsedEvents(parsedEvents) {
             [{ text: MAIN_MENU_BUTTONS.afisha }],
             [{ text: MAIN_MENU_BUTTONS.unsubscribe }],
             [{ text: MAIN_MENU_BUTTONS.friend }],
+            [{ text: MAIN_MENU_BUTTONS.consultations }],
             [{ text: MAIN_MENU_BUTTONS.reminders }],
             [{ text: MAIN_MENU_BUTTONS.contacts }]
         ];
+    }
+
+    function clearConsultationState(user) {
+        if (!user) {
+            return;
+        }
+        delete user.consultationDraft;
+        if (String(user.context || '').startsWith('consultation-')) {
+            user.context = null;
+        }
+    }
+
+    function buildConsultationSpecialistMenuKeyboard() {
+        return [
+            [{ text: CONSULTATION_SPECIALIST_BUTTONS.social }],
+            [{ text: CONSULTATION_SPECIALIST_BUTTONS.psychologist }],
+            [{ text: NAVIGATION_BUTTONS.menu }]
+        ];
+    }
+
+    function buildConsultationDaysKeyboard() {
+        return [
+            [{ text: AFISHA_DAY_BUTTONS.wednesday }],
+            [{ text: AFISHA_DAY_BUTTONS.thursday }],
+            [{ text: AFISHA_DAY_BUTTONS.friday }],
+            [{ text: AFISHA_DAY_BUTTONS.saturday }],
+            [{ text: AFISHA_DAY_BUTTONS.sunday }],
+            [{ text: NAVIGATION_BUTTONS.back }],
+            [{ text: NAVIGATION_BUTTONS.menu }]
+        ];
+    }
+
+    function buildConsultationTimeKeyboard() {
+        return [
+            CONSULTATION_TIME_OPTIONS.slice(0, 3).map((timeText) => ({ text: timeText })),
+            CONSULTATION_TIME_OPTIONS.slice(3, 6).map((timeText) => ({ text: timeText })),
+            CONSULTATION_TIME_OPTIONS.slice(6, 9).map((timeText) => ({ text: timeText })),
+            [{ text: NAVIGATION_BUTTONS.back }],
+            [{ text: NAVIGATION_BUTTONS.menu }]
+        ];
+    }
+
+    function getConsultationSpecialistConfigByButton(text) {
+        if (matchesCommand(text, CONSULTATION_SPECIALIST_BUTTONS.social, 'Соціальна фахівчиня')) {
+            return {
+                key: 'social',
+                label: 'Соціальна фахівчиня',
+                sheetName: SOCIAL_CONSULTATIONS_SHEET_NAME,
+                specialistChatId: String(SOCIAL_SPECIALIST_CHAT_ID || '').trim()
+            };
+        }
+
+        if (matchesCommand(text, CONSULTATION_SPECIALIST_BUTTONS.psychologist, 'Психологиня')) {
+            return {
+                key: 'psychologist',
+                label: 'Психологиня',
+                sheetName: PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME,
+                specialistChatId: String(PSYCHOLOGIST_CHAT_ID || '').trim()
+            };
+        }
+
+        return null;
+    }
+
+    function getNextDateForWeekday(weekdayNumber) {
+        const now = new Date();
+        const date = new Date(now);
+        const currentDay = now.getDay();
+        let delta = (weekdayNumber - currentDay + 7) % 7;
+        if (delta === 0) {
+            delta = 7;
+        }
+        date.setDate(now.getDate() + delta);
+        date.setHours(0, 0, 0, 0);
+        return date;
+    }
+
+    function formatConsultationDate(date) {
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const year = String(date.getFullYear());
+        return `${day}.${month}.${year}`;
+    }
+
+    async function appendIndividualConsultationRow({ sheetName, dateText, timeText, name, phone, requestText }) {
+        if (!sheetsClient) {
+            throw new Error('Google Sheets client не ініціалізовано');
+        }
+
+        if (!PERSONAL_DATA_SPREADSHEET_ID) {
+            throw new Error('PERSONAL_DATA_SPREADSHEET_ID не встановлено');
+        }
+
+        const values = [[
+            dateText || '',
+            timeText || '',
+            name || '',
+            phone || '',
+            requestText || ''
+        ]];
+
+        await sheetsClient.spreadsheets.values.append({
+            spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+            range: `${sheetName}!A:E`,
+            valueInputOption: 'RAW',
+            insertDataOption: 'INSERT_ROWS',
+            requestBody: { values }
+        });
+    }
+
+    async function notifySpecialistAboutConsultation({ specialistLabel, specialistChatId, dateText, timeText, name, phone, requestText, userChatId }) {
+        if (!specialistChatId) {
+            console.warn(`⚠️ Не вказано chat ID для сповіщень: ${specialistLabel}`);
+            return false;
+        }
+
+        const message = [
+            '🆕 <b>Нова реєстрація на індивідуальну консультацію</b>',
+            '',
+            `👩🏻‍💼 Фахівчиня: ${specialistLabel}`,
+            `📅 Дата: ${dateText}`,
+            `🕐 Час: ${timeText}`,
+            `👤 ПІБ: ${name}`,
+            `📞 Телефон: ${phone}`,
+            `🆔 Chat ID: <code>${userChatId}</code>`,
+            '',
+            '📝 Звернення:',
+            `<i>${String(requestText || '').trim()}</i>`
+        ].join('\n');
+
+        await bot.sendMessage(specialistChatId, message, {
+            parse_mode: 'HTML'
+        });
+
+        return true;
+    }
+
+    async function showConsultationSpecialistMenu(chatId, noticeText = '') {
+        const messageLines = [];
+        if (noticeText) {
+            messageLines.push(noticeText.trim(), '');
+        }
+        messageLines.push('🩺 <b>Індивідуальні консультації</b>');
+        messageLines.push('Оберіть фахівчиню:');
+
+        await bot.sendMessage(chatId, messageLines.join('\n'), {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: buildConsultationSpecialistMenuKeyboard(),
+                resize_keyboard: true
+            }
+        });
     }
 
     async function showUnsubscribeMenu(chatId, user) {
@@ -4394,6 +4585,7 @@ bot.on('message', async (msg) => {
         delete user.currentSelectedEventName;
         delete user.currentSelectedEventId;
         clearFriendRegistrationState(user);
+        clearConsultationState(user);
         user.step = 0;
         user.registrationMode = false;
 
@@ -5021,6 +5213,170 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    if (matchesCommand(text, MAIN_MENU_BUTTONS.consultations, 'Індивідуальні консультації')) {
+        clearFriendRegistrationState(user);
+        clearConsultationState(user);
+        delete user.eventButtonMap;
+        user.context = 'consultation-specialist';
+        user.consultationDraft = {};
+        await showConsultationSpecialistMenu(chatId);
+        return;
+    }
+
+    if (user.context === 'consultation-specialist') {
+        const specialistConfig = getConsultationSpecialistConfigByButton(text);
+        if (specialistConfig) {
+            user.consultationDraft = {
+                specialistKey: specialistConfig.key,
+                specialistLabel: specialistConfig.label,
+                sheetName: specialistConfig.sheetName,
+                specialistChatId: specialistConfig.specialistChatId
+            };
+            user.context = 'consultation-day';
+
+            await bot.sendMessage(chatId,
+                `✅ Обрано: <b>${specialistConfig.label}</b>\n\nОберіть день консультації (середа-неділя):`, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: buildConsultationDaysKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+    }
+
+    if (user.context === 'consultation-time' && CONSULTATION_TIME_OPTIONS.includes(String(text || '').trim())) {
+        if (!user.consultationDraft || !user.consultationDraft.specialistKey || !user.consultationDraft.dateText) {
+            clearConsultationState(user);
+            await showConsultationSpecialistMenu(chatId, '⚠️ Сесія вибору консультації скинуто. Оберіть фахівчиню ще раз.');
+            user.context = 'consultation-specialist';
+            user.consultationDraft = {};
+            return;
+        }
+
+        user.consultationDraft.timeText = String(text || '').trim();
+        user.context = 'consultation-description';
+
+        await bot.sendMessage(chatId,
+            '📝 <b>Опишіть коротко ваше звернення,</b>\nщоб фахівчиня могла підготуватися до індивідуальної консультації.', {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: NAVIGATION_BUTTONS.back }],
+                    [{ text: NAVIGATION_BUTTONS.menu }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
+    if (user.context === 'consultation-description') {
+        const requestText = String(text || '').trim();
+        if (requestText.length < 5) {
+            await bot.sendMessage(chatId, '❌ Будь ласка, додайте трохи більше деталей (мінімум 5 символів).');
+            return;
+        }
+
+        const draft = user.consultationDraft || {};
+        const registrantData = await resolveRegistrantFormData(chatId, user);
+        const registrantName = String(registrantData.name || '').trim();
+        const registrantPhone = String(registrantData.phone || '').trim();
+
+        if (!registrantName || !registrantPhone) {
+            clearConsultationState(user);
+            await bot.sendMessage(chatId,
+                '❌ Для запису на консультацію потрібно, щоб у профілі були заповнені ПІБ і номер телефону.\n\nОберіть «Афіша заходів», щоб завершити анкету.', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        try {
+            await appendIndividualConsultationRow({
+                sheetName: draft.sheetName,
+                dateText: draft.dateText,
+                timeText: draft.timeText,
+                name: registrantName,
+                phone: registrantPhone,
+                requestText
+            });
+
+            await notifySpecialistAboutConsultation({
+                specialistLabel: draft.specialistLabel,
+                specialistChatId: draft.specialistChatId,
+                dateText: draft.dateText,
+                timeText: draft.timeText,
+                name: registrantName,
+                phone: registrantPhone,
+                requestText,
+                userChatId: chatId
+            });
+
+            clearConsultationState(user);
+            await bot.sendMessage(chatId,
+                `✅ <b>Запис на консультацію підтверджено!</b>\n\n` +
+                `👩🏻‍💼 Фахівчиня: ${draft.specialistLabel}\n` +
+                `📅 Дата: ${draft.dateText}\n` +
+                `🕐 Час: ${draft.timeText}\n\n` +
+                `Очікуйте, будь ласка, з вами зв'яжуться за потреби.`, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        } catch (error) {
+            console.error('❌ Помилка запису консультації:', error && error.message ? error.message : error);
+            await bot.sendMessage(chatId,
+                `❌ Не вдалося завершити запис на консультацію.\nСпробуйте ще раз пізніше.\n\nДеталі: ${error && error.message ? error.message : 'невідома помилка'}`,
+                {
+                    reply_markup: {
+                        keyboard: getMainMenuKeyboard(),
+                        resize_keyboard: true
+                    }
+                }
+            );
+            clearConsultationState(user);
+            return;
+        }
+    }
+
+    if (user.context === 'consultation-specialist') {
+        await bot.sendMessage(chatId, 'Будь ласка, оберіть одну з кнопок: «Соціальна фахівчиня» або «Психологиня».', {
+            reply_markup: {
+                keyboard: buildConsultationSpecialistMenuKeyboard(),
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
+    if (user.context === 'consultation-day') {
+        await bot.sendMessage(chatId, 'Будь ласка, оберіть день кнопками (середа-неділя).', {
+            reply_markup: {
+                keyboard: buildConsultationDaysKeyboard(),
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
+    if (user.context === 'consultation-time') {
+        await bot.sendMessage(chatId, 'Будь ласка, оберіть час кнопками.', {
+            reply_markup: {
+                keyboard: buildConsultationTimeKeyboard(),
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
     if (text === "Написати звернення") {
         user.context = 'appeal';
         user.step = 1;
@@ -5098,6 +5454,37 @@ bot.on('message', async (msg) => {
     // якщо натиснутий день тижня, делегуємо показ загального меню на відповідну функцію
     const normalizedText = normalizeWeekdayKey(text);
     const weekdays = { 'неділя':0, 'понеділок':1, 'вівторок':2, 'середа':3, 'четвер':4, "п'ятниця":5, 'субота':6 };
+
+    if (user.context === 'consultation-day' && weekdays[normalizedText] !== undefined) {
+        const weekdayNumber = weekdays[normalizedText];
+        if (!CONSULTATION_ALLOWED_WEEKDAYS.has(weekdayNumber)) {
+            await bot.sendMessage(chatId, '❌ Для індивідуальних консультацій доступні тільки дні з середи до неділі.');
+            return;
+        }
+
+        if (!user.consultationDraft || !user.consultationDraft.specialistKey) {
+            clearConsultationState(user);
+            user.context = 'consultation-specialist';
+            user.consultationDraft = {};
+            await showConsultationSpecialistMenu(chatId, '⚠️ Сесія вибору консультації скинуто. Оберіть фахівчиню ще раз.');
+            return;
+        }
+
+        const consultationDate = getNextDateForWeekday(weekdayNumber);
+        user.consultationDraft.weekdayLabel = normalizedText;
+        user.consultationDraft.dateText = formatConsultationDate(consultationDate);
+        user.context = 'consultation-time';
+
+        await bot.sendMessage(chatId,
+            `📅 Обрано день: <b>${normalizedText}</b> (${user.consultationDraft.dateText})\n\nОберіть зручний час:`, {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: buildConsultationTimeKeyboard(),
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
     
     console.log('🔍 Перевірка дня: text="' + text + '" → normalized="' + normalizedText + '"');
     if (weekdays[normalizedText] !== undefined) {
@@ -5202,6 +5589,19 @@ bot.on('message', async (msg) => {
 
     // Скасування реєстрації
     if (text === "❌ Скасувати" || text === "❌ Відмінити") {
+        if (String(user.context || '').startsWith('consultation-')) {
+            clearConsultationState(user);
+            user.step = 0;
+            user.registrationMode = false;
+            await bot.sendMessage(chatId, 'Запис на консультацію скасовано. Оберіть дію в меню.', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
         const inUnregisterFlow = user.context === 'unregister'
             || user.context === 'friend-unregister'
             || user.pendingUnregEventId
@@ -5270,6 +5670,48 @@ bot.on('message', async (msg) => {
     }
 
     if (matchesCommand(text, NAVIGATION_BUTTONS.back, 'Назад')) {
+        if (user.context === 'consultation-description') {
+            user.context = 'consultation-time';
+            await bot.sendMessage(chatId, 'Оберіть інший час консультації:', {
+                reply_markup: {
+                    keyboard: buildConsultationTimeKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (user.context === 'consultation-time') {
+            user.context = 'consultation-day';
+            delete user.consultationDraft?.timeText;
+            await bot.sendMessage(chatId, 'Оберіть інший день консультації (середа-неділя):', {
+                reply_markup: {
+                    keyboard: buildConsultationDaysKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (user.context === 'consultation-day') {
+            user.context = 'consultation-specialist';
+            delete user.consultationDraft?.weekdayLabel;
+            delete user.consultationDraft?.dateText;
+            await showConsultationSpecialistMenu(chatId, 'Оберіть фахівчиню для консультації:');
+            return;
+        }
+
+        if (user.context === 'consultation-specialist') {
+            clearConsultationState(user);
+            await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
         delete user.afishaFullRegistration;
         delete user.afishaPendingEventId;
         delete user.afishaPendingEventName;
@@ -5516,6 +5958,7 @@ bot.on('message', async (msg) => {
             delete users[chatId].pendingFriendUnregEventName;
             delete users[chatId].pendingFriendRegistrantName;
             clearFriendRegistrationState(users[chatId]);
+            clearConsultationState(users[chatId]);
             users[chatId].step = 0;
             users[chatId].registrationMode = false;
             users[chatId].context = null;

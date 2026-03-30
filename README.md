@@ -16,6 +16,10 @@ SPREADSHEET_ID=1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8
 SCHEDULE_SHEET_NAME=Розклад
 PERSONAL_DATA_SPREADSHEET_ID=1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE
 PERSONAL_DATA_SHEET_NAME=Зареєстровані
+SOCIAL_CONSULTATIONS_SHEET_NAME=Соц
+PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME=Псих
+SOCIAL_SPECIALIST_CHAT_ID=-100xxxxxxxxxx
+PSYCHOLOGIST_CHAT_ID=-100xxxxxxxxxx
 AI_API_KEY=sk-...
 AI_MODEL=gpt-4o-mini
 AI_API_URL=https://api.openai.com/v1/chat/completions
@@ -29,6 +33,9 @@ GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY----
 
 Розклад читається з аркуша `Розклад` (або значення `SCHEDULE_SHEET_NAME`) у таблиці `SPREADSHEET_ID`,
 а персональні дані записуються в аркуш `Зареєстровані` (або значення `PERSONAL_DATA_SHEET_NAME`) у таблиці `PERSONAL_DATA_SPREADSHEET_ID`.
+
+Для індивідуальних консультацій бот пише записи в аркуші `Соц` та `Псих` (або значення `SOCIAL_CONSULTATIONS_SHEET_NAME` і `PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME`) у таблиці `PERSONAL_DATA_SPREADSHEET_ID`.
+Сповіщення для фахівчинь надсилаються в чати, вказані в `SOCIAL_SPECIALIST_CHAT_ID` та `PSYCHOLOGIST_CHAT_ID`.
 
 ШІ-режим працює, якщо задано `AI_API_KEY`. Якщо ключа немає, бот покаже стандартні кнопки меню без відповіді ШІ.
 
@@ -64,6 +71,10 @@ TOKEN=your_token
 GROUP_ID=-1003282996506
 CHAT_ID=-1003282996506
 SPREADSHEET_ID=your_spreadsheet_id
+SOCIAL_CONSULTATIONS_SHEET_NAME=Соц
+PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME=Псих
+SOCIAL_SPECIALIST_CHAT_ID=-100xxxxxxxxxx
+PSYCHOLOGIST_CHAT_ID=-100xxxxxxxxxx
 AI_API_KEY=sk-...
 AI_MODEL=gpt-4o-mini
 AI_API_URL=https://api.openai.com/v1/chat/completions
