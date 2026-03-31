@@ -883,6 +883,14 @@ const VIOLENCE_HELP_SPECIALIZED_TYPE_BUTTONS = {
     shelters: '🛏 Притулки'
 };
 
+const VIOLENCE_HELP_SOCIAL_PSYCH_DISTRICT_BUTTONS = {
+    regional: '🟡 Дніпропетровський обласний рівень',
+    dnipro: VIOLENCE_HELP_DISTRICT_BUTTONS.dnipro,
+    kamianske: VIOLENCE_HELP_DISTRICT_BUTTONS.kamianske,
+    kryvyiRih: VIOLENCE_HELP_DISTRICT_BUTTONS.kryvyiRih,
+    pavlohrad: VIOLENCE_HELP_DISTRICT_BUTTONS.pavlohrad
+};
+
 const CONSULTATION_WEEKDAY_LABELS = {
     0: 'неділя',
     1: 'понеділок',
@@ -3711,6 +3719,18 @@ async function processParsedEvents(parsedEvents) {
         ];
     }
 
+    function buildViolenceHelpSocialDistrictKeyboard() {
+        return [
+            [{ text: VIOLENCE_HELP_SOCIAL_PSYCH_DISTRICT_BUTTONS.regional }],
+            [{ text: VIOLENCE_HELP_SOCIAL_PSYCH_DISTRICT_BUTTONS.dnipro }],
+            [{ text: VIOLENCE_HELP_SOCIAL_PSYCH_DISTRICT_BUTTONS.kamianske }],
+            [{ text: VIOLENCE_HELP_SOCIAL_PSYCH_DISTRICT_BUTTONS.kryvyiRih }],
+            [{ text: VIOLENCE_HELP_SOCIAL_PSYCH_DISTRICT_BUTTONS.pavlohrad }],
+            [{ text: NAVIGATION_BUTTONS.back }],
+            [{ text: NAVIGATION_BUTTONS.menu }]
+        ];
+    }
+
     function clearConsultationState(user) {
         if (!user) {
             return;
@@ -5575,81 +5595,44 @@ bot.on('message', async (msg) => {
 
     if (user.context === 'violence-help') {
         const violenceHelpMessages = {
-            [VIOLENCE_HELP_BUTTONS.hotlines]: `📞 Урядова гаряча лінія (1547)
-З питань протидії торгівлі людьми, домашнього насильства, насильства за ознакою статі та щодо дітей.
-Працює цілодобово.
-Надаються інформаційні, психологічні та юридичні консультації.
+            [VIOLENCE_HELP_BUTTONS.hotlines]: `📞 Урядова гаряча лінія 1547
+З питань торгівлі людьми, домашнього насильства, насильства за ознакою статі та щодо дітей. Цілодобово, безкоштовно, анонімно.
+📱 1547 | 🌍 +38 (044) 284 19 43 | 💻 1547.ukc.gov.ua
 
-📱 1547 (безкоштовно, анонімно, конфіденційно)
-🌍 +38 (044) 284 19 43 (для дзвінків із-за кордону)
-💻 Онлайн: https://1547.ukc.gov.ua
+📞 Нац. гаряча лінія проти домашнього насильства
+Психологічні та юридичні консультації, допомога за місцем проживання. Цілодобово, безкоштовно, анонімно.
+☎️ 0 (800) 500 335 | 📱 116 123
 
-📞 Національна гаряча лінія з попередження домашнього насильства
-Консультації психолога або юриста, а також інформація про допомогу за місцем проживання.
-Цілодобово, безкоштовно, анонімно.
-
-☎️ 0 (800) 500 335 (зі стаціонарного)
-📱 116 123 (з мобільного)
-
-🧒 Національна гаряча лінія для дітей та молоді
-
-📱 116 111 (з мобільного, безкоштовно)
-☎️ 0 (800) 500 225 (безкоштовно)
+🧒 Гаряча лінія для дітей та молоді
+📱 116 111 (мобільний) | ☎️ 0 (800) 500 225 (безкоштовно)
 
 👨 Гаряча лінія психологічної підтримки для чоловіків
-Безкоштовно, анонімно, цілодобово.
-
-📱 2345* (Vodafone, Lifecell)
-📞 +38 (067) 752 23 45 (Kyivstar)
+Цілодобово, безкоштовно, анонімно.
+📱 2345* (Vodafone, Lifecell) | 📞 +38 (067) 752 23 45 (Kyivstar)
 
 💻 Онлайн-платформа «Аврора»
-Спеціалізована психотерапевтична підтримка для людей, які зазнали насильства, пов'язаного з війною (зокрема сексуального).
-
-🔒 Анонімно та конфіденційно
-📝 Потрібно заповнити коротку форму
-
+Психотерапевтична підтримка для постраждалих від насильства, пов'язаного з війною.
+🔒 Анонімно та конфіденційно | 📝 Заповнити форму
 👉 https://avrora-help.org.ua/home
 
 👩 Лінія сексуально-репродуктивного здоров'я для жінок
-Первинні консультації спеціалістів щодо жіночого здоров'я.
-
-📱 3033
-🕘 щодня 09:00–18:00
+📱 3033 | 🕘 щодня 09:00–18:00
 
 🩺 Гаряча лінія з питань ВІЛ/СНІД
+☎️ 0 800 500 451 | 🕐 цілодобово
 
-☎️ 0 800 500 451
-🕐 цілодобово
-
-💛 «Пані Патронеса»
-Підтримка постраждалих від насильства.
-
-📱 +38 (099) 632 77 01 (Viber, Telegram)
-🕘 щодня 09:00–21:00
+💛 «Пані Патронеса» – підтримка постраждалих від насильства
+📱 +38 (099) 632 77 01 (Viber, Telegram) | 🕘 щодня 09:00–21:00
 
 🤝 БФ «Слов'янське серце»
+📱 +38 (050) 597 74 23 | 🕐 цілодобово
 
-📱 +38 (050) 597 74 23
-🕐 цілодобово
+💪 БФ «Сильні» – допомога постраждалим від сексуального насильства після 24.02.2022
+Безкоштовно, конфіденційно, від 16 років.
+☎️ 0 800 202 334 | 🤖 чат-бот | 🌐 sylni.org/help | 📧 help@sylni.org | 🕘 пн–пт 09:00–18:00
 
-💪 БФ «Сильні»
-Допомога людям, які пережили сексуальне насильство після 24.02.2022
-(кризове консультування, психотерапія, психіатр).
-Безкоштовно, конфіденційно, з 16 років.
-
-☎️ 0 800 202 334
-🤖 чат-бот: https://t.me/strong_help_bot
-🌐 сайт: www.sylni.org/help
-📧 help@sylni.org
-🕘 пн–пт 09:00–18:00
-
-👭 ГО «Нумо, сестри!»
-Допомога жінкам, які пережили полон, окупацію, насильство та наслідки війни.
-
-📍 Київ, вул. Хрещатик, 27-А
-📱 +38 (099) 359 50 04 (Telegram, Viber, WhatsApp)
-📧 numo.sisters@gmail.com
-🕘 пн–пт 09:00–18:00`,
+👭 ГО «Нумо, сестри!» – допомога жінкам після полону та насильства
+📍 Київ, вул. Хрещатик, 27-А | 📱 +38 (099) 359 50 04 (Telegram, Viber, WhatsApp) | 📧 numo.sisters@gmail.com | 🕘 пн–пт 09:00–18:00`,
             [VIOLENCE_HELP_BUTTONS.police]: `👮 Поліція
 
 🚨 Екстрений виклик поліції
@@ -5667,7 +5650,189 @@ bot.on('message', async (msg) => {
 📞 +38 (056) 756 50 01
 📧 vdz@dp.police.gov.ua
 🕐 цілодобово`,
-            [VIOLENCE_HELP_BUTTONS.socialPsychologicalHelp]: `Дніпропетровський обласний рівень
+            [VIOLENCE_HELP_BUTTONS.socialPsychologicalHelp]: 'Оберіть район кнопками нижче.',
+            [VIOLENCE_HELP_BUTTONS.coordinationAdministrativeHelp]: `КООРДИНАЦІЯ ТА АДМІНІСТРАТИВНА ДОПОМОГА
+
+Департамент соціального захисту населення Дніпропетровської ОВА
+м. Дніпро, вул. Набережна Перемоги, 26
+Тел.: +38 (056) 770 90 29
+Графік: пн–чт 08:00–17:00, пт 08:00–15:45, обідня перерва 12:00–12:45
+E-mail: gupczn@adm.dp.gov.ua`,
+            [VIOLENCE_HELP_BUTTONS.legalHelp]: `📞 Телефон інформаційної лінії центрів безоплатної вторинної правової допомоги:
+0 800 213 103 — цілодобово, безкоштовно зі стаціонарного та мобільного
+
+🏢 Місцеві центри безоплатної вторинної правової допомоги
+Дніпровський: вул. Старокозацька, 56, 4 поверх
+📞 +38 (056) 722 20 28
+⏰ пн–чт 08:00–17:00, пт 08:00–15:45
+Кам'янський: вул. Москворецька, 19
+📞 +38 (056) 787 06 45
+⏰ пн–чт 08:00–17:00, пт 08:00–15:45
+Криворізький: вул. Качалова, 2
+📞 +38 (098) 040 83 70
+⏰ пн–чт 08:00–17:00, пт 08:00–15:45
+Нікопольський: вул. Івана Богуна, 9
+📞 +38 (095) 800 97 36
+⏰ пн–чт 08:00–17:00, пт 08:00–15:45
+Павлоградський: вул. Полтавська, 129
+📞 +38 (096) 580 95 86 / +38 (066) 404 10 80
+⏰ пн–чт 08:00–17:00, пт 08:00–15:45
+
+💛 Правова допомога для постраждалих від ГЗН
+БФ «Слов'янське Серце» — 📞 +38 (050) 597 74 23, цілодобово
+ГО «М.АРТ.ІН-клуб» — 📱 +38 (099) 632 77 01 (Viber, Telegram), щодня 09:00–21:00
+Центр допомоги врятованим — вул. Воскресенська, 32
+📞 +38 (099) 245 21 21, пн–пт 10:00–18:00
+БФ «Право на захист» — 📞 +38 (099) 507 50 90, пн–пт 08:00–21:00
+🌐 Заявку можна надіслати через форму: r2p.org.ua`,
+                [VIOLENCE_HELP_BUTTONS.medicalHelp]: `🚑 Мобільна бригада сексуального та репродуктивного здоров'я (UNFPA)
+
+    Дніпровська та Криворізька громади
+    📱 3033, пн–пт 09:00–18:00
+
+    🏢 Інтегрований центр комплексної підтримки «BRAVE&SAFE» (Health Right International)
+    пров. Фестивальний, 1, каб. 429, 201
+    📞 +38 (093) 521 82 93, +38 (050) 577 83 65, +38 (098) 114 78 20, +38 (067) 627 17 71
+    ⏰ пн–пт 09:00–17:00
+    вул. Ламана, 4, каб. 103, 106, 107
+    📞 +38 (050) 577 91 75, +38 (093) 521 82 75, +38 (098) 114 78 72, +38 (096) 930 10 22
+    ⏰ пн–пт 09:00–17:00
+
+    👩‍⚕️ Гінекологічні кабінети безбар'єрного доступу
+    КП «Регіональний медичний центр родинного здоров'я» — вул. Космічна, 13, каб. 216, пн–пт 09:00–17:00
+    КНП «Клінічна лікарня швидкої медичної допомоги» — вул. Степана Бандери, 26, каб. 3, пн–пт 09:00–17:00
+    КНП «Міська клінічна лікарня №9» — просп. Мануйлівський, 29, 1 поверх, пн–пт 09:00–17:00
+    КНП Кам'янської міської ради «Міська лікарня №9» — просп. Аношкіна, 72, 1 поверх, каб. 4, пн–пт 09:00–17:00
+    КНП «Криворізький перинатальний центр» — вул. Панаса Феденка, 1, 1 поверх, каб. 37, пн–пт 09:00–17:00
+    Криворізький міський пологовий будинок №1 — пл. Визволення, 11, цілодобово
+    КП «Павлоградська міська лікарня №1» — вул. Шевченка, 102, «Клініка дружня до молоді», кабінет з табличкою, пн–пт 09:00–17:00
+
+    💪 Благодійний фонд «Сильні» — допомога постраждалим від сексуального насильства
+    Автовідповідач: 0 800 202 334 (цілодобово, безкоштовно)
+    Чат-бот: t.me/strong_help_bot
+    Сайт: www.sylni.org/help
+    Email: help@sylni.org
+    Робочі години координаторки: пн–пт 09:00–18:00
+
+    Послуги: оплата хірургії, гінекології, аборт, обстеження, естетична медицина, підтримка постраждалих від сексуального насильства.
+    🔒 Конфіденційно та безкоштовно для людей від 16 років, будь-яка стать, гендер чи орієнтація, незалежно від винного.`
+        };
+
+        if (matchesCommand(text, VIOLENCE_HELP_BUTTONS.specializedServices, 'Спеціалізовані служби')) {
+            user.context = 'violence-help-specialized-district';
+            await bot.sendMessage(chatId, `🛑 Спеціалізовані служби
+
+💡 Оберіть свій район:`, {
+                reply_markup: {
+                    keyboard: buildViolenceHelpDistrictKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (matchesCommand(text, VIOLENCE_HELP_BUTTONS.socialPsychologicalHelp, 'Соціально-психологічна допомога')) {
+            user.context = 'violence-help-social-district';
+            await bot.sendMessage(chatId, `💛 Соціально-психологічна допомога
+
+💡 Оберіть район:`, {
+                reply_markup: {
+                    keyboard: buildViolenceHelpSocialDistrictKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (violenceHelpMessages[text]) {
+            await bot.sendMessage(chatId, violenceHelpMessages[text], {
+                reply_markup: {
+                    keyboard: buildViolenceHelpKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+    }
+
+    if (user.context === 'violence-help-specialized-district') {
+        if (matchesCommand(text, NAVIGATION_BUTTONS.back)) {
+            user.context = 'violence-help';
+            delete user.selectedViolenceHelpDistrict;
+            await bot.sendMessage(chatId, '🚨 Допомога при насильстві: оберіть потрібний розділ.', {
+                reply_markup: {
+                    keyboard: buildViolenceHelpKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (matchesCommand(text, NAVIGATION_BUTTONS.menu)) {
+            user.context = null;
+            delete user.selectedViolenceHelpDistrict;
+            await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        const districtButtons = Object.values(VIOLENCE_HELP_DISTRICT_BUTTONS);
+
+        if (districtButtons.includes(text)) {
+            user.context = 'violence-help-specialized-type';
+            user.selectedViolenceHelpDistrict = text;
+            await bot.sendMessage(chatId, `🧭 Оберіть вид допомоги:
+
+🚗 Мобільні бригади
+💬 Консультативні служби
+🏠 Денні центри та кризові кімнати
+🛏 Притулки`, {
+                reply_markup: {
+                    keyboard: buildViolenceHelpSpecializedTypeKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        await bot.sendMessage(chatId, 'Будь ласка, оберіть район кнопками нижче.', {
+            reply_markup: {
+                keyboard: buildViolenceHelpDistrictKeyboard(),
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
+    if (user.context === 'violence-help-social-district') {
+        if (matchesCommand(text, NAVIGATION_BUTTONS.back)) {
+            user.context = 'violence-help';
+            await bot.sendMessage(chatId, '🚨 Допомога при насильстві: оберіть потрібний розділ.', {
+                reply_markup: {
+                    keyboard: buildViolenceHelpKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (matchesCommand(text, NAVIGATION_BUTTONS.menu)) {
+            user.context = null;
+            await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        const socialDistrictMessages = {
+            [VIOLENCE_HELP_SOCIAL_PSYCH_DISTRICT_BUTTONS.regional]: `🟡 <b>Дніпропетровський обласний рівень</b>
 
 1. Дніпропетровський обласний центр соціальних служб для сім'ї, дітей та молоді
 
@@ -5679,9 +5844,8 @@ bot.on('message', async (msg) => {
 
 📍 м. Дніпро, просп. Праці, 24
 📞 +38 (056) 376 53 83
-⏰ пн–пт 09:00–18:00
-
-🟢 Дніпровський район — соціально-психологічна допомога
+⏰ пн–пт 09:00–18:00`,
+            [VIOLENCE_HELP_SOCIAL_PSYCH_DISTRICT_BUTTONS.dnipro]: `🏙 <b>Дніпровський район — соціально-психологічна допомога</b>
 
 1. Центр допомоги врятованим (UNFPA / ГО «М.АРТ.ІН-клуб»)
 
@@ -5720,11 +5884,10 @@ bot.on('message', async (msg) => {
 ⏰ пн–сб 10:00–18:00
 🔗 Telegram канал
 
-🟢 ГЗН / Кейс-менеджмент
+ГЗН / Кейс-менеджмент
 
 1. БО «Позитивні жінки»
 
-📍 м. Дніпро, вул. Театральна, 2/302
 📞 +38 (098) 029 48 58
 ⏰ пн–пт 09:00–18:00
 💼 Послуги: кейс-менеджмент, психологічна підтримка, просвітницька робота, соціальний супровід
@@ -5744,17 +5907,16 @@ bot.on('message', async (msg) => {
 
 📞 +38 (099) 301 09 71, +38 (099) 391 09 88
 ⏰ пн–пт 09:00–18:00
-💼 Послуги: інформування, консультування, соціальний супровід, інформація щодо поселення, евакуації та CASH допомога
+💼 Послуги: інформування, консультування, соціальний супровід, інформація щодо поселення, евакуації та CASH допомога`,
+            [VIOLENCE_HELP_SOCIAL_PSYCH_DISTRICT_BUTTONS.kamianske]: `🏢 <b>Кам'янський район</b>
 
-🟢 Кам'янський район
-
-1. «Вільна» — дружній до жінок та дівчат простір (UNFPA / ГО «М.АРТ.ІН-клуб»)
+1. «Вільна» — дружній простір (UNFPA / ГО «М.АРТ.ІН-клуб»)
 
 📍 м. Кам'янське, просп. Тараса Шевченка, 33а
 📞 +38 (066) 001 86 98
 ⏰ ср–нд 11:00–20:00
 
-2. «Свій Простір» — безпечний простір для жінок і дівчат (NPA / ГО «М.АРТ.ІН-клуб»)
+2. «Свій Простір» — безпечний простір (NPA / ГО «М.АРТ.ІН-клуб»)
 
 📍 м. Кам'янське, бульв. Будівельників, 4б
 📞 +38 (050) 304 42 01
@@ -5769,18 +5931,17 @@ bot.on('message', async (msg) => {
 
 📞 +38 (099) 301 09 71, +38 (099) 391 09 88
 ⏰ пн–пт 09:00–18:00
-💼 Послуги: інформування, консультування, соціальний супровід, евакуація, CASH допомога
+💼 Послуги: інформування, консультування, соціальний супровід, евакуація, CASH допомога`,
+            [VIOLENCE_HELP_SOCIAL_PSYCH_DISTRICT_BUTTONS.kryvyiRih]: `🏭 <b>Криворізький район</b>
 
-🟢 Криворізький район
-
-1. «Вільна» — дружній простір, мобільний формат (UNFPA / ГО «М.АРТ.ІН-клуб»)
+1. «Вільна» — дружній мобільний простір (UNFPA / ГО «М.АРТ.ІН-клуб»)
 
 📞 +38 (066) 006 86 98
 ⏰ ср–нд 11:00–20:00
 
 2. «Дівчата.Діти» — безпечний простір для дітей та батьків (ГО «Дівчата»)
 
-📍 м. Кривий Ріг, 5-й Зарічний мікрорайон, 29 (колишній магазин «Тілідом»)
+📍 м. Кривий Ріг, 5-й Зарічний мікрорайон, 29
 📞 +38 (050) 731 24 98
 ⏰ пн–сб 10:00–17:00
 
@@ -5797,13 +5958,12 @@ bot.on('message', async (msg) => {
 5. ГЗН Кейс-менеджмент (ГО «Інша Жінка»)
 
 📞 +38 (067) 853 67 87
-⏰ пн–пт 09:00–18:00
-
-🟢 Павлоградський район
+⏰ пн–пт 09:00–18:00`,
+            [VIOLENCE_HELP_SOCIAL_PSYCH_DISTRICT_BUTTONS.pavlohrad]: `🏘 <b>Павлоградський район</b>
 
 1. Безпечний простір для жінок і дівчат (ГО «Дівчата»)
 
-📍 м. Павлоград, вул. Центральна, 98 (будівля РДА), 1 поверх
+📍 м. Павлоград, вул. Центральна, 98 (РДА)
 📞 +38 (063) 479 53 17
 ⏰ вт–сб 10:00–18:00
 
@@ -5815,103 +5975,16 @@ bot.on('message', async (msg) => {
 3. ГЗН Кейс-менеджмент (ГО «Дівчата» / CARE)
 
 📞 +38 (099) 301 09 71, +38 (099) 391 09 88
-⏰ пн–пт 09:00–18:00`,
-            [VIOLENCE_HELP_BUTTONS.coordinationAdministrativeHelp]: `КООРДИНАЦІЯ ТА АДМІНІСТРАТИВНА ДОПОМОГА
-
-Департамент соціального захисту населення Дніпропетровської ОВА
-м. Дніпро, вул. Набережна Перемоги, 26
-Тел.: +38 (056) 770 90 29
-Графік: пн–чт 08:00–17:00, пт 08:00–15:45, обідня перерва 12:00–12:45
-E-mail: gupczn@adm.dp.gov.ua`,
-            [VIOLENCE_HELP_BUTTONS.legalHelp]: `ПРАВОВА ДОПОМОГА
-
-Телефон інформаційної лінії центрів безоплатної вторинної правової допомоги
-0 800 213 103 — цілодобово, безкоштовно зі стаціонарного та мобільного
-
-Місцеві центри з надання безоплатної вторинної правової допомоги
-
-Дніпровський: вул. Старокозацька, 56, 4 поверх, тел. +38 (056) 722 20 28, пн–чт 08:00–17:00, пт 08:00–15:45
-Кам'янський: вул. Москворецька, 19, тел. +38 (056) 787 06 45, пн–чт 08:00–17:00, пт 08:00–15:45
-Криворізький: вул. Качалова, 2, тел. +38 (098) 040 83 70, пн–чт 08:00–17:00, пт 08:00–15:45
-Нікопольський: вул. Івана Богуна, 9, тел. +38 (095) 800 97 36, пн–чт 08:00–17:00, пт 08:00–15:45
-Павлоградський: вул. Полтавська, 129, тел. +38 (096) 580 95 86, +38 (066) 404 10 80, пн–чт 08:00–17:00, пт 08:00–15:45
-
-Правова допомога для постраждалих від ГЗН
-
-БФ «Слов'янське Серце»: +38 (050) 597 74 23, цілодобово
-ГО «М.АРТ.ІН-клуб»: +38 (099) 632 77 01 (Viber, Telegram), щоденно 09:00–21:00
-Також у Центрі допомоги врятованим: вул. Воскресенська, 32, тел. +38 (099) 245 21 21, пн–пт 10:00–18:00
-БФ «Право на захист»: +38 (099) 507 50 90, пн–пт 08:00–21:00
-Заявку можна надіслати через форму на сайті: r2p.org.ua`,
-            [VIOLENCE_HELP_BUTTONS.medicalHelp]: `МЕДИЧНА ДОПОМОГА
-
-Мобільна бригада сексуального та репродуктивного здоров'я (UNFPA)
-Дніпровська та Криворізька громади
-Тел.: 3033, пн–пт 09:00–18:00
-
-Інтегрований центр комплексної підтримки «BRAVE&SAFE» (Health Right International)
-
-пров. Фестивальний, 1, каб. 429, 201, тел. +38 (093) 521 82 93, +38 (050) 577 83 65, +38 (098) 114 78 20, +38 (067) 627 17 71, пн–пт 09:00–17:00
-вул. Ламана, 4, каб. 103, 106, 107, тел. +38 (050) 577 91 75, +38 (093) 521 82 75, +38 (098) 114 78 72, +38 (096) 930 10 22, пн–пт 09:00–17:00
-
-Гінекологічні кабінети безбар'єрного доступу
-
-КП «Регіональний медичний центр родинного здоров'я», вул. Космічна, 13, каб. 216, пн–пт 09:00–17:00
-КНП «Клінічна лікарня швидкої медичної допомоги», вул. Степана Бандери, 26, каб. 3, пн–пт 09:00–17:00
-КНП «Міська клінічна лікарня №9», просп. Мануйлівський, 29, 1 поверх, пн–пт 09:00–17:00
-КНП Кам'янської міської ради «Міська лікарня №9», просп. Аношкіна, 72, 1 поверх, каб. 4, пн–пт 09:00–17:00
-КНП «Криворізький перинатальний центр зі стаціонаром», вул. Панаса Феденка, 1, 1 поверх, каб. 37, пн–пт 09:00–17:00
-Криворізький міський пологовий будинок №1, пл. Визволення, 11, цілодобово
-КП «Павлоградська міська лікарня №1», вул. Шевченка, 102, 1 поверх, «Клініка дружня до молоді», кабінет з табличкою, пн–пт 09:00–17:00
-
-Благодійний фонд «Сильні» — допомога постраждалим від сексуального насильства
-
-Автовідповідач: 0 800 202 334 (цілодобово, безкоштовно)
-Чат-бот: t.me/strong_help_bot
-Сайт: www.sylni.org/help
-Email: help@sylni.org
-Робочі години координаторки: пн–пт 09:00–18:00
-Послуги: оплата хірургії, гінекології, аборт, обстеження, естетична медицина, підтримка постраждалих від сексуального насильства. Конфіденційно та безкоштовно для людей від 16 років, будь-яка стать, гендер чи орієнтація, незалежно від винного.`
+⏰ пн–пт 09:00–18:00`
         };
 
-        if (matchesCommand(text, VIOLENCE_HELP_BUTTONS.specializedServices, 'Спеціалізовані служби')) {
-            user.context = 'violence-help-specialized-district';
-            await bot.sendMessage(chatId, `🛑 Спеціалізовані служби
-
-💡 Оберіть свій район:`, {
-                reply_markup: {
-                    keyboard: buildViolenceHelpDistrictKeyboard(),
-                    resize_keyboard: true
-                }
-            });
-            return;
-        }
-
-        if (violenceHelpMessages[text]) {
-            await bot.sendMessage(chatId, violenceHelpMessages[text], {
-                reply_markup: {
-                    keyboard: buildViolenceHelpKeyboard(),
-                    resize_keyboard: true
-                }
-            });
-            return;
-        }
-    }
-
-    if (user.context === 'violence-help-specialized-district') {
-        const districtButtons = Object.values(VIOLENCE_HELP_DISTRICT_BUTTONS);
+        const districtButtons = Object.values(VIOLENCE_HELP_SOCIAL_PSYCH_DISTRICT_BUTTONS);
 
         if (districtButtons.includes(text)) {
-            user.context = 'violence-help-specialized-type';
-            user.selectedViolenceHelpDistrict = text;
-            await bot.sendMessage(chatId, `🧭 Оберіть вид допомоги:
-
-🚗 Мобільні бригади
-💬 Консультативні служби
-🏠 Денні центри та кризові кімнати
-🛏 Притулки`, {
+            await bot.sendMessage(chatId, socialDistrictMessages[text], {
+                parse_mode: 'HTML',
                 reply_markup: {
-                    keyboard: buildViolenceHelpSpecializedTypeKeyboard(),
+                    keyboard: buildViolenceHelpSocialDistrictKeyboard(),
                     resize_keyboard: true
                 }
             });
@@ -5920,7 +5993,7 @@ Email: help@sylni.org
 
         await bot.sendMessage(chatId, 'Будь ласка, оберіть район кнопками нижче.', {
             reply_markup: {
-                keyboard: buildViolenceHelpDistrictKeyboard(),
+                keyboard: buildViolenceHelpSocialDistrictKeyboard(),
                 resize_keyboard: true
             }
         });
@@ -5928,6 +6001,29 @@ Email: help@sylni.org
     }
 
     if (user.context === 'violence-help-specialized-type') {
+        if (matchesCommand(text, NAVIGATION_BUTTONS.back)) {
+            user.context = 'violence-help-specialized-district';
+            await bot.sendMessage(chatId, '💡 Оберіть свій район:', {
+                reply_markup: {
+                    keyboard: buildViolenceHelpDistrictKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (matchesCommand(text, NAVIGATION_BUTTONS.menu)) {
+            user.context = null;
+            delete user.selectedViolenceHelpDistrict;
+            await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
         const supportTypeButtons = Object.values(VIOLENCE_HELP_SPECIALIZED_TYPE_BUTTONS);
         const specializedServiceMessages = {
             [VIOLENCE_HELP_DISTRICT_BUTTONS.dnipro]: {
@@ -7476,6 +7572,17 @@ Email: help@sylni.org
         if (user.context === 'violence-help-specialized-district') {
             user.context = 'violence-help';
             delete user.selectedViolenceHelpDistrict;
+            await bot.sendMessage(chatId, '🚨 Допомога при насильстві: оберіть потрібний розділ.', {
+                reply_markup: {
+                    keyboard: buildViolenceHelpKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (user.context === 'violence-help-social-district') {
+            user.context = 'violence-help';
             await bot.sendMessage(chatId, '🚨 Допомога при насильстві: оберіть потрібний розділ.', {
                 reply_markup: {
                     keyboard: buildViolenceHelpKeyboard(),
