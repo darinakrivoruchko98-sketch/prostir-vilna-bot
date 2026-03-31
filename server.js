@@ -5284,7 +5284,7 @@ bot.on('message', async (msg) => {
             registrationDraft.employment = text;
             user.step = 9;
 
-            await bot.sendMessage(chatId, "📝 <b>Крок 9/9:</b> Чи є постраждалою від гендерно зумовленого насильства?", {
+            await bot.sendMessage(chatId, "📝 <b>Крок 9/9:</b> Чи траплялися у вашому житті ситуації насильства (у минулому або тепер)?", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
