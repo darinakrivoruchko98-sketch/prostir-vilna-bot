@@ -844,8 +844,8 @@ const FRIEND_FLOW_BUTTONS = {
 };
 
 const AFISHA_DAY_BUTTONS = {
-    monday: '🩷 Понеділок',
-    tuesday: '🩵 Вівторок',
+    monday: '🩵 Понеділок',
+    tuesday: '🩷 Вівторок',
     wednesday: '💜 Середа',
     thursday: '💙 Четвер',
     friday: "💚 П'ятниця",
@@ -905,15 +905,15 @@ const CONSULTATION_WEEKDAY_LABELS = {
 
 const CONSULTATION_WEEKDAY_EMOJI = {
     0: '❤️',
-    1: '🩷',
-    2: '🩵',
+    1: '🩵',
+    2: '🩷',
     3: '💜',
     4: '💙',
     5: '💚',
     6: '💛'
 };
 
-const CONSULTATION_ALLOWED_WEEKDAYS = new Set([0, 3, 4, 5, 6]);
+const CONSULTATION_ALLOWED_WEEKDAYS = new Set([0, 1, 2, 3, 4, 5, 6]);
 
 // Правильна граматика для множини заходів
 function pluralizeEvents(count) {
@@ -1114,7 +1114,7 @@ async function checkAndSendReminders() {
 // Фільтрує заходи за номером дня (0-6)
 function getEventsForDay(dayNum) {
     const allEvents = getAllEvents();
-    const dayEvents = allEvents.filter(e => e.date.getUTCDay() === dayNum);
+    const dayEvents = allEvents.filter(e => e.date.getDay() === dayNum);
     console.log(`📊 getEventsForDay(${dayNum}): знайдено ${dayEvents.length} заходів з ${allEvents.length}`);
     if (dayEvents.length > 0) {
         dayEvents.forEach(e => console.log(`   - ${e.name} на ${e.date}`));
