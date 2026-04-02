@@ -844,6 +844,8 @@ const FRIEND_FLOW_BUTTONS = {
 };
 
 const AFISHA_DAY_BUTTONS = {
+    monday: '🩷 Понеділок',
+    tuesday: '🩵 Вівторок',
     wednesday: '💜 Середа',
     thursday: '💙 Четвер',
     friday: "💚 П'ятниця",
@@ -1182,6 +1184,8 @@ function resolveAfishaEventIdFromButtonText(user, text) {
 
 function getAfishaDaysKeyboard() {
     return [
+        [{ text: AFISHA_DAY_BUTTONS.monday }],
+        [{ text: AFISHA_DAY_BUTTONS.tuesday }],
         [{ text: AFISHA_DAY_BUTTONS.wednesday }],
         [{ text: AFISHA_DAY_BUTTONS.thursday }],
         [{ text: AFISHA_DAY_BUTTONS.friday }],
@@ -2056,9 +2060,7 @@ function getUpcomingEvents() {
     const now = new Date();
     const filtered = events.filter(e => {
         if (e.date < now) return false; // майбутні тільки
-        const dayOfWeek = getDayOfWeek(e.date);
-        // сер=3, чтв=4, птн=5, сб=6, нд=0 (скипимо пн=1, вт=2)
-        return dayOfWeek !== 1 && dayOfWeek !== 2;
+        return true;
     });
     
     // Сортуємо за датою та часом
@@ -2075,9 +2077,7 @@ function getWeekEvents() {
     const filtered = events.filter(e => {
         if (e.date < now) return false; // майбутні тільки
         if (e.date > weekLater) return false; // тільки на 7 днів
-        const dayOfWeek = getDayOfWeek(e.date);
-        // сер=3, чтв=4, птн=5, сб=6, нд=0 (скипимо пн=1, вт=2)
-        return dayOfWeek !== 1 && dayOfWeek !== 2;
+        return true;
     });
     
     // Сортуємо за датою та часом
@@ -3315,7 +3315,7 @@ function showAfishaRegistrationForm(chatId, user) {
     if (step === 6) question = "<b>6. Інвалідність/суттєві проблеми зі здоров'ям</b>";
     if (step === 7) question = "<b>7. Кількість дітей до 18 років</b>";
     if (step === 8) question = "<b>8. Зайнятість</b>";
-    if (step === 9) question = "<b>9. Чи є постраждалою від гендерно зумовленого насильства?</b>";
+    if (step === 9) question = "<b>9. Чи траплялися у вашому житті ситуації насильства (у минулому або тепер)?</b>";
 
     let keyboard = [[{ text: "❌ Скасувати реєстрацію" }]];
     if (step === 4) {
@@ -6896,6 +6896,28 @@ E-mail: gupczn@adm.dp.gov.ua`,
     }
 
     if (user.context === 'consultation-specialist') {
+        if (matchesCommand(text, NAVIGATION_BUTTONS.menu, 'Повернутися в меню', 'Назад в меню')) {
+            clearConsultationState(user);
+            await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (matchesCommand(text, NAVIGATION_BUTTONS.back, 'Назад')) {
+            clearConsultationState(user);
+            await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
         const specialistConfig = getConsultationSpecialistConfigByButton(text);
         if (specialistConfig) {
             const draft = {

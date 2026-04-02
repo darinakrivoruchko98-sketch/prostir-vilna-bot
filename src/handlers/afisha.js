@@ -3,13 +3,15 @@ const { getEventsForDay } = require('../events/store');
 const { getSeatsLeft } = require('../sheets/registration');
 const { formatEventDate } = require('../utils/date');
 
-const WEEKDAYS = { 'Неділя':0, 'Середа':3, 'Четвер':4, 'П\u2019ятниця':5, 'Субота':6 };
+const WEEKDAYS = { 'Неділя':0, 'Понеділок':1, 'Вівторок':2, 'Середа':3, 'Четвер':4, 'П\u2019ятниця':5, 'Субота':6 };
 
 function handleAfishaMenu(bot, chatId, user) {
     user.context = 'afisha';
     bot.sendMessage(chatId, "Оберіть день:", {
         reply_markup: {
             keyboard: [
+                [{ text: "Понеділок" }],
+                [{ text: "Вівторок" }],
                 [{ text: "Середа" }],
                 [{ text: "Четвер" }],
                 [{ text: "П\u2019ятниця" }],
@@ -30,6 +32,8 @@ async function showDayAgenda(bot, chatId, dayName) {
 
     if (dayEvents.length === 0) {
         const dayForms = {
+            'Понеділок': 'понеділок',
+            'Вівторок': 'вівторок',
             'Середа': 'середу',
             'Четвер': 'четвер',
             'П\u2019ятниця': 'п\u2019ятницю',

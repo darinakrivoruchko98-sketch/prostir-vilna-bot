@@ -1,5 +1,4 @@
 const state = require('../state');
-const { getDayOfWeek } = require('../utils/date');
 
 // Видаляти минулі заходи
 function cleanupPastEvents() {
@@ -12,7 +11,7 @@ function cleanupPastEvents() {
     }
 }
 
-// Повертає масив майбутніх заходів (сер.–нд.)
+// Повертає масив майбутніх заходів
 function getAllEvents() {
     cleanupPastEvents();
     const now = new Date();
@@ -29,9 +28,7 @@ function getUpcomingEvents() {
     const now = new Date();
     const filtered = state.events.filter(e => {
         if (e.date < now) return false; // майбутні тільки
-        const dayOfWeek = getDayOfWeek(e.date);
-        // сер=3, чтв=4, птн=5, сб=6, нд=0 (скипимо пн=1, вт=2)
-        return dayOfWeek !== 1 && dayOfWeek !== 2;
+        return true;
     });
 
     // Сортуємо за датою та часом
@@ -48,9 +45,7 @@ function getWeekEvents() {
     const filtered = state.events.filter(e => {
         if (e.date < now) return false; // майбутні тільки
         if (e.date > weekLater) return false; // тільки на 7 днів
-        const dayOfWeek = getDayOfWeek(e.date);
-        // сер=3, чтв=4, птн=5, сб=6, нд=0 (скипимо пн=1, вт=2)
-        return dayOfWeek !== 1 && dayOfWeek !== 2;
+        return true;
     });
 
     // Сортуємо за датою та часом
