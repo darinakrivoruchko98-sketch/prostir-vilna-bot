@@ -1183,16 +1183,36 @@ function resolveAfishaEventIdFromButtonText(user, text) {
 }
 
 function getAfishaDaysKeyboard() {
-    return [
-        [{ text: AFISHA_DAY_BUTTONS.monday }],
-        [{ text: AFISHA_DAY_BUTTONS.tuesday }],
-        [{ text: AFISHA_DAY_BUTTONS.wednesday }],
-        [{ text: AFISHA_DAY_BUTTONS.thursday }],
-        [{ text: AFISHA_DAY_BUTTONS.friday }],
-        [{ text: AFISHA_DAY_BUTTONS.saturday }],
-        [{ text: AFISHA_DAY_BUTTONS.sunday }],
-        [{ text: NAVIGATION_BUTTONS.menu }]
-    ];
+    const dayButtonByWeekday = {
+        0: AFISHA_DAY_BUTTONS.sunday,
+        1: AFISHA_DAY_BUTTONS.monday,
+        2: AFISHA_DAY_BUTTONS.tuesday,
+        3: AFISHA_DAY_BUTTONS.wednesday,
+        4: AFISHA_DAY_BUTTONS.thursday,
+        5: AFISHA_DAY_BUTTONS.friday,
+        6: AFISHA_DAY_BUTTONS.saturday
+    };
+
+    const weekdayOrder = [1, 2, 3, 4, 5, 6, 0];
+    const now = new Date();
+    const availableWeekdays = new Set();
+
+    for (const eventItem of getAllEvents()) {
+        if (!eventItem || !(eventItem.date instanceof Date) || Number.isNaN(eventItem.date.getTime())) {
+            continue;
+        }
+        if (eventItem.date <= now) {
+            continue;
+        }
+        availableWeekdays.add(eventItem.date.getDay());
+    }
+
+    const keyboard = weekdayOrder
+        .filter((weekday) => availableWeekdays.has(weekday))
+        .map((weekday) => [{ text: dayButtonByWeekday[weekday] }]);
+
+    keyboard.push([{ text: NAVIGATION_BUTTONS.menu }]);
+    return keyboard;
 }
 
 function normalizeWeekdayKey(value) {
@@ -1231,9 +1251,14 @@ function showAfishaDaysMenu(chatId) {
         users[chatId] = { step: 0 };
     }
     users[chatId].context = 'afisha';
-    return bot.sendMessage(chatId, "Оберіть день:", {
+    const keyboard = getAfishaDaysKeyboard();
+    const hasAvailableDays = keyboard.some((row) => {
+        return Array.isArray(row) && row.some((button) => button && button.text !== NAVIGATION_BUTTONS.menu);
+    });
+
+    return bot.sendMessage(chatId, hasAvailableDays ? "Оберіть день:" : "Наразі немає запланованих заходів.", {
         reply_markup: {
-            keyboard: getAfishaDaysKeyboard(),
+            keyboard,
             resize_keyboard: true
         }
     });
