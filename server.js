@@ -26,6 +26,7 @@ const REMINDER_24H_HOURS_MIN = 1;
 const REMINDER_24H_HOURS_MAX = 24;
 const REMINDER_1H_MINUTES_MIN = 1;
 const REMINDER_1H_MINUTES_MAX = 60;
+const PENDING_REGISTRATION_REMINDER_TIMEOUT_MS = 5 * 60 * 1000;
 // Таблиця для розкладу та реєстрацій на заходи
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || config.SPREADSHEET_ID;
 const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || config.SCHEDULE_SHEET_NAME;
@@ -2248,7 +2249,62 @@ function getMissingRegistrantStep(registrantData) {
         : 0;
 }
 
+function markPendingRegistrationSelection(user) {
+    if (!user) {
+        return;
+    }
+
+    user.pendingRegistrationReminderAt = Date.now() + PENDING_REGISTRATION_REMINDER_TIMEOUT_MS;
+    user.pendingRegistrationReminderSent = false;
+}
+
+function clearPendingRegistrationSelection(user) {
+    if (!user) {
+        return;
+    }
+
+    delete user.pendingRegistrationReminderAt;
+    delete user.pendingRegistrationReminderSent;
+}
+
+async function checkPendingRegistrationSelections() {
+    const nowTs = Date.now();
+
+    for (const [chatId, user] of Object.entries(users || {})) {
+        if (!user || user.pendingRegistrationReminderSent) {
+            continue;
+        }
+
+        const reminderAt = Number(user.pendingRegistrationReminderAt || 0);
+        if (!Number.isFinite(reminderAt) || reminderAt <= 0 || nowTs < reminderAt) {
+            continue;
+        }
+
+        const hasSelectedEvents = Array.isArray(user.selectedEventsList) && user.selectedEventsList.length > 0;
+        const registrationStarted = user.afishaMultiRegistration === true;
+
+        if (!hasSelectedEvents || registrationStarted) {
+            clearPendingRegistrationSelection(user);
+            continue;
+        }
+
+        try {
+            await bot.sendMessage(chatId,
+                '⚠️ Ви не зареєструвалися. Натисніть кнопку «Зареєструватися», інакше вашу участь у подальших заходах буде заблоковано.\n\nБудь ласка, доводьте реєстрацію до кінця.', {
+                reply_markup: {
+                    keyboard: getSelectedEventsKeyboardForUser(user),
+                    resize_keyboard: true
+                }
+            });
+            user.pendingRegistrationReminderSent = true;
+        } catch (error) {
+            console.error(`❌ Не вдалося надіслати нагадування про незавершену реєстрацію для ${chatId}:`, error && error.message ? error.message : error);
+        }
+    }
+}
+
 function resetSelectedEventsFlow(user) {
+    clearPendingRegistrationSelection(user);
     delete user.afishaMultiRegistration;
     delete user.afishaEventIndex;
     delete user.currentMultiEventId;
@@ -2331,6 +2387,7 @@ async function startSelectedEventsRegistration(chatId, user) {
         return;
     }
 
+    clearPendingRegistrationSelection(user);
     user.afishaMultiRegistration = true;
     const isFriendMode = isFriendRegistrationMode(user);
     const registrantData = isFriendMode
@@ -2710,6 +2767,13 @@ testDate2.setHours(10, 0);
 setInterval(() => {
     cleanupPastEvents();
 }, 60000); // 1 хвилина
+
+// Перевіряти незавершені реєстрації після вибору заходів щохвилини
+setInterval(() => {
+    checkPendingRegistrationSelections().catch((error) => {
+        console.error('❌ Помилка перевірки незавершених реєстрацій:', error && error.message ? error.message : error);
+    });
+}, 60000);
 
 // reminders interval removed
 
@@ -5017,6 +5081,7 @@ bot.on('message', async (msg) => {
     }
 
     if (text === "❌ Скасувати реєстрацію") {
+        clearPendingRegistrationSelection(user);
         delete user.afishaMultiRegistration;
         delete user.afishaFullRegistration;
         delete user.selectedEventsList;
@@ -7272,6 +7337,8 @@ E-mail: gupczn@adm.dp.gov.ua`,
                 date: selectedEvent.date
             });
         }
+
+        markPendingRegistrationSelection(user);
 
         const headline = alreadySelected
             ? 'Цей захід уже є у вашому списку.'
