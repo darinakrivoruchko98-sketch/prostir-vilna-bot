@@ -2,7 +2,7 @@ const state = require('../state');
 const { handleStart, handleBack, handleReturnToMenu } = require('./menu');
 const { handleContacts } = require('./contacts');
 const { handleAppealStart, handleAppealText } = require('./appeal');
-const { WEEKDAYS, handleAfishaMenu, showDayAgenda } = require('./afisha');
+const { handleAfishaMenu, resolveAfishaDateSelection, showDateAgenda } = require('./afisha');
 const { handleRegistrationStart, handlePersonalDataStep } = require('./registration');
 const { handleEventClick, showEventDetails, handleRegister, handleChooseMore, handleDali, handleFinish, handleStep7EventClick, handleBackToList } = require('./event-selection');
 const { handleGroupMessage } = require('./group-message');
@@ -65,9 +65,10 @@ function registerHandlers(bot, GROUP_ID) {
             return;
         }
 
-        // якщо натиснутий день тижня, делегуємо показ загального меню на відповідну функцію
-        if (WEEKDAYS[text] !== undefined) {
-            await showDayAgenda(bot, chatId, text);
+        // Якщо натиснута дата афіші, показуємо події саме за цю дату
+        const selectedAfishaDate = resolveAfishaDateSelection(user, text);
+        if (selectedAfishaDate) {
+            await showDateAgenda(bot, chatId, selectedAfishaDate, text);
             return;
         }
 

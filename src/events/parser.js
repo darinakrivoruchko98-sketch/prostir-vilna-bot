@@ -107,18 +107,36 @@ function parseEventFromRow(row, currentDateContext) {
 
 function parseEventSelectionFromButtonText(buttonText) {
     const parts = String(buttonText || '').split('|').map((part) => part.trim());
-    if (parts.length < 3) return null;
+    if (parts.length < 2) return null;
 
     const rawName = parts[0] || '';
     const eventName = rawName.replace(/^☐\s*/, '').trim();
-    const datePart = parts[1] || '';
-    const timePart = parts[2] || '';
+    const datePart = parts.find((part, idx) => idx > 0 && (/^\d{1,2}\.\d{1,2}$/.test(part) || /^\d{1,2}\s+[А-Яа-яІіЇїЄєґҐ'']+$/.test(part))) || '';
+    const timePart = parts.find((part, idx) => idx > 0 && /^\d{1,2}:\d{1,2}$/.test(part)) || '';
 
     if (!eventName) return null;
+    if (!datePart || !timePart) return null;
+
+    const parsedTime = normalizeTimeValue(timePart);
+    if (!parsedTime) return null;
+
+    const shortDateMatch = datePart.match(/^(\d{1,2})\.(\d{1,2})$/);
+    if (shortDateMatch) {
+        const day = parseInt(shortDateMatch[1], 10);
+        const month = parseInt(shortDateMatch[2], 10) - 1;
+        if (!Number.isFinite(day) || !Number.isFinite(month) || month < 0 || month > 11) return null;
+
+        return {
+            eventName,
+            day,
+            month,
+            hour: parsedTime.hour,
+            minute: parsedTime.minute
+        };
+    }
 
     const dateMatch = datePart.match(/^(\d{1,2})\s+([А-Яа-яІіЇїЄєґҐ'']+)$/);
-    const parsedTime = normalizeTimeValue(timePart);
-    if (!dateMatch || !parsedTime) return null;
+    if (!dateMatch) return null;
 
     const day = parseInt(dateMatch[1], 10);
     const monthName = dateMatch[2].toLowerCase();

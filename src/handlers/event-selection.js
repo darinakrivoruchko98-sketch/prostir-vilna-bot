@@ -4,7 +4,7 @@ const { findEventByButtonText } = require('../events/parser');
 const { appendEventRegistration, getSeatsLeft } = require('../sheets/registration');
 const { findUserByChatId } = require('../sheets/personal-data');
 const { incrementSheetRegistration, isRegistrantAlreadyInEventNote } = require('../sheets/schedule');
-const { formatEventDate } = require('../utils/date');
+const { formatEventDate, formatShortDate, formatTime } = require('../utils/date');
 const { pluralizeEvents } = require('../utils/text');
 
 // Перевіряємо чи натиснута кнопка з заходом (general context, not step 7)
@@ -71,6 +71,10 @@ function resolveRegistrantProfile(chatId, user, providedName, providedPhone) {
     }
 
     return resolved;
+}
+
+function formatEventButtonText(event, seatsLeft) {
+    return `${event.name} | ${formatShortDate(event.date)} | ${formatTime(event.date)} | 💺 ${seatsLeft}`;
 }
 
 async function registerForSelectedEvent(chatId, user, providedName, providedPhone) {
@@ -217,7 +221,7 @@ async function handleChooseMore(bot, chatId, user) {
         return;
     }
     const eventButtons = avail.map(event => {
-        const buttonText = `${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}`;
+        const buttonText = formatEventButtonText(event, event.seatsLeft);
         eventButtonMap[buttonText] = event.id;
         return [{ text: buttonText }];
     });
@@ -250,7 +254,7 @@ async function handleDali(bot, chatId, user) {
         return;
     }
     const eventButtons = avail.map(event => {
-        const buttonText = `${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}`;
+        const buttonText = formatEventButtonText(event, event.seatsLeft);
         eventButtonMap[buttonText] = event.id;
         return [{ text: buttonText }];
     });
@@ -365,7 +369,7 @@ async function handleBackToList(bot, chatId, user) {
     }
     const eventButtonMap = {};
     const eventButtons = availForList.map(event => {
-        const buttonText = `${event.name} | ${formatEventDate(event.date)} | 💺 ${event.seatsLeft}`;
+        const buttonText = formatEventButtonText(event, event.seatsLeft);
         eventButtonMap[buttonText] = event.id;
         return [{ text: buttonText }];
     });

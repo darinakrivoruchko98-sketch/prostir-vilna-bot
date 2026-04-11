@@ -49,6 +49,18 @@ function formatSheetTime(date) {
     return `${h}:${mi}`;
 }
 
+function formatShortDate(date) {
+    const d = String(date.getDate()).padStart(2, '0');
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    return `${d}.${m}`;
+}
+
+function formatTime(date) {
+    const h = String(date.getHours()).padStart(2, '0');
+    const mi = String(date.getMinutes()).padStart(2, '0');
+    return `${h}:${mi}`;
+}
+
 function normalizeTimeValue(rawTime) {
     const value = String(rawTime || '').trim().replace('.', ':');
     const match = value.match(/^(\d{1,2})[:](\d{1,2})$/);
@@ -144,6 +156,8 @@ module.exports = {
     getDayOfWeek,
     formatSheetDate,
     formatSheetTime,
+    formatShortDate,
+    formatTime,
     normalizeTimeValue,
     parseDateValue,
     formatEventDate,
