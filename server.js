@@ -854,6 +854,26 @@ const AFISHA_DAY_BUTTONS = {
     sunday: '❤️ Неділя'
 };
 
+const WEEKDAY_INDEX_BY_NAME = {
+    'неділя': 0,
+    'понеділок': 1,
+    'вівторок': 2,
+    'середа': 3,
+    'четвер': 4,
+    "п'ятниця": 5,
+    'субота': 6
+};
+
+const WEEKDAY_LABEL_FOR_INDEX = {
+    0: AFISHA_DAY_BUTTONS.sunday,
+    1: AFISHA_DAY_BUTTONS.monday,
+    2: AFISHA_DAY_BUTTONS.tuesday,
+    3: AFISHA_DAY_BUTTONS.wednesday,
+    4: AFISHA_DAY_BUTTONS.thursday,
+    5: AFISHA_DAY_BUTTONS.friday,
+    6: AFISHA_DAY_BUTTONS.saturday
+};
+
 const CONSULTATION_SPECIALIST_BUTTONS = {
     social: '👩🏻🌷 Соціальна фахівчиня',
     psychologist: '👩🏻🌹 Психологиня'
@@ -1184,36 +1204,151 @@ function resolveAfishaEventIdFromButtonText(user, text) {
 }
 
 function getAfishaDaysKeyboard() {
-    const dayButtonByWeekday = {
-        0: AFISHA_DAY_BUTTONS.sunday,
-        1: AFISHA_DAY_BUTTONS.monday,
-        2: AFISHA_DAY_BUTTONS.tuesday,
-        3: AFISHA_DAY_BUTTONS.wednesday,
-        4: AFISHA_DAY_BUTTONS.thursday,
-        5: AFISHA_DAY_BUTTONS.friday,
-        6: AFISHA_DAY_BUTTONS.saturday
-    };
+    return buildAfishaDaysKeyboardData().keyboard;
+}
 
-    const weekdayOrder = [1, 2, 3, 4, 5, 6, 0];
+function getStartOfWeekMonday(inputDate) {
+    const date = new Date(inputDate);
+    date.setHours(0, 0, 0, 0);
+    const day = date.getDay();
+    const mondayOffset = day === 0 ? -6 : 1 - day;
+    date.setDate(date.getDate() + mondayOffset);
+    return date;
+}
+
+function getAfishaTwoWeekBounds(now = new Date()) {
+    const thisWeekStart = getStartOfWeekMonday(now);
+    const nextWeekStart = new Date(thisWeekStart);
+    nextWeekStart.setDate(nextWeekStart.getDate() + 7);
+    const afterNextWeekStart = new Date(nextWeekStart);
+    afterNextWeekStart.setDate(afterNextWeekStart.getDate() + 7);
+    return { thisWeekStart, nextWeekStart, afterNextWeekStart };
+}
+
+function parseDaySelectionDate(rawValue) {
+    const dateMatch = String(rawValue || '').match(/(\d{2})[./-](\d{2})[./-](\d{4})/);
+    if (!dateMatch) {
+        return null;
+    }
+
+    const day = Number(dateMatch[1]);
+    const month = Number(dateMatch[2]);
+    const year = Number(dateMatch[3]);
+    const parsedDate = new Date(year, month - 1, day);
+
+    if (
+        Number.isNaN(parsedDate.getTime()) ||
+        parsedDate.getFullYear() !== year ||
+        parsedDate.getMonth() !== month - 1 ||
+        parsedDate.getDate() !== day
+    ) {
+        return null;
+    }
+
+    parsedDate.setHours(0, 0, 0, 0);
+    return parsedDate;
+}
+
+function formatDayMonthLabel(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+        return '';
+    }
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    return `${day}.${month}`;
+}
+
+function parseAfishaDaySelection(value) {
+    const source = normalizeText(String(value || '')).trim();
+    if (!source) {
+        return null;
+    }
+    const normalizedWithoutDate = source.replace(/\(\s*\d{2}[./-]\d{2}[./-]\d{4}\s*\)/g, ' ').trim();
+    const direct = normalizeWeekdayKey(normalizedWithoutDate);
+    if (WEEKDAY_INDEX_BY_NAME[direct] !== undefined) {
+        return {
+            weekdayKey: direct,
+            dayNum: WEEKDAY_INDEX_BY_NAME[direct]
+        };
+    }
+
+    const tokens = normalizedWithoutDate
+        .split(/\s+/)
+        .map((token) => token.replace(/[()]/g, ''))
+        .filter(Boolean);
+
+    for (const token of tokens) {
+        const normalizedToken = normalizeWeekdayKey(token);
+        if (WEEKDAY_INDEX_BY_NAME[normalizedToken] !== undefined) {
+            return {
+                weekdayKey: normalizedToken,
+                dayNum: WEEKDAY_INDEX_BY_NAME[normalizedToken]
+            };
+        }
+    }
+
+    return null;
+}
+
+function buildAfishaDaysKeyboardData() {
     const now = new Date();
-    const availableWeekdays = new Set();
+    const { thisWeekStart, nextWeekStart, afterNextWeekStart } = getAfishaTwoWeekBounds(now);
+    const weekdayOrder = [1, 2, 3, 4, 5, 6, 0];
+    const datesByWeekday = new Map();
 
     for (const eventItem of getAllEvents()) {
         if (!eventItem || !(eventItem.date instanceof Date) || Number.isNaN(eventItem.date.getTime())) {
             continue;
         }
-        if (eventItem.date <= now) {
+
+        if (eventItem.date <= now || eventItem.date >= afterNextWeekStart) {
             continue;
         }
-        availableWeekdays.add(eventItem.date.getDay());
+
+        const eventDateOnly = new Date(eventItem.date);
+        eventDateOnly.setHours(0, 0, 0, 0);
+        const bucket = eventDateOnly >= nextWeekStart ? 'nextWeek' : eventDateOnly >= thisWeekStart ? 'thisWeek' : null;
+        if (!bucket) {
+            continue;
+        }
+
+        const weekday = eventDateOnly.getDay();
+        if (!datesByWeekday.has(weekday)) {
+            datesByWeekday.set(weekday, {
+                thisWeekDate: null,
+                nextWeekDate: null
+            });
+        }
+
+        const current = datesByWeekday.get(weekday);
+        if (bucket === 'thisWeek' && !current.thisWeekDate) {
+            current.thisWeekDate = eventDateOnly;
+        }
+        if (bucket === 'nextWeek' && !current.nextWeekDate) {
+            current.nextWeekDate = eventDateOnly;
+        }
     }
 
     const keyboard = weekdayOrder
-        .filter((weekday) => availableWeekdays.has(weekday))
-        .map((weekday) => [{ text: dayButtonByWeekday[weekday] }]);
+        .filter((weekday) => datesByWeekday.has(weekday))
+        .map((weekday) => {
+            const entry = datesByWeekday.get(weekday);
+            const dayLabel = WEEKDAY_LABEL_FOR_INDEX[weekday] || AFISHA_DAY_BUTTONS.monday;
+            const thisWeekLabel = formatDayMonthLabel(entry.thisWeekDate);
+            const nextWeekLabel = formatDayMonthLabel(entry.nextWeekDate);
+            const dateSuffix = thisWeekLabel && nextWeekLabel
+                ? `${thisWeekLabel}/${nextWeekLabel}`
+                : thisWeekLabel || nextWeekLabel;
+            return [{ text: dateSuffix ? `${dayLabel} (${dateSuffix})` : dayLabel }];
+        });
 
     keyboard.push([{ text: NAVIGATION_BUTTONS.menu }]);
-    return keyboard;
+
+    return {
+        keyboard,
+        thisWeekCount: Array.from(datesByWeekday.values()).filter((entry) => Boolean(entry.thisWeekDate)).length,
+        nextWeekCount: Array.from(datesByWeekday.values()).filter((entry) => Boolean(entry.nextWeekDate)).length
+    };
 }
 
 function normalizeWeekdayKey(value) {
@@ -1241,7 +1376,8 @@ function normalizeWeekdayKey(value) {
         "нд": "неділя",
         "нед": "неділя",
         "пятниця": "п'ятниця",
-        "пятницю": "п'ятницю"
+        "пятницю": "п'ятниця",
+        "п'ятницю": "п'ятниця"
     };
 
     return aliases[normalized] || normalized;
@@ -1252,12 +1388,17 @@ function showAfishaDaysMenu(chatId) {
         users[chatId] = { step: 0 };
     }
     users[chatId].context = 'afisha';
-    const keyboard = getAfishaDaysKeyboard();
+    const keyboardData = buildAfishaDaysKeyboardData();
+    const keyboard = keyboardData.keyboard;
     const hasAvailableDays = keyboard.some((row) => {
         return Array.isArray(row) && row.some((button) => button && button.text !== NAVIGATION_BUTTONS.menu);
     });
 
-    return bot.sendMessage(chatId, hasAvailableDays ? "Оберіть день:" : "Наразі немає запланованих заходів.", {
+    const menuMessage = hasAvailableDays
+        ? `Оберіть день (дата в дужках):\n🗓 Цей тиждень: ${keyboardData.thisWeekCount}\n🗓 Наступний тиждень: ${keyboardData.nextWeekCount}`
+        : "Наразі немає запланованих заходів на цей або наступний тиждень.";
+
+    return bot.sendMessage(chatId, menuMessage, {
         reply_markup: {
             keyboard,
             resize_keyboard: true
@@ -1272,10 +1413,8 @@ async function showDayAgenda(chatId, dayName) {
     }
     users[chatId].context = 'afisha';
 
-    const normalizedDay = normalizeWeekdayKey(dayName);
-    const weekdays = { "неділя":0, "понеділок":1, "вівторок":2, "середа":3, "четвер":4, "п'ятниця":5, "субота":6 };
-    const dayNum = weekdays[normalizedDay];
-    if (dayNum === undefined) {
+    const parsedSelection = parseAfishaDaySelection(dayName);
+    if (!parsedSelection) {
         await bot.sendMessage(chatId, "Не вдалося розпізнати день. Оберіть день з кнопок нижче.", {
             reply_markup: {
                 keyboard: getAfishaDaysKeyboard(),
@@ -1284,16 +1423,25 @@ async function showDayAgenda(chatId, dayName) {
         });
         return;
     }
+    const { weekdayKey: normalizedDay, dayNum } = parsedSelection;
+
     // ДІАГНОСТИКА
     console.log(`\n🔍 showDayAgenda("${dayName}"): normalized="${normalizedDay}", dayNum=${dayNum}`);
     const allEvents = getAllEvents();
     console.log(`   Всього майбутніх заходів: ${allEvents.length}`);
     allEvents.forEach(e => console.log(`   - ${e.name}: ${e.date.toISOString()} (getUTCDay=${e.date.getUTCDay()})`));
     
-    const dayEvents = getEventsForDay(dayNum);
-    console.log(`   ✅ Знайдено на день ${dayNum}: ${dayEvents.length} заходів`);
-    
-    dayEvents.sort((a,b)=>a.date-b.date);
+    const now = new Date();
+    const { thisWeekStart, nextWeekStart, afterNextWeekStart } = getAfishaTwoWeekBounds(now);
+    const dayEvents = getEventsForDay(dayNum)
+        .filter((eventItem) => eventItem.date > now && eventItem.date >= thisWeekStart && eventItem.date < afterNextWeekStart)
+        .sort((a, b) => a.date - b.date);
+
+    const thisWeekEvents = dayEvents.filter((eventItem) => eventItem.date < nextWeekStart);
+    const nextWeekEvents = dayEvents.filter((eventItem) => eventItem.date >= nextWeekStart);
+    const dayEventsForDisplay = [...thisWeekEvents, ...nextWeekEvents];
+
+    console.log(`   ✅ Знайдено на день ${dayNum}: ${dayEventsForDisplay.length} заходів`);
     
     const dayForms = {
         "неділя": { lower: "неділю", upper: "Неділю" },
@@ -1305,8 +1453,10 @@ async function showDayAgenda(chatId, dayName) {
         "субота": { lower: "суботу", upper: "Суботу" }
     };
 
-    if (dayEvents.length === 0) {
-        bot.sendMessage(chatId, `На ${dayForms[normalizedDay]?.lower || dayName} немає заходів.`, {
+    if (dayEventsForDisplay.length === 0) {
+        const noEventsLabel = `${dayForms[normalizedDay]?.lower || normalizedDay} цього або наступного тижня`;
+
+        bot.sendMessage(chatId, `На ${noEventsLabel} немає заходів.`, {
             reply_markup: {
                 keyboard: [
                     [{ text: NAVIGATION_BUTTONS.backToDays }]
@@ -1316,14 +1466,42 @@ async function showDayAgenda(chatId, dayName) {
         });
         return;
     }
-    let msg = `📅 Заходи у ${dayForms[normalizedDay]?.upper || dayName}:\n\n`;
+
+    const formatAgendaEntries = async (eventsList) => {
+        let text = '';
+        for (const ev of eventsList) {
+            const seatsLeft = await getSeatsLeft(ev.id);
+            const time = String(ev.date.getHours()).padStart(2,'0')+":"+String(ev.date.getMinutes()).padStart(2,'0');
+            const seatsLabel = seatsLeft > 0 ? `💺 ${formatSeatsCount(seatsLeft)}` : `❌ закрито`;
+            text += `Назва: ${ev.name}\nЧас: ${time}\nМісць залишилось: ${seatsLabel}\n\n`;
+        }
+        return text;
+    };
+
+    const thisWeekDateLabel = thisWeekEvents.length > 0 ? formatDayMonthLabel(thisWeekEvents[0].date) : '';
+    const nextWeekDateLabel = nextWeekEvents.length > 0 ? formatDayMonthLabel(nextWeekEvents[0].date) : '';
+
+    let msg = `📅 Заходи у ${dayForms[normalizedDay]?.upper || normalizedDay}:\n\n`;
+    if (thisWeekEvents.length > 0) {
+        msg += `🗓 Цей тиждень${thisWeekDateLabel ? ` (${thisWeekDateLabel})` : ''}\n`;
+        msg += await formatAgendaEntries(thisWeekEvents);
+    }
+
+    if (thisWeekEvents.length > 0 && nextWeekEvents.length > 0) {
+        msg += `______________________________\n\n`;
+    }
+
+    if (nextWeekEvents.length > 0) {
+        msg += `🗓 Наступний тиждень${nextWeekDateLabel ? ` (${nextWeekDateLabel})` : ''}\n`;
+        msg += await formatAgendaEntries(nextWeekEvents);
+    }
+
     const buttons = [];
     const eventButtonMap = {};
-    for (const ev of dayEvents) {
+    for (const ev of dayEventsForDisplay) {
         const seatsLeft = await getSeatsLeft(ev.id);
         const time = String(ev.date.getHours()).padStart(2,'0')+":"+String(ev.date.getMinutes()).padStart(2,'0');
         const seatsLabel = seatsLeft > 0 ? `💺 ${formatSeatsCount(seatsLeft)}` : `❌ закрито`;
-        msg += `Назва: ${ev.name}\nЧас: ${time}\nМісць залишилось: ${seatsLabel}\n\n`;
         const buttonText = `${ev.name} | ${time} | ${seatsLabel}`;
         buttons.push([{ text: buttonText }]);
         eventButtonMap[buttonText] = ev.id;
@@ -7357,9 +7535,8 @@ E-mail: gupczn@adm.dp.gov.ua`,
         return;
     }
 
-    // якщо натиснутий день тижня, делегуємо показ загального меню на відповідну функцію
-    const normalizedText = normalizeWeekdayKey(text);
-    const weekdays = { 'неділя':0, 'понеділок':1, 'вівторок':2, 'середа':3, 'четвер':4, "п'ятниця":5, 'субота':6 };
+    // якщо натиснутий день тижня (з датою або без), показуємо афішу для обраного дня
+    const afishaDaySelection = parseAfishaDaySelection(text);
 
     if (user.context === 'consultation-day' && !matchesCommand(text, NAVIGATION_BUTTONS.back, NAVIGATION_BUTTONS.menu)) {
         if (!user.consultationDraft || !user.consultationDraft.specialistKey) {
@@ -7432,13 +7609,13 @@ E-mail: gupczn@adm.dp.gov.ua`,
         return;
     }
     
-    console.log('🔍 Перевірка дня: text="' + text + '" → normalized="' + normalizedText + '"');
-    if (weekdays[normalizedText] !== undefined) {
-        console.log('✅ Знайдено день: ' + normalizedText + ' → ' + weekdays[normalizedText]);
+    console.log('🔍 Перевірка дня: text="' + text + '" → parsed="' + (afishaDaySelection ? afishaDaySelection.weekdayKey : 'none') + '"');
+    if (afishaDaySelection) {
+        console.log('✅ Знайдено день: ' + afishaDaySelection.weekdayKey + ' → ' + afishaDaySelection.dayNum);
         await showDayAgenda(chatId, text);
         return;
     }
-    console.log('⚠️ День не знайдено. Доступні ключі:', Object.keys(weekdays));
+    console.log('⚠️ День не знайдено. Доступні ключі:', Object.keys(WEEKDAY_INDEX_BY_NAME));
 
     // === ПЕРЕВІРЯЄМО КОНТЕКСТ ВІДПИСАННЯ ДО ПОШУКУ ЗАХОДУ ===
     // Обробка вибору заходу для відписання
