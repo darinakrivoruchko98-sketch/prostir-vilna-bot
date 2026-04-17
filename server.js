@@ -1395,7 +1395,7 @@ function showAfishaDaysMenu(chatId) {
     });
 
     const menuMessage = hasAvailableDays
-        ? `Оберіть день (дата в дужках):\n🗓 Цей тиждень: ${keyboardData.thisWeekCount}\n🗓 Наступний тиждень: ${keyboardData.nextWeekCount}`
+        ? 'Оберіть день:'
         : "Наразі немає запланованих заходів на цей або наступний тиждень.";
 
     return bot.sendMessage(chatId, menuMessage, {
@@ -1478,21 +1478,21 @@ async function showDayAgenda(chatId, dayName) {
         return text;
     };
 
-    const thisWeekDateLabel = thisWeekEvents.length > 0 ? formatDayMonthLabel(thisWeekEvents[0].date) : '';
-    const nextWeekDateLabel = nextWeekEvents.length > 0 ? formatDayMonthLabel(nextWeekEvents[0].date) : '';
+    const thisWeekDateLabel = thisWeekEvents.length > 0 ? formatSheetDate(thisWeekEvents[0].date) : '';
+    const nextWeekDateLabel = nextWeekEvents.length > 0 ? formatSheetDate(nextWeekEvents[0].date) : '';
 
     let msg = `📅 Заходи у ${dayForms[normalizedDay]?.upper || normalizedDay}:\n\n`;
     if (thisWeekEvents.length > 0) {
-        msg += `🗓 Цей тиждень${thisWeekDateLabel ? ` (${thisWeekDateLabel})` : ''}\n`;
+        msg += `${thisWeekDateLabel}\n`;
         msg += await formatAgendaEntries(thisWeekEvents);
     }
 
     if (thisWeekEvents.length > 0 && nextWeekEvents.length > 0) {
-        msg += `______________________________\n\n`;
+        msg += `──────────── ✦ ────────────\n\n`;
     }
 
     if (nextWeekEvents.length > 0) {
-        msg += `🗓 Наступний тиждень${nextWeekDateLabel ? ` (${nextWeekDateLabel})` : ''}\n`;
+        msg += `${nextWeekDateLabel}\n`;
         msg += await formatAgendaEntries(nextWeekEvents);
     }
 
@@ -2376,6 +2376,15 @@ function getSelectedEventsKeyboardForUser(user) {
     ];
 }
 
+function getAfishaInstantRegistrationKeyboard() {
+    return [
+        [{ text: '➕ Додати ще захід' }],
+        [{ text: '❌ Відмінити реєстрацію' }],
+        [{ text: NAVIGATION_BUTTONS.backToDays }],
+        [{ text: NAVIGATION_BUTTONS.menu }]
+    ];
+}
+
 function clearFriendRegistrationState(user) {
     if (!user) {
         return;
@@ -2468,9 +2477,9 @@ async function checkPendingRegistrationSelections() {
 
         try {
             await bot.sendMessage(chatId,
-                '⚠️ Ви не зареєструвалися. Натисніть кнопку «Зареєструватися», інакше вашу участь у подальших заходах буде заблоковано.\n\nБудь ласка, доводьте реєстрацію до кінця.', {
+                '⚠️ Реєстрацію не завершено. Оберіть захід з афіші ще раз, щоб завершити запис.', {
                 reply_markup: {
-                    keyboard: getSelectedEventsKeyboardForUser(user),
+                    keyboard: getAfishaInstantRegistrationKeyboard(),
                     resize_keyboard: true
                 }
             });
@@ -2506,6 +2515,7 @@ async function completeSelectedEventsRegistration(chatId, user, registrantName, 
         const eventMeta = getAllEvents().find((eventItem) => eventItem.id === selectedEvent.id);
         const result = await registerForSelectedEvent(chatId, user, registrantName, registrantPhone, options);
         const details = {
+            id: selectedEvent.id,
             name: eventMeta ? eventMeta.name : selectedEvent.name,
             date: eventMeta ? eventMeta.date : selectedEvent.date || null
         };
@@ -2551,7 +2561,9 @@ function buildRegistrationResultsMessage(successEvents, failedEvents, successTit
     return message.trim();
 }
 
-async function startSelectedEventsRegistration(chatId, user) {
+async function startSelectedEventsRegistration(chatId, user, options = {}) {
+    const instantAfisha = options.instantAfisha === true || user.afishaInstantMode === true;
+
     if (!user.selectedEventsList || user.selectedEventsList.length === 0) {
         await bot.sendMessage(chatId, '❌ Немає вибраних заходів. Оберіть захід з афіші.', {
             reply_markup: {
@@ -2610,10 +2622,22 @@ async function startSelectedEventsRegistration(chatId, user) {
         reply_markup: {
             keyboard: isFriendMode
                 ? [[{ text: FRIEND_FLOW_BUTTONS.addAnother }], [{ text: NAVIGATION_BUTTONS.menu }]]
-                : [[{ text: NAVIGATION_BUTTONS.menu }]],
+                : instantAfisha
+                    ? getAfishaInstantRegistrationKeyboard()
+                    : [[{ text: NAVIGATION_BUTTONS.menu }]],
             resize_keyboard: true
         }
     });
+
+    if (instantAfisha && successEvents.length > 0) {
+        const lastSuccess = successEvents[successEvents.length - 1];
+        user.lastAfishaRegisteredEventId = lastSuccess.id;
+        user.lastAfishaRegisteredEventName = lastSuccess.name;
+    }
+
+    if (instantAfisha) {
+        user.context = 'afisha';
+    }
 
     if (isFriendMode) {
         clearFriendRegistrationState(user);
@@ -5720,6 +5744,13 @@ bot.on('message', async (msg) => {
                         { skipReminders: isFriendRegistrationMode(user) }
                     );
 
+                    const instantAfisha = user.afishaInstantMode === true;
+                    if (instantAfisha && successEvents.length > 0) {
+                        const lastSuccess = successEvents[successEvents.length - 1];
+                        user.lastAfishaRegisteredEventId = lastSuccess.id;
+                        user.lastAfishaRegisteredEventName = lastSuccess.name;
+                    }
+
                     await bot.sendMessage(chatId, buildRegistrationResultsMessage(
                         successEvents,
                         failedEvents,
@@ -5729,10 +5760,16 @@ bot.on('message', async (msg) => {
                         reply_markup: {
                             keyboard: isFriendRegistrationMode(user)
                                 ? [[{ text: FRIEND_FLOW_BUTTONS.addAnother }], [{ text: NAVIGATION_BUTTONS.menu }]]
-                                : [[{ text: NAVIGATION_BUTTONS.menu }]],
+                                : instantAfisha
+                                    ? getAfishaInstantRegistrationKeyboard()
+                                    : [[{ text: NAVIGATION_BUTTONS.menu }]],
                             resize_keyboard: true
                         }
                     });
+
+                    if (instantAfisha) {
+                        user.context = 'afisha';
+                    }
 
                     if (isFriendRegistrationMode(user)) {
                         clearFriendRegistrationState(user);
@@ -7491,47 +7528,28 @@ E-mail: gupczn@adm.dp.gov.ua`,
         selectedEvent = getAllEvents().find((eventItem) => eventItem.id === selectedEventId) || null;
     }
     if (selectedEvent) {
-        if (!user.selectedEventsList) {
-            user.selectedEventsList = [];
-        }
-
         const seatsLeft = await getSeatsLeft(selectedEvent.id);
-        const alreadySelected = user.selectedEventsList.some((eventItem) => eventItem.id === selectedEvent.id);
 
         if (seatsLeft <= 0) {
             await bot.sendMessage(chatId, `На жаль, на захід "${selectedEvent.name}" місць уже немає.`, {
                 reply_markup: {
-                    keyboard: getSelectedEventsKeyboardForUser(user),
+                    keyboard: getAfishaInstantRegistrationKeyboard(),
                     resize_keyboard: true
                 }
             });
             return;
         }
 
-        if (!alreadySelected) {
-            user.selectedEventsList.push({
-                id: selectedEvent.id,
-                name: selectedEvent.name,
-                date: selectedEvent.date
-            });
-        }
-
-        markPendingRegistrationSelection(user);
-
-        const headline = alreadySelected
-            ? 'Цей захід уже є у вашому списку.'
-            : 'Захід додано до реєстрації.';
-
-        await bot.sendMessage(chatId, buildSelectedEventsMessage(user.selectedEventsList, headline), {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: getSelectedEventsKeyboardForUser(user),
-                resize_keyboard: true
-            }
-        });
+        user.afishaInstantMode = true;
+        user.selectedEventsList = [{
+            id: selectedEvent.id,
+            name: selectedEvent.name,
+            date: selectedEvent.date
+        }];
 
         user.currentSelectedEventName = selectedEvent.name;
         user.currentSelectedEventId = selectedEvent.id;
+        await startSelectedEventsRegistration(chatId, user, { instantAfisha: true });
         return;
     }
 
@@ -7705,8 +7723,39 @@ E-mail: gupczn@adm.dp.gov.ua`,
         return;
     }
 
-    if (text === "📝 Перейти до реєстрації" || text === "✅ Продовжити реєстрацію" || text === "📝 Зареєструватися" || text === "👭 Зареєструвати подругу" || text === "Реєструватися") {
-        await startSelectedEventsRegistration(chatId, user);
+    if (text === '❌ Відмінити реєстрацію') {
+        const lastEventId = user.lastAfishaRegisteredEventId;
+
+        if (!lastEventId) {
+            await bot.sendMessage(chatId, 'Немає активної реєстрації для скасування.', {
+                reply_markup: {
+                    keyboard: getAfishaInstantRegistrationKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        const result = await unregisterFromEvent(chatId, lastEventId);
+        if (result.status === 'ok') {
+            await bot.sendMessage(chatId,
+                `✅ <b>Реєстрацію скасовано.</b>\n\n📌 ${result.eventName}\n\nМісце звільнено для інших учасників.`, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: getAfishaInstantRegistrationKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            delete user.lastAfishaRegisteredEventId;
+            delete user.lastAfishaRegisteredEventName;
+        } else {
+            await bot.sendMessage(chatId, '❌ Не вдалося скасувати реєстрацію. Спробуйте ще раз.', {
+                reply_markup: {
+                    keyboard: getAfishaInstantRegistrationKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+        }
         return;
     }
 
