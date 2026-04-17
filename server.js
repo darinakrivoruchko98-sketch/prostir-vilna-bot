@@ -38,7 +38,7 @@ const PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME = process.env.PSYCHOLOGICAL_CONSULT
 const SOCIAL_SPECIALIST_CHAT_ID = process.env.SOCIAL_SPECIALIST_CHAT_ID || config.SOCIAL_SPECIALIST_CHAT_ID || '';
 const DARYNA_CHAT_ID = process.env.DARYNA_CHAT_ID || config.DARYNA_CHAT_ID || '375328037';
 const PSYCHOLOGIST_CHAT_ID = process.env.PSYCHOLOGIST_CHAT_ID || config.PSYCHOLOGIST_CHAT_ID || '';
-const MYKOLA_CHAT_ID = process.env.MYKOLA_CHAT_ID || config.MYKOLA_CHAT_ID || '7231089169';
+const LIUDMYLA_CHAT_ID = process.env.LIUDMYLA_CHAT_ID || config.LIUDMYLA_CHAT_ID || '677175948';
 const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
 
 // Таблиця розкладу: https://docs.google.com/spreadsheets/d/1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8/edit
@@ -205,10 +205,10 @@ if (PSYCHOLOGIST_CHAT_ID) {
     console.log('⚠️ PSYCHOLOGIST_CHAT_ID не встановлено');
 }
 
-if (MYKOLA_CHAT_ID) {
-    console.log(`✅ MYKOLA_CHAT_ID встановлено: ${MYKOLA_CHAT_ID} (для DM сповіщень)`);
+if (LIUDMYLA_CHAT_ID) {
+    console.log(`✅ LIUDMYLA_CHAT_ID встановлено: ${LIUDMYLA_CHAT_ID} (для DM сповіщень психологині)`);
 } else {
-    console.log('⚠️ MYKOLA_CHAT_ID не встановлено (сповіщення психологу вимкнені)');
+    console.log('⚠️ LIUDMYLA_CHAT_ID не встановлено (сповіщення психологині вимкнені)');
 }
 
 let users = {};
@@ -4079,7 +4079,7 @@ async function processParsedEvents(parsedEvents) {
                 key: 'psychologist',
                 label: 'Психологиня',
                 sheetName: PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME,
-                specialistChatId: String(MYKOLA_CHAT_ID || '').trim()
+                specialistChatId: String(LIUDMYLA_CHAT_ID || '').trim()
             };
         }
 
@@ -4564,7 +4564,7 @@ async function processParsedEvents(parsedEvents) {
 
         const sheetConfigs = [
             { sheetName: SOCIAL_CONSULTATIONS_SHEET_NAME, specialistLabel: 'Соціальна фахівчиня', specialistChatId: String(DARYNA_CHAT_ID || '').trim() },
-            { sheetName: PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME, specialistLabel: 'Психологиня', specialistChatId: String(MYKOLA_CHAT_ID || '').trim() }
+            { sheetName: PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME, specialistLabel: 'Психологиня', specialistChatId: String(LIUDMYLA_CHAT_ID || '').trim() }
         ];
 
         const bookings = [];
