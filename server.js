@@ -1013,6 +1013,130 @@ function syncReminderRegistrationsWithEvents() {
     }
 }
 
+function formatCancelledEventDateTime(eventDate) {
+    return {
+        date: eventDate.toLocaleDateString('uk-UA', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            timeZone: APP_TIME_ZONE
+        }),
+        time: eventDate.toLocaleTimeString('uk-UA', {
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZone: APP_TIME_ZONE
+        })
+    };
+}
+
+async function notifyUsersAboutCancelledEvents(cancelledEvents) {
+    const upcomingCancelledEvents = Array.isArray(cancelledEvents)
+        ? cancelledEvents.filter((event) => event && event.date instanceof Date && event.date > new Date())
+        : [];
+
+    if (upcomingCancelledEvents.length === 0) {
+        return;
+    }
+
+    const cancelledEventsById = new Map(upcomingCancelledEvents.map((event) => [event.id, event]));
+    const notificationsByChatId = new Map();
+
+    const queueNotification = (chatId, eventId) => {
+        const cancelledEvent = cancelledEventsById.get(eventId);
+        if (!cancelledEvent) {
+            return;
+        }
+
+        const normalizedChatId = String(chatId || '').trim();
+        if (!normalizedChatId) {
+            return;
+        }
+
+        if (!notificationsByChatId.has(normalizedChatId)) {
+            notificationsByChatId.set(normalizedChatId, new Map());
+        }
+
+        notificationsByChatId.get(normalizedChatId).set(cancelledEvent.id, cancelledEvent);
+    };
+
+    for (const chatId in userEventRegistrations) {
+        const registrations = Array.isArray(userEventRegistrations[chatId]) ? userEventRegistrations[chatId] : [];
+        for (const registration of registrations) {
+            if (registration && cancelledEventsById.has(registration.eventId)) {
+                queueNotification(chatId, registration.eventId);
+            }
+        }
+    }
+
+    for (const chatId in friendEventRegistrations) {
+        const registrations = Array.isArray(friendEventRegistrations[chatId]) ? friendEventRegistrations[chatId] : [];
+        for (const registration of registrations) {
+            if (registration && cancelledEventsById.has(registration.eventId)) {
+                queueNotification(chatId, registration.eventId);
+            }
+        }
+    }
+
+    let deliveredCount = 0;
+    const deliveredEventsByChatId = new Map();
+    for (const [chatId, chatEvents] of notificationsByChatId.entries()) {
+        for (const cancelledEvent of chatEvents.values()) {
+            const formattedDateTime = formatCancelledEventDateTime(cancelledEvent.date);
+
+            try {
+                await bot.sendMessage(
+                    chatId,
+                    `Заняття (${formattedDateTime.date}, ${formattedDateTime.time}) відмінено.`
+                );
+                deliveredCount += 1;
+                if (!deliveredEventsByChatId.has(chatId)) {
+                    deliveredEventsByChatId.set(chatId, new Set());
+                }
+                deliveredEventsByChatId.get(chatId).add(cancelledEvent.id);
+            } catch (error) {
+                console.error(
+                    `❌ Не вдалося надіслати повідомлення про скасування chatId=${chatId}:`,
+                    error && error.message ? error.message : error
+                );
+            }
+        }
+    }
+
+    let hasReminderChanges = false;
+
+    for (const [chatId, deliveredEventIds] of deliveredEventsByChatId.entries()) {
+        const registrations = Array.isArray(userEventRegistrations[chatId]) ? userEventRegistrations[chatId] : [];
+        const remainingRegistrations = registrations.filter((registration) => !deliveredEventIds.has(registration.eventId));
+        if (remainingRegistrations.length !== registrations.length) {
+            hasReminderChanges = true;
+        }
+
+        if (remainingRegistrations.length > 0) {
+            userEventRegistrations[chatId] = remainingRegistrations;
+        } else {
+            delete userEventRegistrations[chatId];
+        }
+
+        const friendRegistrations = Array.isArray(friendEventRegistrations[chatId]) ? friendEventRegistrations[chatId] : [];
+        const remainingFriendRegistrations = friendRegistrations.filter((registration) => !deliveredEventIds.has(registration.eventId));
+        if (remainingFriendRegistrations.length !== friendRegistrations.length) {
+            hasReminderChanges = true;
+        }
+
+        if (remainingFriendRegistrations.length > 0) {
+            friendEventRegistrations[chatId] = remainingFriendRegistrations;
+        } else {
+            delete friendEventRegistrations[chatId];
+        }
+    }
+
+    if (hasReminderChanges) {
+        saveReminderStateToDisk();
+    }
+
+    console.log(`📣 Оброблено ${upcomingCancelledEvents.length} скасованих заходів, повідомлень надіслано: ${deliveredCount}`);
+}
+
 // Перевірка та відправка нагадувань про заходи
 async function checkAndSendReminders() {
     const now = new Date();
@@ -2987,6 +3111,7 @@ async function loadEventsFromSheet() {
     if (!sheetsClient || !SPREADSHEET_ID) return;
 
     try {
+        const previousEventsById = new Map(events.map((event) => [event.id, event]));
         let rows = [];
         const readErrors = [];
         for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
@@ -3066,10 +3191,22 @@ async function loadEventsFromSheet() {
         if (events.length === 0) {
             console.warn(`⚠️ Розклад прочитано, але заходів не знайдено. Перевірте дані у листі ${SCHEDULE_SHEET_NAME}.`);
         }
+
+        const now = new Date();
+        const cancelledEvents = Array.from(previousEventsById.values()).filter((event) => (
+            event &&
+            event.date instanceof Date &&
+            event.date > now &&
+            !seen.has(event.id)
+        ));
+
+        if (cancelledEvents.length > 0) {
+            await notifyUsersAboutCancelledEvents(cancelledEvents);
+        }
+
         console.log(`✅ Розклад завантажено з Sheets (${events.length} заходів)`);
         
         // Додаткова діагностика
-        const now = new Date();
         const futureCount = events.filter(e => e.date > now).length;
         syncReminderRegistrationsWithEvents();
         console.log(`   📊 Поточний час: ${now.toLocaleString('uk-UA')}`);
