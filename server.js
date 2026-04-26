@@ -2633,6 +2633,7 @@ function resetSelectedEventsFlow(user) {
 async function completeSelectedEventsRegistration(chatId, user, registrantName, registrantPhone, options = {}) {
     const selectedEvents = [...(user.selectedEventsList || [])];
     const successEvents = [];
+    const alreadyRegisteredEvents = [];
     const failedEvents = [];
 
     for (const selectedEvent of selectedEvents) {
@@ -2650,6 +2651,7 @@ async function completeSelectedEventsRegistration(chatId, user, registrantName, 
         if (result.status === 'success' || result.status === 'ok') {
             successEvents.push(details);
         } else if (result.status === 'already-registered') {
+            alreadyRegisteredEvents.push(details);
             failedEvents.push(`${formatSelectedEventLine(details)} — ви вже зареєстровані`);
         } else if (result.status === 'no-seats') {
             failedEvents.push(`${formatSelectedEventLine(details)} — місця закінчилися`);
@@ -2662,7 +2664,7 @@ async function completeSelectedEventsRegistration(chatId, user, registrantName, 
     user.step = 0;
     user.registrationMode = false;
 
-    return { successEvents, failedEvents };
+    return { successEvents, alreadyRegisteredEvents, failedEvents };
 }
 
 function buildRegistrationResultsMessage(successEvents, failedEvents, successTitle = 'Ви успішно зареєстровані на') {
@@ -2732,13 +2734,18 @@ async function startSelectedEventsRegistration(chatId, user, options = {}) {
         return;
     }
 
-    const { successEvents, failedEvents } = await completeSelectedEventsRegistration(
+    const { successEvents, alreadyRegisteredEvents, failedEvents } = await completeSelectedEventsRegistration(
         chatId,
         user,
         registrantData.name,
         registrantData.phone,
         { skipReminders: isFriendMode }
     );
+
+    if (instantAfisha && !isFriendMode) {
+        delete user.lastAfishaRegisteredEventId;
+        delete user.lastAfishaRegisteredEventName;
+    }
 
     await bot.sendMessage(chatId, buildRegistrationResultsMessage(
         successEvents,
@@ -2756,10 +2763,13 @@ async function startSelectedEventsRegistration(chatId, user, options = {}) {
         }
     });
 
-    if (instantAfisha && successEvents.length > 0) {
-        const lastSuccess = successEvents[successEvents.length - 1];
-        user.lastAfishaRegisteredEventId = lastSuccess.id;
-        user.lastAfishaRegisteredEventName = lastSuccess.name;
+    if (instantAfisha && !isFriendMode) {
+        const lastEvent = successEvents[successEvents.length - 1]
+            || alreadyRegisteredEvents[alreadyRegisteredEvents.length - 1];
+        if (lastEvent) {
+            user.lastAfishaRegisteredEventId = lastEvent.id;
+            user.lastAfishaRegisteredEventName = lastEvent.name;
+        }
     }
 
     if (instantAfisha) {
@@ -6181,7 +6191,7 @@ bot.on('message', async (msg) => {
                 }
 
                 if (user.afishaMultiRegistration && user.selectedEventsList && user.selectedEventsList.length > 0) {
-                    const { successEvents, failedEvents } = await completeSelectedEventsRegistration(
+                    const { successEvents, alreadyRegisteredEvents, failedEvents } = await completeSelectedEventsRegistration(
                         chatId,
                         user,
                         registrationDraft.name,
@@ -6190,10 +6200,16 @@ bot.on('message', async (msg) => {
                     );
 
                     const instantAfisha = user.afishaInstantMode === true;
-                    if (instantAfisha && successEvents.length > 0) {
-                        const lastSuccess = successEvents[successEvents.length - 1];
-                        user.lastAfishaRegisteredEventId = lastSuccess.id;
-                        user.lastAfishaRegisteredEventName = lastSuccess.name;
+                    if (instantAfisha && !isFriendRegistrationMode(user)) {
+                        delete user.lastAfishaRegisteredEventId;
+                        delete user.lastAfishaRegisteredEventName;
+
+                        const lastEvent = successEvents[successEvents.length - 1]
+                            || alreadyRegisteredEvents[alreadyRegisteredEvents.length - 1];
+                        if (lastEvent) {
+                            user.lastAfishaRegisteredEventId = lastEvent.id;
+                            user.lastAfishaRegisteredEventName = lastEvent.name;
+                        }
                     }
 
                     await bot.sendMessage(chatId, buildRegistrationResultsMessage(
