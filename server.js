@@ -20,7 +20,6 @@ const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
 const AI_HTTP_TIMEOUT_MS = Number(process.env.AI_HTTP_TIMEOUT_MS || 12000);
 const AI_ENABLED = Boolean(AI_API_KEY);
 const BROADCAST_OWNER_CHAT_ID = Number(String(process.env.BROADCAST_OWNER_CHAT_ID || process.env.DARYNA_CHAT_ID || config.DARYNA_CHAT_ID || '375328037').trim());
-const BROADCAST_TRIGGER_REGEX = /^\s*(?:❗️?)+\s*/;
 const BROADCAST_TRIGGER_ANYWHERE_REGEX = /❗️?|‼️/;
 const APP_TIME_ZONE = process.env.TZ || 'Europe/Kyiv';
 const REMINDER_DELIVERY_WINDOW_MINUTES = 10;
@@ -4912,37 +4911,94 @@ async function processParsedEvents(parsedEvents) {
         return false;
     }
 
-    function collectRegisteredRecipientChatIds(ownerChatId) {
-        const recipientIds = new Set();
-
-        const maybeAdd = (rawId) => {
-            const normalized = Number(String(rawId || '').trim());
-            if (!Number.isFinite(normalized) || normalized <= 0) return;
-            if (normalized === ownerChatId) return;
-            recipientIds.add(normalized);
-        };
-
-        Object.keys(knownUsers || {}).forEach(maybeAdd);
-        Object.keys(userEventRegistrations || {}).forEach(maybeAdd);
-
-        for (const [chatId, user] of Object.entries(users || {})) {
-            const profile = user || {};
-            const hasProfile = String(profile.name || '').trim() && String(profile.phone || '').trim();
-            if (hasProfile || profile.profileHydrated === true) {
-                maybeAdd(chatId);
-            }
-        }
-
-        return Array.from(recipientIds);
+    function parsePositiveChatId(rawValue) {
+        const normalizedText = String(rawValue || '').trim();
+        if (!/^\d{6,}$/.test(normalizedText)) return null;
+        const numericId = Number(normalizedText);
+        if (!Number.isFinite(numericId) || numericId <= 0) return null;
+        return numericId;
     }
 
-    async function loadRegisteredRecipientChatIdsFromSheet() {
+    function normalizePhoneForBroadcast(value) {
+        return String(value || '').replace(/\D/g, '');
+    }
+
+    function normalizeUsernameForBroadcast(value) {
+        return String(value || '').trim().toLowerCase().replace(/^@+/, '');
+    }
+
+    function normalizeNameForBroadcast(value) {
+        return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    }
+
+    function buildInMemoryRecipientIndex(ownerChatId) {
+        const explicitChatIds = new Set();
+        const usernameToChatId = new Map();
+        const phoneToChatId = new Map();
+        const nameToChatId = new Map();
+
+        const maybeAddChatId = (rawId) => {
+            const chatId = parsePositiveChatId(rawId);
+            if (!chatId || chatId === ownerChatId) return null;
+            explicitChatIds.add(chatId);
+            return chatId;
+        };
+
+        const attachProfile = (chatId, profile) => {
+            if (!chatId || !profile) return;
+            const usernameKey = normalizeUsernameForBroadcast(profile.username);
+            const phoneKey = normalizePhoneForBroadcast(profile.phone);
+            const nameKey = normalizeNameForBroadcast(profile.name);
+            if (usernameKey) usernameToChatId.set(usernameKey, chatId);
+            if (phoneKey) phoneToChatId.set(phoneKey, chatId);
+            if (nameKey) nameToChatId.set(nameKey, chatId);
+        };
+
+        for (const [rawChatId, profile] of Object.entries(knownUsers || {})) {
+            const chatId = maybeAddChatId(rawChatId);
+            attachProfile(chatId, profile);
+        }
+
+        Object.keys(userEventRegistrations || {}).forEach(maybeAddChatId);
+
+        for (const [rawChatId, profile] of Object.entries(users || {})) {
+            const chatId = maybeAddChatId(rawChatId);
+            attachProfile(chatId, profile || {});
+        }
+
+        return {
+            explicitChatIds,
+            usernameToChatId,
+            phoneToChatId,
+            nameToChatId
+        };
+    }
+
+    async function loadBroadcastTargetsFromSheet(ownerChatId, inMemoryIndex) {
         if (!sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID) {
             return [];
         }
 
-        const recipientIds = new Set();
+        const targetsByKey = new Map();
         const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:K`, 'A:K', `${PERSONAL_DATA_SHEET_NAME}!A:G`, 'A:G'];
+
+        const addChatIdTarget = (rawId) => {
+            const chatId = parsePositiveChatId(rawId);
+            if (!chatId || chatId === ownerChatId) return;
+            const key = `id:${chatId}`;
+            if (!targetsByKey.has(key)) {
+                targetsByKey.set(key, { kind: 'chatId', value: chatId, key });
+            }
+        };
+
+        const addUsernameTarget = (rawUsername) => {
+            const username = normalizeUsernameForBroadcast(rawUsername);
+            if (!username) return;
+            const key = `username:${username}`;
+            if (!targetsByKey.has(key)) {
+                targetsByKey.set(key, { kind: 'username', value: `@${username}`, key });
+            }
+        };
 
         for (const range of rangesToTry) {
             try {
@@ -4954,19 +5010,32 @@ async function processParsedEvents(parsedEvents) {
 
                 for (let i = 1; i < rows.length; i++) {
                     const row = rows[i] || [];
-                    const candidates = [row[10], row[6]]; // K (new) and G (legacy)
 
-                    for (const candidate of candidates) {
-                        const normalizedText = String(candidate || '').trim();
-                        if (!/^\d{6,}$/.test(normalizedText)) continue;
-                        const numericId = Number(normalizedText);
-                        if (Number.isFinite(numericId) && numericId > 0) {
-                            recipientIds.add(numericId);
-                        }
+                    const directChatId = parsePositiveChatId(row[10]) || parsePositiveChatId(row[6]);
+                    if (directChatId) {
+                        addChatIdTarget(directChatId);
+                        continue;
                     }
+
+                    const usernameKey = normalizeUsernameForBroadcast(row[0]);
+                    const phoneKey = normalizePhoneForBroadcast(row[2]);
+                    const nameKey = normalizeNameForBroadcast(row[1]);
+
+                    const resolvedChatId =
+                        (usernameKey && inMemoryIndex.usernameToChatId.get(usernameKey)) ||
+                        (phoneKey && inMemoryIndex.phoneToChatId.get(phoneKey)) ||
+                        (nameKey && inMemoryIndex.nameToChatId.get(nameKey)) ||
+                        null;
+
+                    if (resolvedChatId) {
+                        addChatIdTarget(resolvedChatId);
+                        continue;
+                    }
+
+                    addUsernameTarget(row[0]);
                 }
 
-                if (recipientIds.size > 0) {
+                if (targetsByKey.size > 0) {
                     break;
                 }
             } catch (e) {
@@ -4974,12 +5043,12 @@ async function processParsedEvents(parsedEvents) {
                 if (msg.includes('unable to parse range') || msg.includes('not found')) {
                     continue;
                 }
-                console.error('❌ Не вдалося завантажити chatId отримувачів з таблиці:', e && e.message ? e.message : e);
+                console.error('❌ Не вдалося завантажити отримувачів розсилки з таблиці:', e && e.message ? e.message : e);
                 break;
             }
         }
 
-        return Array.from(recipientIds);
+        return Array.from(targetsByKey.values());
     }
 
     function parseOwnerBroadcastText(messageText) {
@@ -4988,10 +5057,101 @@ async function processParsedEvents(parsedEvents) {
             return null;
         }
 
-        const payload = BROADCAST_TRIGGER_REGEX.test(rawText)
-            ? rawText.replace(BROADCAST_TRIGGER_REGEX, '').trim()
-            : rawText.trim();
-        return payload;
+        return rawText;
+    }
+
+    async function autoBackfillChatIdForRegisteredUser(chatId, msgFrom, activeUser) {
+        const targetChatId = parsePositiveChatId(chatId);
+        if (!targetChatId || !sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID) {
+            return false;
+        }
+
+        const username = normalizeUsernameForBroadcast(msgFrom && msgFrom.username);
+        const phone = normalizePhoneForBroadcast((activeUser && activeUser.phone) || (knownUsers[targetChatId] && knownUsers[targetChatId].phone));
+        const name = normalizeNameForBroadcast((activeUser && activeUser.name) || (knownUsers[targetChatId] && knownUsers[targetChatId].name));
+
+        if (!username && !phone && !name) {
+            return false;
+        }
+
+        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:K`, 'A:K'];
+
+        for (const range of rangesToTry) {
+            try {
+                const resp = await sheetsClient.spreadsheets.values.get({
+                    spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                    range
+                });
+                const rows = resp.data.values || [];
+
+                let bestRowNumber = null;
+                let bestScore = 0;
+                let nameMatchCount = 0;
+                let lastNameMatchRow = null;
+
+                for (let i = 1; i < rows.length; i++) {
+                    const row = rows[i] || [];
+                    const rowChatId = parsePositiveChatId(row[10]) || parsePositiveChatId(row[6]);
+                    if (rowChatId === targetChatId) {
+                        return false;
+                    }
+                    if (rowChatId && rowChatId !== targetChatId) {
+                        continue;
+                    }
+
+                    const rowUsername = normalizeUsernameForBroadcast(row[0]);
+                    const rowPhone = normalizePhoneForBroadcast(row[2]);
+                    const rowName = normalizeNameForBroadcast(row[1]);
+
+                    let score = 0;
+                    if (username && rowUsername && rowUsername === username) score = Math.max(score, 5);
+                    if (phone && rowPhone && rowPhone === phone) score = Math.max(score, 4);
+                    if (name && rowName && rowName === name) {
+                        score = Math.max(score, 2);
+                        nameMatchCount += 1;
+                        lastNameMatchRow = i + 1;
+                    }
+
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestRowNumber = i + 1;
+                    }
+                }
+
+                if (bestScore < 4 && !(bestScore === 2 && nameMatchCount === 1)) {
+                    return false;
+                }
+
+                if (bestScore === 2 && nameMatchCount === 1 && lastNameMatchRow) {
+                    bestRowNumber = lastNameMatchRow;
+                }
+
+                if (!bestRowNumber) {
+                    return false;
+                }
+
+                await sheetsClient.spreadsheets.values.update({
+                    spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                    range: `${PERSONAL_DATA_SHEET_NAME}!K${bestRowNumber}:K${bestRowNumber}`,
+                    valueInputOption: 'RAW',
+                    requestBody: {
+                        values: [[String(targetChatId)]]
+                    }
+                });
+
+                console.log(`✅ Auto-backfill chatId=${targetChatId} у рядок ${bestRowNumber} (${PERSONAL_DATA_SHEET_NAME})`);
+                return true;
+            } catch (e) {
+                const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+                if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                    continue;
+                }
+                console.error('❌ Auto-backfill chatId failed:', e && e.message ? e.message : e);
+                return false;
+            }
+        }
+
+        return false;
     }
 
     async function tryHandleOwnerBroadcast(chatId, messageText) {
@@ -5004,15 +5164,25 @@ async function processParsedEvents(parsedEvents) {
             return false;
         }
 
-        if (!broadcastText) {
-            await bot.sendMessage(chatId, 'Після тригера ❗️ додайте текст для розсилки. Наприклад: ❗️ Завтра заняття о 12:00');
+        if (!String(broadcastText || '').trim()) {
+            await bot.sendMessage(chatId, 'Напишіть текст повідомлення і додайте в нього знак ❗️ для розсилки.');
             return true;
         }
 
-        const inMemoryRecipients = collectRegisteredRecipientChatIds(chatId);
-        const sheetRecipients = await loadRegisteredRecipientChatIdsFromSheet();
-        const recipients = Array.from(new Set([...inMemoryRecipients, ...sheetRecipients]))
-            .filter((recipientChatId) => recipientChatId !== chatId);
+        const inMemoryIndex = buildInMemoryRecipientIndex(chatId);
+        const recipientsByKey = new Map();
+
+        for (const recipientChatId of inMemoryIndex.explicitChatIds) {
+            const key = `id:${recipientChatId}`;
+            recipientsByKey.set(key, { kind: 'chatId', value: recipientChatId, key });
+        }
+
+        const sheetTargets = await loadBroadcastTargetsFromSheet(chatId, inMemoryIndex);
+        for (const target of sheetTargets) {
+            recipientsByKey.set(target.key, target);
+        }
+
+        const recipients = Array.from(recipientsByKey.values());
         if (recipients.length === 0) {
             await bot.sendMessage(chatId, 'Не знайдено жодного зареєстрованого отримувача для розсилки.');
             return true;
@@ -5021,17 +5191,18 @@ async function processParsedEvents(parsedEvents) {
         let sentCount = 0;
         let failedCount = 0;
 
-        for (const recipientChatId of recipients) {
+        for (const recipient of recipients) {
+            const destination = recipient.kind === 'chatId' ? recipient.value : recipient.value;
             try {
-                await bot.sendMessage(recipientChatId, broadcastText);
+                await bot.sendMessage(destination, broadcastText);
                 sentCount += 1;
             } catch (error) {
                 failedCount += 1;
-                console.error(`❌ Broadcast send failed for chatId=${recipientChatId}:`, error && error.message ? error.message : error);
+                console.error(`❌ Broadcast send failed for ${recipient.key}:`, error && error.message ? error.message : error);
             }
         }
 
-        await bot.sendMessage(chatId, `📣 Розсилку виконано. Успішно: ${sentCount}. Помилки: ${failedCount}.`);
+        await bot.sendMessage(chatId, `📣 Розсилку виконано. Успішно: ${sentCount}, Помилки: ${failedCount}`);
         return true;
     }
 
@@ -5040,6 +5211,11 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text || msg.caption || "";
     const normalizedUserText = normalizeText(String(text || '')).toLowerCase().trim();
+
+    if (msg.chat.type === 'private') {
+        const activeUser = users[chatId] || knownUsers[chatId] || {};
+        await autoBackfillChatIdForRegisteredUser(chatId, msg.from || {}, activeUser);
+    }
 
     if (!text) return;
 
