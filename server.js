@@ -3025,6 +3025,73 @@ async function createAuthorizedSheetsClient() {
     throw new Error(errorMsg);
 }
 
+async function restoreRegistrationNotesToSheet() {
+    let restored = 0;
+    let failed = 0;
+
+    if (!sheetsClient || !SPREADSHEET_ID) {
+        return { restored, failed };
+    }
+
+    const registrationsByEventId = new Map();
+    const allUserRegs = Object.values(userEventRegistrations || {}).flat();
+    const allFriendRegs = Object.values(friendEventRegistrations || {}).flat();
+
+    for (const reg of [...allUserRegs, ...allFriendRegs]) {
+        if (!reg || !reg.eventId) continue;
+        if (!registrationsByEventId.has(reg.eventId)) {
+            registrationsByEventId.set(reg.eventId, []);
+        }
+        const list = registrationsByEventId.get(reg.eventId);
+        const nameKey = normalizeRegistrantName(reg.registrantName || '');
+        const phoneKey = normalizeRegistrantPhone(reg.registrantPhone || '');
+        if (!list.some(item => normalizeRegistrantName(item.name) === nameKey && normalizeRegistrantPhone(item.phone) === phoneKey)) {
+            list.push({ name: reg.registrantName || '', phone: reg.registrantPhone || '' });
+        }
+    }
+
+    for (const [eventId, registrants] of registrationsByEventId.entries()) {
+        const evObj = events.find(e => e.id === eventId);
+        if (!evObj) continue;
+
+        const match = await findScheduleRowByEvent(evObj);
+        if (!match) { failed++; continue; }
+
+        const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, match.scheduleSheet);
+        if (sheetId === null || typeof sheetId === 'undefined') { failed++; continue; }
+
+        const noteText = buildRegistrantsNoteFromList(registrants.length, registrants);
+
+        try {
+            await sheetsClient.spreadsheets.batchUpdate({
+                spreadsheetId: SPREADSHEET_ID,
+                requestBody: {
+                    requests: [{
+                        repeatCell: {
+                            range: {
+                                sheetId,
+                                startRowIndex: match.rowIndex,
+                                endRowIndex: match.rowIndex + 1,
+                                startColumnIndex: 4,
+                                endColumnIndex: 5
+                            },
+                            cell: { note: noteText },
+                            fields: 'note'
+                        }
+                    }]
+                }
+            });
+            restored++;
+        } catch (err) {
+            failed++;
+            console.error(`❌ restoreRegistrationNotesToSheet: "${evObj.name}":`, err && err.message ? err.message : err);
+        }
+    }
+
+    console.log(`🔄 restoreRegistrationNotesToSheet: відновлено ${restored}, помилок ${failed}`);
+    return { restored, failed };
+}
+
 async function initSheets() {
     try {
         sheetsClient = await createAuthorizedSheetsClient();
@@ -3034,6 +3101,7 @@ async function initSheets() {
         // Початкове завантаження розкладу та періодичне оновлення
         try {
             await loadEventsFromSheet();
+            await restoreRegistrationNotesToSheet();
             await clearWeeklyScheduleRegistrationNotesIfNeeded();
         } catch (e) {
             console.error('Initial loadEventsFromSheet failed', e);
@@ -5384,67 +5452,7 @@ bot.on('message', async (msg) => {
     // ВІДНОВЛЕННЯ: команда для запису нотаток реєстрацій назад у таблицю з пам'яті
     if (text === '/restore_notes') {
         bot.sendMessage(chatId, '⏳ Відновлюю нотатки реєстрацій у таблиці...');
-        let restored = 0;
-        let failed = 0;
-
-        // Зібрати всі реєстрації (свої + подруг) по eventId
-        const registrationsByEventId = new Map();
-
-        const allUserRegs = Object.values(userEventRegistrations || {}).flat();
-        const allFriendRegs = Object.values(friendEventRegistrations || {}).flat();
-
-        for (const reg of [...allUserRegs, ...allFriendRegs]) {
-            if (!reg || !reg.eventId) continue;
-            if (!registrationsByEventId.has(reg.eventId)) {
-                registrationsByEventId.set(reg.eventId, []);
-            }
-            registrationsByEventId.get(reg.eventId).push({ name: reg.registrantName || '', phone: reg.registrantPhone || '' });
-        }
-
-        for (const [eventId, registrants] of registrationsByEventId.entries()) {
-            const evObj = events.find(e => e.id === eventId);
-            if (!evObj) continue;
-
-            const match = await findScheduleRowByEvent(evObj);
-            if (!match) {
-                failed++;
-                continue;
-            }
-
-            const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, match.scheduleSheet);
-            if (sheetId === null || typeof sheetId === 'undefined') {
-                failed++;
-                continue;
-            }
-
-            const noteText = buildRegistrantsNoteFromList(registrants.length, registrants);
-
-            try {
-                await sheetsClient.spreadsheets.batchUpdate({
-                    spreadsheetId: SPREADSHEET_ID,
-                    requestBody: {
-                        requests: [{
-                            repeatCell: {
-                                range: {
-                                    sheetId,
-                                    startRowIndex: match.rowIndex,
-                                    endRowIndex: match.rowIndex + 1,
-                                    startColumnIndex: 4,
-                                    endColumnIndex: 5
-                                },
-                                cell: { note: noteText },
-                                fields: 'note'
-                            }
-                        }]
-                    }
-                });
-                restored++;
-            } catch (err) {
-                failed++;
-                console.error(`❌ /restore_notes: не вдалося відновити нотатку для "${evObj.name}":`, err && err.message ? err.message : err);
-            }
-        }
-
+        const { restored, failed } = await restoreRegistrationNotesToSheet();
         bot.sendMessage(chatId, `✅ Відновлення завершено.\nВідновлено нотаток: ${restored}\nПомилок: ${failed}`);
         return;
     }
