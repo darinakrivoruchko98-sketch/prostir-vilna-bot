@@ -2354,6 +2354,12 @@ async function clearWeeklyScheduleRegistrationNotesIfNeeded() {
                     continue;
                 }
 
+                // Очищаємо нотатки лише для минулих або сьогоднішніх заходів,
+                // щоб не стерти реєстрації на майбутні заходи наступного тижня
+                if (parsed.event.date > now) {
+                    continue;
+                }
+
                 requests.push({
                     repeatCell: {
                         range: {
@@ -5372,6 +5378,74 @@ bot.on('message', async (msg) => {
         } catch (e) {
             bot.sendMessage(chatId, `❌ Помилка: ${e.message}`);
         }
+        return;
+    }
+
+    // ВІДНОВЛЕННЯ: команда для запису нотаток реєстрацій назад у таблицю з пам'яті
+    if (text === '/restore_notes') {
+        bot.sendMessage(chatId, '⏳ Відновлюю нотатки реєстрацій у таблиці...');
+        let restored = 0;
+        let failed = 0;
+
+        // Зібрати всі реєстрації (свої + подруг) по eventId
+        const registrationsByEventId = new Map();
+
+        const allUserRegs = Object.values(userEventRegistrations || {}).flat();
+        const allFriendRegs = Object.values(friendEventRegistrations || {}).flat();
+
+        for (const reg of [...allUserRegs, ...allFriendRegs]) {
+            if (!reg || !reg.eventId) continue;
+            if (!registrationsByEventId.has(reg.eventId)) {
+                registrationsByEventId.set(reg.eventId, []);
+            }
+            registrationsByEventId.get(reg.eventId).push({ name: reg.registrantName || '', phone: reg.registrantPhone || '' });
+        }
+
+        for (const [eventId, registrants] of registrationsByEventId.entries()) {
+            const evObj = events.find(e => e.id === eventId);
+            if (!evObj) continue;
+
+            const match = await findScheduleRowByEvent(evObj);
+            if (!match) {
+                failed++;
+                continue;
+            }
+
+            const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, match.scheduleSheet);
+            if (sheetId === null || typeof sheetId === 'undefined') {
+                failed++;
+                continue;
+            }
+
+            const noteText = buildRegistrantsNoteFromList(registrants.length, registrants);
+
+            try {
+                await sheetsClient.spreadsheets.batchUpdate({
+                    spreadsheetId: SPREADSHEET_ID,
+                    requestBody: {
+                        requests: [{
+                            repeatCell: {
+                                range: {
+                                    sheetId,
+                                    startRowIndex: match.rowIndex,
+                                    endRowIndex: match.rowIndex + 1,
+                                    startColumnIndex: 4,
+                                    endColumnIndex: 5
+                                },
+                                cell: { note: noteText },
+                                fields: 'note'
+                            }
+                        }]
+                    }
+                });
+                restored++;
+            } catch (err) {
+                failed++;
+                console.error(`❌ /restore_notes: не вдалося відновити нотатку для "${evObj.name}":`, err && err.message ? err.message : err);
+            }
+        }
+
+        bot.sendMessage(chatId, `✅ Відновлення завершено.\nВідновлено нотаток: ${restored}\nПомилок: ${failed}`);
         return;
     }
 
