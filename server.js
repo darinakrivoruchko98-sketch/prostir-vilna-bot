@@ -19,6 +19,8 @@ const AI_API_URL = process.env.AI_API_URL || 'https://api.openai.com/v1/chat/com
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
 const AI_HTTP_TIMEOUT_MS = Number(process.env.AI_HTTP_TIMEOUT_MS || 12000);
 const AI_ENABLED = Boolean(AI_API_KEY);
+const BROADCAST_OWNER_CHAT_ID = Number(String(process.env.BROADCAST_OWNER_CHAT_ID || process.env.DARYNA_CHAT_ID || config.DARYNA_CHAT_ID || '375328037').trim());
+const BROADCAST_TRIGGER_REGEX = /^\s*(?:❗️?)+\s*/;
 const APP_TIME_ZONE = process.env.TZ || 'Europe/Kyiv';
 const REMINDER_DELIVERY_WINDOW_MINUTES = 10;
 const REMINDER_SHORT_WINDOW_MINUTES = 1;
@@ -3235,7 +3237,8 @@ async function appendRegistrationRow(chatId, user) {
         user.health || "",
         user.childrenCount || "",
         user.employment || "",
-        user.gbvAffected || ""
+        user.gbvAffected || "",
+        String(chatId || '')
     ];
 
     const normalizeUsername = (value) => String(value || '').trim().toLowerCase().replace(/^@+/, '');
@@ -3304,7 +3307,7 @@ async function appendRegistrationRow(chatId, user) {
 
         for (let i = searchStartIndex; i < rows.length; i++) {
             const row = rows[i] || [];
-            const personalDataHasValues = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].some((idx) => String(row[idx] || '').trim() !== '');
+            const personalDataHasValues = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].some((idx) => String(row[idx] || '').trim() !== '');
             if (!personalDataHasValues) {
                 targetRow = i + 1;
                 break;
@@ -3337,11 +3340,11 @@ async function appendRegistrationRow(chatId, user) {
             console.log(`\n📝 Спроба ${attempt}/${maxTries} запису в таблицю`);
             console.log(`Spreadsheet ID: ${PERSONAL_DATA_SPREADSHEET_ID}`);
             console.log(`Sheet Name: ${PERSONAL_DATA_SHEET_NAME}`);
-            console.log(`Range: ${PERSONAL_DATA_SHEET_NAME}!A:J`);
+            console.log(`Range: ${PERSONAL_DATA_SHEET_NAME}!A:K`);
             
             const existingResp = await sheetsClient.spreadsheets.values.get({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${PERSONAL_DATA_SHEET_NAME}!A:J`,
+                range: `${PERSONAL_DATA_SHEET_NAME}!A:K`,
             });
             const rows = existingResp.data.values || [];
             const existingRowNumber = findExistingRowByIdentity(rows);
@@ -3354,7 +3357,7 @@ async function appendRegistrationRow(chatId, user) {
 
             await sheetsClient.spreadsheets.values.update({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${PERSONAL_DATA_SHEET_NAME}!A${targetRow}:J${targetRow}`,
+                range: `${PERSONAL_DATA_SHEET_NAME}!A${targetRow}:K${targetRow}`,
                 valueInputOption: "RAW",
                 requestBody: { values: [valuesToWrite] }
             });
@@ -3374,11 +3377,11 @@ async function appendRegistrationRow(chatId, user) {
             const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
             if ((msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('sheet') ) && attempt === 1) {
                 try {
-                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:J (перший аркуш)');
+                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:K (перший аркуш)');
 
                     const existingResp = await sheetsClient.spreadsheets.values.get({
                         spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                        range: "A:J",
+                        range: "A:K",
                     });
                     const rows = existingResp.data.values || [];
                     const existingRowNumber = findExistingRowByIdentity(rows);
@@ -3388,15 +3391,15 @@ async function appendRegistrationRow(chatId, user) {
 
                     await sheetsClient.spreadsheets.values.update({
                         spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                        range: `A${targetRow}:J${targetRow}`,
+                        range: `A${targetRow}:K${targetRow}`,
                         valueInputOption: "RAW",
                         requestBody: { values: [valuesToWrite] }
                     });
-                    console.log(`Записано в таблицю (fallback A:J, рядок ${targetRow}) ✅`);
+                    console.log(`Записано в таблицю (fallback A:K, рядок ${targetRow}) ✅`);
                     return;
                 } catch (e2) {
                     lastErr = e2;
-                    console.error('Fallback append to A:J failed:', e2 && e2.message ? e2.message : e2);
+                    console.error('Fallback append to A:K failed:', e2 && e2.message ? e2.message : e2);
                 }
             }
 
@@ -4908,6 +4911,127 @@ async function processParsedEvents(parsedEvents) {
         return false;
     }
 
+    function collectRegisteredRecipientChatIds(ownerChatId) {
+        const recipientIds = new Set();
+
+        const maybeAdd = (rawId) => {
+            const normalized = Number(String(rawId || '').trim());
+            if (!Number.isFinite(normalized) || normalized <= 0) return;
+            if (normalized === ownerChatId) return;
+            recipientIds.add(normalized);
+        };
+
+        Object.keys(knownUsers || {}).forEach(maybeAdd);
+        Object.keys(userEventRegistrations || {}).forEach(maybeAdd);
+
+        for (const [chatId, user] of Object.entries(users || {})) {
+            const profile = user || {};
+            const hasProfile = String(profile.name || '').trim() && String(profile.phone || '').trim();
+            if (hasProfile || profile.profileHydrated === true) {
+                maybeAdd(chatId);
+            }
+        }
+
+        return Array.from(recipientIds);
+    }
+
+    async function loadRegisteredRecipientChatIdsFromSheet() {
+        if (!sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID) {
+            return [];
+        }
+
+        const recipientIds = new Set();
+        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:K`, 'A:K', `${PERSONAL_DATA_SHEET_NAME}!A:G`, 'A:G'];
+
+        for (const range of rangesToTry) {
+            try {
+                const resp = await sheetsClient.spreadsheets.values.get({
+                    spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                    range
+                });
+                const rows = resp.data.values || [];
+
+                for (let i = 1; i < rows.length; i++) {
+                    const row = rows[i] || [];
+                    const candidates = [row[10], row[6]]; // K (new) and G (legacy)
+
+                    for (const candidate of candidates) {
+                        const normalizedText = String(candidate || '').trim();
+                        if (!/^\d{6,}$/.test(normalizedText)) continue;
+                        const numericId = Number(normalizedText);
+                        if (Number.isFinite(numericId) && numericId > 0) {
+                            recipientIds.add(numericId);
+                        }
+                    }
+                }
+
+                if (recipientIds.size > 0) {
+                    break;
+                }
+            } catch (e) {
+                const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+                if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                    continue;
+                }
+                console.error('❌ Не вдалося завантажити chatId отримувачів з таблиці:', e && e.message ? e.message : e);
+                break;
+            }
+        }
+
+        return Array.from(recipientIds);
+    }
+
+    function parseOwnerBroadcastText(messageText) {
+        const rawText = String(messageText || '');
+        if (!BROADCAST_TRIGGER_REGEX.test(rawText)) {
+            return null;
+        }
+
+        const payload = rawText.replace(BROADCAST_TRIGGER_REGEX, '').trim();
+        return payload;
+    }
+
+    async function tryHandleOwnerBroadcast(chatId, messageText) {
+        if (!Number.isFinite(BROADCAST_OWNER_CHAT_ID) || chatId !== BROADCAST_OWNER_CHAT_ID) {
+            return false;
+        }
+
+        const broadcastText = parseOwnerBroadcastText(messageText);
+        if (broadcastText === null) {
+            return false;
+        }
+
+        if (!broadcastText) {
+            await bot.sendMessage(chatId, 'Після тригера ❗️ додайте текст для розсилки. Наприклад: ❗️ Завтра заняття о 12:00');
+            return true;
+        }
+
+        const inMemoryRecipients = collectRegisteredRecipientChatIds(chatId);
+        const sheetRecipients = await loadRegisteredRecipientChatIdsFromSheet();
+        const recipients = Array.from(new Set([...inMemoryRecipients, ...sheetRecipients]))
+            .filter((recipientChatId) => recipientChatId !== chatId);
+        if (recipients.length === 0) {
+            await bot.sendMessage(chatId, 'Не знайдено жодного зареєстрованого отримувача для розсилки.');
+            return true;
+        }
+
+        let sentCount = 0;
+        let failedCount = 0;
+
+        for (const recipientChatId of recipients) {
+            try {
+                await bot.sendMessage(recipientChatId, broadcastText);
+                sentCount += 1;
+            } catch (error) {
+                failedCount += 1;
+                console.error(`❌ Broadcast send failed for chatId=${recipientChatId}:`, error && error.message ? error.message : error);
+            }
+        }
+
+        await bot.sendMessage(chatId, `📣 Розсилку виконано. Успішно: ${sentCount}. Помилки: ${failedCount}.`);
+        return true;
+    }
+
 
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
@@ -4915,6 +5039,10 @@ bot.on('message', async (msg) => {
     const normalizedUserText = normalizeText(String(text || '')).toLowerCase().trim();
 
     if (!text) return;
+
+    if (msg.chat.type === 'private' && await tryHandleOwnerBroadcast(chatId, text)) {
+        return;
+    }
     
     // ДІАГНОСТИКА: логуємо всі групові повідомлення
     if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
