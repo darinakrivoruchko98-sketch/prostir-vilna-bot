@@ -21,6 +21,7 @@ const AI_HTTP_TIMEOUT_MS = Number(process.env.AI_HTTP_TIMEOUT_MS || 12000);
 const AI_ENABLED = Boolean(AI_API_KEY);
 const BROADCAST_OWNER_CHAT_ID = Number(String(process.env.BROADCAST_OWNER_CHAT_ID || process.env.DARYNA_CHAT_ID || config.DARYNA_CHAT_ID || '375328037').trim());
 const BROADCAST_TRIGGER_REGEX = /^\s*(?:❗️?)+\s*/;
+const BROADCAST_TRIGGER_ANYWHERE_REGEX = /❗️?|‼️/;
 const APP_TIME_ZONE = process.env.TZ || 'Europe/Kyiv';
 const REMINDER_DELIVERY_WINDOW_MINUTES = 10;
 const REMINDER_SHORT_WINDOW_MINUTES = 1;
@@ -4983,11 +4984,13 @@ async function processParsedEvents(parsedEvents) {
 
     function parseOwnerBroadcastText(messageText) {
         const rawText = String(messageText || '');
-        if (!BROADCAST_TRIGGER_REGEX.test(rawText)) {
+        if (!BROADCAST_TRIGGER_ANYWHERE_REGEX.test(rawText)) {
             return null;
         }
 
-        const payload = rawText.replace(BROADCAST_TRIGGER_REGEX, '').trim();
+        const payload = BROADCAST_TRIGGER_REGEX.test(rawText)
+            ? rawText.replace(BROADCAST_TRIGGER_REGEX, '').trim()
+            : rawText.trim();
         return payload;
     }
 
