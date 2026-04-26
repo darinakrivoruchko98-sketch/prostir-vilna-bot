@@ -1015,6 +1015,145 @@ function syncReminderRegistrationsWithEvents() {
     }
 }
 
+function normalizeEventTitleForScheduleDiff(value) {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/[^a-zа-яіїєґ0-9\s]/giu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function buildLikelyEditedEventMap(previousEvents, currentEvents) {
+    const mapping = new Map();
+    const currentById = new Map((currentEvents || []).map((event) => [event.id, event]));
+    const unmatchedCurrent = new Map();
+
+    for (const event of currentEvents || []) {
+        unmatchedCurrent.set(event.id, event);
+    }
+
+    for (const prevEvent of previousEvents || []) {
+        const exactMatch = currentById.get(prevEvent && prevEvent.id);
+        if (!exactMatch) {
+            continue;
+        }
+        mapping.set(prevEvent.id, exactMatch);
+        unmatchedCurrent.delete(exactMatch.id);
+    }
+
+    const titleBuckets = new Map();
+    for (const event of unmatchedCurrent.values()) {
+        const titleKey = normalizeEventTitleForScheduleDiff(event && event.name);
+        if (!titleKey) {
+            continue;
+        }
+        if (!titleBuckets.has(titleKey)) {
+            titleBuckets.set(titleKey, []);
+        }
+        titleBuckets.get(titleKey).push(event);
+    }
+
+    for (const prevEvent of previousEvents || []) {
+        if (!prevEvent || mapping.has(prevEvent.id)) {
+            continue;
+        }
+
+        const titleKey = normalizeEventTitleForScheduleDiff(prevEvent.name);
+        if (!titleKey) {
+            continue;
+        }
+
+        const candidates = titleBuckets.get(titleKey) || [];
+        if (candidates.length === 0) {
+            continue;
+        }
+
+        let bestIndex = 0;
+        let bestScore = Number.POSITIVE_INFINITY;
+        const prevTime = prevEvent.date instanceof Date ? prevEvent.date.getTime() : Number.NaN;
+
+        for (let i = 0; i < candidates.length; i += 1) {
+            const candidate = candidates[i];
+            const candidateTime = candidate && candidate.date instanceof Date ? candidate.date.getTime() : Number.NaN;
+            const score = Number.isFinite(prevTime) && Number.isFinite(candidateTime)
+                ? Math.abs(candidateTime - prevTime)
+                : 0;
+            if (score < bestScore) {
+                bestScore = score;
+                bestIndex = i;
+            }
+        }
+
+        const [matchedEvent] = candidates.splice(bestIndex, 1);
+        if (matchedEvent) {
+            mapping.set(prevEvent.id, matchedEvent);
+            if (candidates.length === 0) {
+                titleBuckets.delete(titleKey);
+            }
+        }
+    }
+
+    return mapping;
+}
+
+function remapReminderRegistrationsToUpdatedEvents(eventMap) {
+    if (!eventMap || eventMap.size === 0) {
+        return;
+    }
+
+    let hasReminderChanges = false;
+
+    const applyMapping = (registrations) => {
+        if (!Array.isArray(registrations) || registrations.length === 0) {
+            return;
+        }
+
+        for (const registration of registrations) {
+            if (!registration || !registration.eventId) {
+                continue;
+            }
+
+            const mappedEvent = eventMap.get(registration.eventId);
+            if (!mappedEvent || !mappedEvent.date) {
+                continue;
+            }
+
+            if (registration.eventId !== mappedEvent.id) {
+                registration.eventId = mappedEvent.id;
+                hasReminderChanges = true;
+            }
+
+            const regDateTime = registration.eventDate instanceof Date
+                ? registration.eventDate.getTime()
+                : new Date(registration.eventDate).getTime();
+            const mappedTime = mappedEvent.date.getTime();
+
+            if (regDateTime !== mappedTime) {
+                registration.eventDate = mappedEvent.date;
+                hasReminderChanges = true;
+            }
+
+            if (registration.eventName !== mappedEvent.name) {
+                registration.eventName = mappedEvent.name;
+                hasReminderChanges = true;
+            }
+        }
+    };
+
+    for (const chatId in userEventRegistrations) {
+        applyMapping(userEventRegistrations[chatId]);
+    }
+
+    for (const chatId in friendEventRegistrations) {
+        applyMapping(friendEventRegistrations[chatId]);
+    }
+
+    if (hasReminderChanges) {
+        saveReminderStateToDisk();
+        console.log('♻️ Синхронізовано реєстрації після редагування розкладу');
+    }
+}
+
 function formatCancelledEventDateTime(eventDate) {
     return {
         date: eventDate.toLocaleDateString('uk-UA', {
@@ -3278,12 +3417,16 @@ async function loadEventsFromSheet() {
             console.warn(`⚠️ Розклад прочитано, але заходів не знайдено. Перевірте дані у листі ${SCHEDULE_SHEET_NAME}.`);
         }
 
+        const previousEvents = Array.from(previousEventsById.values());
+        const eventRemap = buildLikelyEditedEventMap(previousEvents, events);
+        remapReminderRegistrationsToUpdatedEvents(eventRemap);
+
         const now = new Date();
-        const cancelledEvents = Array.from(previousEventsById.values()).filter((event) => (
+        const cancelledEvents = previousEvents.filter((event) => (
             event &&
             event.date instanceof Date &&
             event.date > now &&
-            !seen.has(event.id)
+            !eventRemap.has(event.id)
         ));
 
         if (cancelledEvents.length > 0) {
