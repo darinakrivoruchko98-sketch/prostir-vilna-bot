@@ -1583,15 +1583,11 @@ function parseAfishaDaySelection(value) {
 }
 
 function buildAfishaDaysKeyboardData() {
-    const now = new Date();
     const seenDates = new Set();
     const uniqueDates = [];
 
     for (const eventItem of getAllEvents()) {
         if (!eventItem || !(eventItem.date instanceof Date) || Number.isNaN(eventItem.date.getTime())) {
-            continue;
-        }
-        if (eventItem.date <= now) {
             continue;
         }
         const eventDateOnly = new Date(eventItem.date);
@@ -1680,7 +1676,6 @@ async function showDayAgenda(chatId, dayName) {
     }
     users[chatId].context = 'afisha';
 
-    const now = new Date();
     let dayEventsForDisplay;
     let dateHeaderLabel;
 
@@ -1690,7 +1685,7 @@ async function showDayAgenda(chatId, dayName) {
         const nextDay = new Date(specificDate);
         nextDay.setDate(nextDay.getDate() + 1);
         dayEventsForDisplay = getAllEvents()
-            .filter((e) => e.date > now && e.date >= specificDate && e.date < nextDay)
+            .filter((e) => e.date >= specificDate && e.date < nextDay)
             .sort((a, b) => a.date - b.date);
         dateHeaderLabel = formatSheetDate(specificDate);
     } else {
@@ -1707,7 +1702,6 @@ async function showDayAgenda(chatId, dayName) {
         }
         const { weekdayKey: normalizedDay, dayNum } = parsedSelection;
         dayEventsForDisplay = getEventsForDay(dayNum)
-            .filter((e) => e.date > now)
             .sort((a, b) => a.date - b.date);
         dateHeaderLabel = normalizedDay;
     }
@@ -3308,6 +3302,7 @@ async function loadEventsFromSheet() {
     try {
         const previousEventsById = new Map(events.map((event) => [event.id, event]));
         let rows = [];
+        let activeScheduleSheet = null;
         const readErrors = [];
         for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
             try {
@@ -3317,6 +3312,7 @@ async function loadEventsFromSheet() {
                 });
                 rows = resp.data.values || [];
                 if (rows && rows.length) {
+                    activeScheduleSheet = scheduleSheet;
                     console.log(`   Використано лист ${scheduleSheet}`);
                     break;
                 }
@@ -3337,7 +3333,10 @@ async function loadEventsFromSheet() {
                     range: "A:E"
                 });
                 rows = alt2.data.values || [];
-                if (rows && rows.length) console.log('   Використано діапазон A:E');
+                if (rows && rows.length) {
+                    activeScheduleSheet = 'A:E';
+                    console.log('   Використано діапазон A:E');
+                }
             } catch (e) {
                 const msg = e && e.message ? e.message : String(e);
                 readErrors.push({ sheet: 'A:E', message: msg });
@@ -3369,7 +3368,7 @@ async function loadEventsFromSheet() {
             }
 
             const ev = parsed.event;
-            ev.scheduleSheetName = scheduleSheet;
+            ev.scheduleSheetName = activeScheduleSheet || SCHEDULE_SHEET_NAME || '';
             ev.scheduleRowNumber = i + 1;
 
             if (i === 0 && /дата|час|назва|захід/i.test(String((row || []).join(' ')))) {
