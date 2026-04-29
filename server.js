@@ -1023,16 +1023,42 @@ function normalizeEventTitleForScheduleDiff(value) {
         .trim();
 }
 
+function getScheduleEventSourceKey(event) {
+    const sheetName = String(event && event.scheduleSheetName || '').trim();
+    const rowNumber = Number(event && event.scheduleRowNumber);
+
+    if (!sheetName || !Number.isInteger(rowNumber) || rowNumber <= 0) {
+        return '';
+    }
+
+    return `${sheetName}:${rowNumber}`;
+}
+
 function buildLikelyEditedEventMap(previousEvents, currentEvents) {
     const mapping = new Map();
     const currentById = new Map((currentEvents || []).map((event) => [event.id, event]));
+    const currentBySourceKey = new Map();
     const unmatchedCurrent = new Map();
 
     for (const event of currentEvents || []) {
         unmatchedCurrent.set(event.id, event);
+
+        const sourceKey = getScheduleEventSourceKey(event);
+        if (sourceKey) {
+            currentBySourceKey.set(sourceKey, event);
+        }
     }
 
     for (const prevEvent of previousEvents || []) {
+        const sourceKey = getScheduleEventSourceKey(prevEvent);
+        const sourceMatch = sourceKey ? currentBySourceKey.get(sourceKey) : null;
+        if (sourceMatch) {
+            mapping.set(prevEvent.id, sourceMatch);
+            unmatchedCurrent.delete(sourceMatch.id);
+            currentBySourceKey.delete(sourceKey);
+            continue;
+        }
+
         const exactMatch = currentById.get(prevEvent && prevEvent.id);
         if (!exactMatch) {
             continue;
@@ -3399,6 +3425,8 @@ async function loadEventsFromSheet() {
             }
 
             const ev = parsed.event;
+            ev.scheduleSheetName = scheduleSheet;
+            ev.scheduleRowNumber = i + 1;
 
             if (i === 0 && /дата|час|назва|захід/i.test(String((row || []).join(' ')))) {
                 continue;
