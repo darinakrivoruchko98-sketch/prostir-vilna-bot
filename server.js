@@ -2403,96 +2403,9 @@ function isSameLocalDate(left, right) {
 }
 
 async function clearWeeklyScheduleRegistrationNotesIfNeeded() {
-    if (!sheetsClient || !SPREADSHEET_ID) {
-        return;
-    }
-
-    const now = new Date();
-    if (now.getDay() !== 0) {
-        return;
-    }
-
-    const cleanupKey = getLocalDateKey(now);
-    if (lastWeeklyScheduleNotesCleanupKey === cleanupKey) {
-        return;
-    }
-
-    const sundayEventsToday = getAllEvents().filter((event) => {
-        return event && event.date instanceof Date && isSameLocalDate(event.date, now);
-    });
-
-    if (sundayEventsToday.length > 0) {
-        const lastSundayEventTime = sundayEventsToday.reduce((latest, event) => {
-            return event.date > latest ? event.date : latest;
-        }, sundayEventsToday[0].date);
-
-        if (now < lastSundayEventTime) {
-            return;
-        }
-    } else {
-        return;
-    }
-
-    try {
-        for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
-            const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, scheduleSheet);
-            if (sheetId === null || typeof sheetId === 'undefined') {
-                continue;
-            }
-
-            const resp = await sheetsClient.spreadsheets.values.get({
-                spreadsheetId: SPREADSHEET_ID,
-                range: `${scheduleSheet}!A:E`
-            });
-
-            const rows = resp.data.values || [];
-            let dateContext = null;
-            const requests = [];
-
-            for (const [rowIndex, row] of rows.entries()) {
-                const parsed = parseEventFromRow(row, dateContext);
-                dateContext = parsed.nextDateContext;
-
-                if (!parsed.event) {
-                    continue;
-                }
-
-                // Очищаємо нотатки лише для минулих або сьогоднішніх заходів,
-                // щоб не стерти реєстрації на майбутні заходи наступного тижня
-                if (parsed.event.date > now) {
-                    continue;
-                }
-
-                requests.push({
-                    repeatCell: {
-                        range: {
-                            sheetId,
-                            startRowIndex: rowIndex,
-                            endRowIndex: rowIndex + 1,
-                            startColumnIndex: 4,
-                            endColumnIndex: 5
-                        },
-                        cell: {
-                            note: ''
-                        },
-                        fields: 'note'
-                    }
-                });
-            }
-
-            if (requests.length > 0) {
-                await sheetsClient.spreadsheets.batchUpdate({
-                    spreadsheetId: SPREADSHEET_ID,
-                    requestBody: { requests }
-                });
-                console.log(`🧹 Очищено нотатки реєстрацій у листі ${scheduleSheet} (${requests.length} рядків)`);
-            }
-        }
-
-        lastWeeklyScheduleNotesCleanupKey = cleanupKey;
-    } catch (error) {
-        console.error('❌ Не вдалося очистити тижневі нотатки реєстрацій у розкладі:', error && error.message ? error.message : error);
-    }
+    // Автоматичне щотижневе очищення нотаток вимкнено,
+    // щоб недільні нотатки в розкладі не скидалися.
+    return;
 }
 
 // Фільтрувати та сортувати заходи
