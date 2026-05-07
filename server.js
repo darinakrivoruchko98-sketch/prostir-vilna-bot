@@ -228,6 +228,9 @@ let lastWeeklyScheduleNotesCleanupKey = null;
 const REMINDER_RESTORE_CACHE_MS = 60 * 1000;
 const reminderRestoreInFlight = new Map();
 const REMINDERS_STATE_PATH = process.env.REMINDERS_STATE_PATH || path.join(__dirname, 'data', 'reminders-state.json');
+const SEEN_USERS_PATH = process.env.SEEN_USERS_PATH || path.join(__dirname, 'data', 'seen-users.json');
+
+let seenChatIds = new Set();
 
 function createDefaultReminderSettings(enabled = true) {
     return {
@@ -441,6 +444,36 @@ function normalizeFriendRegistration(raw) {
         registrantName,
         registrantPhone
     };
+}
+
+function loadSeenUsersFromDisk() {
+    try {
+        if (!fs.existsSync(SEEN_USERS_PATH)) return;
+        const raw = fs.readFileSync(SEEN_USERS_PATH, 'utf8');
+        const ids = JSON.parse(raw || '[]');
+        if (Array.isArray(ids)) {
+            seenChatIds = new Set(ids.map(Number).filter(Boolean));
+            console.log(`♻️ Відновлено ${seenChatIds.size} відомих chatId з ${SEEN_USERS_PATH}`);
+        }
+    } catch (error) {
+        console.error(`❌ Не вдалося відновити seen-users (${SEEN_USERS_PATH}):`, error && error.message ? error.message : error);
+    }
+}
+
+function saveSeenUsersToDisk() {
+    try {
+        fs.mkdirSync(path.dirname(SEEN_USERS_PATH), { recursive: true });
+        fs.writeFileSync(SEEN_USERS_PATH, JSON.stringify(Array.from(seenChatIds)), 'utf8');
+    } catch (error) {
+        console.error(`❌ Не вдалося зберегти seen-users (${SEEN_USERS_PATH}):`, error && error.message ? error.message : error);
+    }
+}
+
+function recordSeenChatId(chatId) {
+    const numId = parsePositiveChatId(chatId);
+    if (!numId || seenChatIds.has(numId)) return;
+    seenChatIds.add(numId);
+    saveSeenUsersToDisk();
 }
 
 function loadReminderStateFromDisk() {
@@ -756,6 +789,7 @@ function saveReminderStateToDisk() {
 }
 
 loadReminderStateFromDisk();
+loadSeenUsersFromDisk();
 
 /* ===== HELPER FUNCTIONS ===== */
 
@@ -5460,6 +5494,10 @@ async function processParsedEvents(parsedEvents) {
             attachProfile(chatId, profile || {});
         }
 
+        for (const seenId of seenChatIds) {
+            maybeAddChatId(seenId);
+        }
+
         return {
             explicitChatIds,
             usernameToChatId,
@@ -5748,6 +5786,7 @@ bot.on('message', async (msg) => {
     const normalizedUserText = normalizeText(String(text || '')).toLowerCase().trim();
 
     if (msg.chat.type === 'private') {
+        recordSeenChatId(chatId);
         const activeUser = users[chatId] || knownUsers[chatId] || {};
         await autoBackfillChatIdForRegisteredUser(chatId, msg.from || {}, activeUser);
     }
