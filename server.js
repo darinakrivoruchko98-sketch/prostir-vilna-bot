@@ -1963,7 +1963,11 @@ function parseEventFromRow(row, currentDateContext) {
     }
 
     if (!Number.isFinite(seats)) {
-        const seatCell = cells.find((cell, idx) => idx !== dateIndex && idx !== timeIndex && /\d+/.test(cell));
+        // Не підхоплюємо колонку E (registrations) як місткість — це призводило б до seatsLeft=0
+        const registrationsIdx = 4;
+        const seatCell = cells.find((cell, idx) =>
+            idx !== dateIndex && idx !== timeIndex && idx !== registrationsIdx && /\d+/.test(cell)
+        );
         seats = seatCell ? parseInt((seatCell.match(/\d+/) || [0])[0], 10) : 0;
     }
 
