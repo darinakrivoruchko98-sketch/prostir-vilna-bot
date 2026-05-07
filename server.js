@@ -20,8 +20,13 @@ const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
 const AI_HTTP_TIMEOUT_MS = Number(process.env.AI_HTTP_TIMEOUT_MS || 12000);
 const AI_ENABLED = Boolean(AI_API_KEY);
 const BROADCAST_OWNER_CHAT_ID = Number(String(process.env.BROADCAST_OWNER_CHAT_ID || process.env.DARYNA_CHAT_ID || config.DARYNA_CHAT_ID || '375328037').trim());
-const BROADCAST_TRIGGER_ANYWHERE_REGEX = /❗️?|‼️/;
+const BROADCAST_ALL_TRIGGER_REGEX = /❗️?|‼️/;
+const BROADCAST_TARGETED_TRIGGER_REGEX = /❕/;
 const APP_TIME_ZONE = process.env.TZ || 'Europe/Kyiv';
+// Захист ідентичності бота: якщо хтось змінить назву/опис через BotFather, бот відновить їх автоматично
+const BOT_DISPLAY_NAME = process.env.BOT_DISPLAY_NAME || 'Бот простору Вільна м. Дніпро';
+const BOT_DESCRIPTION = process.env.BOT_DESCRIPTION || '🌿 Простір Вільна — місце підтримки, творчості та відновлення у м. Дніпро. У чат-боті ви знайдете актуальні анонси заходів, реєстрації на майстер-класи, групові зустрічі, арт-терапію та корисну інформацію про події простору ✨';
+const BOT_SHORT_DESCRIPTION = process.env.BOT_SHORT_DESCRIPTION || '';
 const REMINDER_DELIVERY_WINDOW_MINUTES = 10;
 const REMINDER_SHORT_WINDOW_MINUTES = 1;
 const REMINDER_24H_HOURS_MIN = 1;
@@ -1001,9 +1006,8 @@ function syncReminderRegistrationsWithEvents() {
                 : new Date(registration.eventDate).getTime();
             const actualTime = actualEvent.date.getTime();
 
-            if (registrationTime !== actualTime || registration.eventName !== actualEvent.name) {
+            if (registrationTime !== actualTime) {
                 registration.eventDate = actualEvent.date;
-                registration.eventName = actualEvent.name;
                 hasReminderChanges = true;
             }
         }
@@ -1159,10 +1163,8 @@ function remapReminderRegistrationsToUpdatedEvents(eventMap) {
                 hasReminderChanges = true;
             }
 
-            if (registration.eventName !== mappedEvent.name) {
-                registration.eventName = mappedEvent.name;
-                hasReminderChanges = true;
-            }
+            // Не оновлюємо registration.eventName — людина реєструвалась під оригінальною назвою.
+            // Зміна назви в таблиці адміністратором не повинна змінювати ім'я заходу в нагадуваннях.
         }
     };
 
@@ -2350,19 +2352,49 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
     }
 
     const existingNote = await getScheduleCellNote(scheduleSheet, rowIndex);
-    let registrants = parseRegistrantsFromNote(existingNote);
+    let nextNote;
 
     if (removeRegistrant) {
+        // При відписці: парсимо, видаляємо, перебудовуємо
+        let registrants = parseRegistrantsFromNote(existingNote);
         const removeNameKey = normalizeRegistrantName(removeRegistrant.name);
         const removePhoneKey = normalizeRegistrantPhone(removeRegistrant.phone);
         if (removeNameKey || removePhoneKey) {
             registrants = registrants.filter((item) => !isSameRegistrant(item, removeNameKey, removePhoneKey));
         }
-    }
-
-    let nextNote = buildRegistrantsNoteFromList(registrationsCount, registrants);
-    if (fallbackRegistrant) {
-        nextNote = await buildRegistrantsNote(registrationsCount, fallbackRegistrant, nextNote);
+        nextNote = buildRegistrantsNoteFromList(registrationsCount, registrants);
+    } else if (fallbackRegistrant) {
+        // При реєстрації: ТІЛЬКИ ДОПИСУЄМО нового учасника в кінець нотатки.
+        // Не перебудовуємо повністю — інакше можна втратити записи що вже є.
+        const candidateName = String((fallbackRegistrant && fallbackRegistrant.name) || '').trim();
+        const candidatePhone = String((fallbackRegistrant && fallbackRegistrant.phone) || '').trim();
+        if (!candidateName && !candidatePhone) {
+            return;
+        }
+        const candidateNameKey = normalizeRegistrantName(candidateName);
+        const candidatePhoneKey = normalizeRegistrantPhone(candidatePhone);
+        const registrants = parseRegistrantsFromNote(existingNote);
+        const alreadyInNote = registrants.some((item) => isSameRegistrant(item, candidateNameKey, candidatePhoneKey));
+        if (alreadyInNote) {
+            // Вже є в нотатці — лише оновлюємо лічильник
+            const safeCount = Number.isFinite(registrationsCount) ? registrationsCount : registrants.length;
+            nextNote = existingNote.replace(/^Зареєстровано:\s*\d+/i, `Зареєстровано: ${safeCount}`);
+        } else {
+            // Дописуємо новий рядок в кінець існуючої нотатки
+            const newIndex = registrants.length + 1;
+            const newLine = `${newIndex}. ${candidateName || 'Без імені'}${candidatePhone ? ` | ${candidatePhone}` : ''}`;
+            const safeCount = Number.isFinite(registrationsCount) ? registrationsCount : newIndex;
+            const headerLine = `Зареєстровано: ${safeCount}`;
+            if (!existingNote.trim()) {
+                nextNote = `${headerLine}\n\n${newLine}`;
+            } else if (/^Зареєстровано:\s*\d+/i.test(existingNote.trim())) {
+                nextNote = existingNote.replace(/^Зареєстровано:\s*\d+/i, headerLine).trimEnd() + `\n${newLine}`;
+            } else {
+                nextNote = `${headerLine}\n\n${existingNote.trim()}\n${newLine}`;
+            }
+        }
+    } else {
+        return; // Нічого робити
     }
 
     await sheetsClient.spreadsheets.batchUpdate({
@@ -3191,6 +3223,53 @@ testDate2.setHours(10, 0);
 // events.push({ name: "Йога", date: testDate1, seats: 5, registrations: 0 });
 // events.push({ name: "Кіно-клуб", date: testDate2, seats: 0, registrations: 10 });
 
+/* ===== BOT IDENTITY GUARD ===== */
+// Відновлює назву та опис бота якщо хтось змінив їх через BotFather
+async function guardBotIdentity() {
+    if (!TOKEN) return;
+    const base = `https://api.telegram.org/bot${TOKEN}`;
+    try {
+        const tasks = [];
+        if (BOT_DISPLAY_NAME) {
+            tasks.push(
+                fetch(`${base}/setMyName`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: BOT_DISPLAY_NAME })
+                }).then(r => r.json()).then(r => {
+                    if (!r.ok) console.warn('⚠️ guardBotIdentity setMyName:', r.description);
+                    else console.log('🔒 Bot name verified/restored:', BOT_DISPLAY_NAME);
+                })
+            );
+        }
+        if (BOT_DESCRIPTION) {
+            tasks.push(
+                fetch(`${base}/setMyDescription`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ description: BOT_DESCRIPTION })
+                }).then(r => r.json()).then(r => {
+                    if (!r.ok) console.warn('⚠️ guardBotIdentity setMyDescription:', r.description);
+                })
+            );
+        }
+        if (BOT_SHORT_DESCRIPTION) {
+            tasks.push(
+                fetch(`${base}/setMyShortDescription`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ short_description: BOT_SHORT_DESCRIPTION })
+                }).then(r => r.json()).then(r => {
+                    if (!r.ok) console.warn('⚠️ guardBotIdentity setMyShortDescription:', r.description);
+                })
+            );
+        }
+        if (tasks.length > 0) await Promise.all(tasks);
+    } catch (err) {
+        console.error('❌ guardBotIdentity error:', err && err.message ? err.message : err);
+    }
+}
+
 /* ===== MAINTENANCE TIMERS ===== */
 // Очищати минулі заходи кожну хвилину
 setInterval(() => {
@@ -3205,6 +3284,12 @@ setInterval(() => {
 }, 60000);
 
 // reminders interval removed
+
+// Захист ідентичності бота: перевіряти і відновлювати назву/опис кожні 30 хвилин
+guardBotIdentity();
+setInterval(() => {
+    guardBotIdentity().catch(err => console.error('❌ guardBotIdentity interval error:', err && err.message ? err.message : err));
+}, 30 * 60 * 1000); // 30 хвилин
 
 // (Завантаження розкладу буде ініційовано після підключення Sheets у initSheets)
 
@@ -3281,7 +3366,11 @@ async function loadEventsFromSheet() {
             }
 
             const ev = parsed.event;
-            ev.scheduleSheetName = activeScheduleSheet || SCHEDULE_SHEET_NAME || '';
+            // Нормалізуємо назву аркуша: не зберігаємо діапазони на зразок 'A:E'
+            const normalizedSheetName = (activeScheduleSheet && !/^[A-Z]+:[A-Z]+$/i.test(activeScheduleSheet))
+                ? activeScheduleSheet
+                : (SCHEDULE_SHEET_NAME || '');
+            ev.scheduleSheetName = normalizedSheetName;
             ev.scheduleRowNumber = i + 1;
 
             if (i === 0 && /дата|час|назва|захід/i.test(String((row || []).join(' ')))) {
@@ -3305,13 +3394,25 @@ async function loadEventsFromSheet() {
         const eventRemap = buildLikelyEditedEventMap(previousEvents, events);
         remapReminderRegistrationsToUpdatedEvents(eventRemap);
 
+        // Збираємо source-keys всіх НОВИХ заходів
+        const newSourceKeys = new Set();
+        for (const ev of events) {
+            const sk = getScheduleEventSourceKey(ev);
+            if (sk) newSourceKeys.add(sk);
+        }
+
         const now = new Date();
-        const cancelledEvents = previousEvents.filter((event) => (
-            event &&
-            event.date instanceof Date &&
-            event.date > now &&
-            !eventRemap.has(event.id)
-        ));
+        // Скасований захід — той, якого НЕМАЄ у маппінгу І чий рядок у таблиці тепер порожній
+        // (якщо рядок зайнятий іншим заходом — це редагування, а не видалення)
+        const cancelledEvents = previousEvents.filter((event) => {
+            if (!event || !(event.date instanceof Date) || event.date <= now) return false;
+            if (eventRemap.has(event.id)) return false;
+            const sourceKey = getScheduleEventSourceKey(event);
+            // Якщо рядок все ще має якийсь захід — адміністратор просто відредагував,
+            // не видаляв; не надсилаємо сповіщення
+            if (sourceKey && newSourceKeys.has(sourceKey)) return false;
+            return true;
+        });
 
         if (cancelledEvents.length > 0) {
             await notifyUsersAboutCancelledEvents(cancelledEvents);
@@ -3950,9 +4051,9 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
     }
 
     // Оновлюємо лічильник тільки в пам'яті
+    // event.seats = місткість (константа), тому не зменшуємо
     if (evObj) {
         evObj.registrations = (evObj.registrations || 0) + 1;
-        if (typeof evObj.seats === 'number') evObj.seats = Math.max(0, evObj.seats - 1);
         await incrementSheetRegistration(evObj, registrantProfile);
     }
 
@@ -4047,13 +4148,10 @@ async function unregisterFromEvent(chatId, eventId) {
     }
     saveReminderStateToDisk();
 
-    // Оновлюємо коунтери в пам'яті (звільнюємо місце)
+    // Оновлюємо лічильник в пам'яті (seats = місткість, не чіпаємо)
     const event = events.find(e => e.id === eventId);
     if (event) {
         event.registrations = Math.max(0, (event.registrations || 1) - 1);
-        if (typeof event.seats === 'number') {
-            event.seats = event.seats + 1;
-        }
 
         const registrantProfile = await resolveRegistrantProfile(
             chatId,
@@ -4089,9 +4187,7 @@ async function unregisterFriendFromEvent(chatId, registrationKey) {
     const event = events.find((eventItem) => eventItem.id === registration.eventId);
     if (event) {
         event.registrations = Math.max(0, (event.registrations || 1) - 1);
-        if (typeof event.seats === 'number') {
-            event.seats = event.seats + 1;
-        }
+        // event.seats = місткість (константа), не змінюємо
 
         await decrementSheetRegistration(event, {
             userId: String(chatId || ''),
@@ -4145,7 +4241,8 @@ async function getUserWeeklyEvents(chatId, userProfile) {
 async function getSeatsLeft(eventId) {
     const event = events.find(e => e.id === eventId);
     if (!event) return 0;
-    return Math.max(0, Number(event.seats) || 0);
+    // seats = загальна місткість, реєстрації = зайняті місця
+    return Math.max(0, (Number(event.seats) || 0) - (Number(event.registrations) || 0));
 }
 
 async function appendEventToSheet(date, time, title, capacity) {
@@ -5042,6 +5139,292 @@ async function processParsedEvents(parsedEvents) {
         return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
     }
 
+    function parseBroadcastSelectorToken(rawToken) {
+        const token = String(rawToken || '').trim().replace(/^[,;]+|[,;]+$/g, '');
+        if (!token) return null;
+
+        const usernameMatch = token.match(/^@([a-zA-Z0-9_]{3,})$/);
+        if (usernameMatch) {
+            return {
+                raw: token,
+                type: 'username',
+                value: normalizeUsernameForBroadcast(usernameMatch[1])
+            };
+        }
+
+        const normalizedPhone = normalizePhoneForBroadcast(token);
+        if (normalizedPhone.length >= 10) {
+            return {
+                raw: token,
+                type: 'phone',
+                value: normalizedPhone
+            };
+        }
+
+        return null;
+    }
+
+    function parseBroadcastSelectorsLine(line) {
+        const source = String(line || '').trim();
+        if (!source) {
+            return [];
+        }
+
+        const rawTokens = source.match(/\S+/g) || [];
+        if (rawTokens.length === 0) {
+            return [];
+        }
+
+        const selectors = [];
+        for (const rawToken of rawTokens) {
+            const selector = parseBroadcastSelectorToken(rawToken);
+            if (!selector) {
+                return [];
+            }
+            selectors.push(selector);
+        }
+
+        return selectors;
+    }
+
+    function parseOwnerBroadcastRequest(messageText) {
+        const rawText = String(messageText || '');
+        const targetedTriggerMatch = rawText.match(BROADCAST_TARGETED_TRIGGER_REGEX);
+        const allTriggerMatch = rawText.match(BROADCAST_ALL_TRIGGER_REGEX);
+        const triggerMatch = targetedTriggerMatch || allTriggerMatch;
+        if (!triggerMatch) {
+            return null;
+        }
+
+        const triggerMode = targetedTriggerMatch ? 'targeted' : 'all';
+
+        const textAfterTrigger = rawText.slice(triggerMatch.index + triggerMatch[0].length).trim();
+        if (!textAfterTrigger) {
+            return { mode: triggerMode === 'targeted' ? 'targeted-empty-message' : 'empty' };
+        }
+
+        const lines = textAfterTrigger.split(/\r?\n/);
+        if (triggerMode === 'targeted') {
+            const firstLine = String(lines[0] || '').trim();
+            const separatorIndex = firstLine.indexOf('.');
+            const selectorsSource = separatorIndex >= 0
+                ? firstLine.slice(0, separatorIndex).trim()
+                : firstLine;
+            const inlineMessage = separatorIndex >= 0
+                ? firstLine.slice(separatorIndex + 1).trim()
+                : '';
+            const selectors = parseBroadcastSelectorsLine(selectorsSource);
+            const targetedText = [inlineMessage, ...lines.slice(1)]
+                .filter((part) => String(part || '').trim())
+                .join('\n')
+                .trim();
+            if (selectors.length === 0 || !targetedText) {
+                return {
+                    mode: 'targeted-empty-message',
+                    selectors
+                };
+            }
+
+            return {
+                mode: 'targeted',
+                selectors,
+                text: targetedText
+            };
+        }
+
+        return {
+            mode: 'all',
+            text: rawText
+        };
+    }
+
+    function mergeBroadcastDirectoryEntry(entriesByKey, entry) {
+        if (!entry || !entry.key) {
+            return;
+        }
+
+        if (!entriesByKey.has(entry.key)) {
+            entriesByKey.set(entry.key, {
+                kind: entry.kind,
+                value: entry.value,
+                key: entry.key,
+                usernames: new Set(),
+                phones: new Set(),
+                names: new Set()
+            });
+        }
+
+        const targetEntry = entriesByKey.get(entry.key);
+        const usernameKey = normalizeUsernameForBroadcast(entry.username);
+        const phoneKey = normalizePhoneForBroadcast(entry.phone);
+        const nameKey = normalizeNameForBroadcast(entry.name);
+
+        if (usernameKey) targetEntry.usernames.add(usernameKey);
+        if (phoneKey) targetEntry.phones.add(phoneKey);
+        if (nameKey) targetEntry.names.add(nameKey);
+    }
+
+    async function loadBroadcastRecipientDirectory(ownerChatId, inMemoryIndex) {
+        const entriesByKey = new Map();
+
+        const addChatEntry = (rawChatId, profile) => {
+            const chatId = parsePositiveChatId(rawChatId);
+            if (!chatId || chatId === ownerChatId) {
+                return;
+            }
+
+            mergeBroadcastDirectoryEntry(entriesByKey, {
+                kind: 'chatId',
+                value: chatId,
+                key: `id:${chatId}`,
+                username: profile && profile.username,
+                phone: profile && profile.phone,
+                name: profile && profile.name
+            });
+        };
+
+        for (const [rawChatId, profile] of Object.entries(knownUsers || {})) {
+            addChatEntry(rawChatId, profile);
+        }
+
+        for (const [rawChatId, profile] of Object.entries(users || {})) {
+            addChatEntry(rawChatId, profile || {});
+        }
+
+        if (!sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID) {
+            return Array.from(entriesByKey.values());
+        }
+
+        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:K`, 'A:K', `${PERSONAL_DATA_SHEET_NAME}!A:G`, 'A:G'];
+        for (const range of rangesToTry) {
+            try {
+                const resp = await sheetsClient.spreadsheets.values.get({
+                    spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                    range
+                });
+                const rows = resp.data.values || [];
+
+                for (let i = 1; i < rows.length; i++) {
+                    const row = rows[i] || [];
+                    const username = row[0];
+                    const name = row[1];
+                    const phone = row[2];
+
+                    const directChatId = parsePositiveChatId(row[10]) || parsePositiveChatId(row[6]);
+                    const usernameKey = normalizeUsernameForBroadcast(username);
+                    const phoneKey = normalizePhoneForBroadcast(phone);
+                    const nameKey = normalizeNameForBroadcast(name);
+
+                    const resolvedChatId = directChatId
+                        || (usernameKey && inMemoryIndex.usernameToChatId.get(usernameKey))
+                        || (phoneKey && inMemoryIndex.phoneToChatId.get(phoneKey))
+                        || (nameKey && inMemoryIndex.nameToChatId.get(nameKey))
+                        || null;
+
+                    if (resolvedChatId) {
+                        mergeBroadcastDirectoryEntry(entriesByKey, {
+                            kind: 'chatId',
+                            value: resolvedChatId,
+                            key: `id:${resolvedChatId}`,
+                            username,
+                            phone,
+                            name
+                        });
+                        continue;
+                    }
+
+                    if (usernameKey) {
+                        mergeBroadcastDirectoryEntry(entriesByKey, {
+                            kind: 'username',
+                            value: `@${usernameKey}`,
+                            key: `username:${usernameKey}`,
+                            username,
+                            phone,
+                            name
+                        });
+                    }
+                }
+
+                if (rows.length > 0) {
+                    break;
+                }
+            } catch (e) {
+                const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+                if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                    continue;
+                }
+                console.error('❌ Не вдалося завантажити довідник отримувачів для адресної розсилки:', e && e.message ? e.message : e);
+                break;
+            }
+        }
+
+        return Array.from(entriesByKey.values());
+    }
+
+    function resolveBroadcastRecipientsBySelectors(directory, selectors) {
+        const recipientsByKey = new Map();
+        const unresolved = [];
+
+        for (const selector of selectors || []) {
+            const matches = (directory || []).filter((entry) => {
+                if (!entry) return false;
+                if (selector.type === 'username') {
+                    return entry.usernames && entry.usernames.has(selector.value);
+                }
+                if (selector.type === 'phone') {
+                    return entry.phones && entry.phones.has(selector.value);
+                }
+                return false;
+            });
+
+            if (matches.length === 0) {
+                unresolved.push(selector.raw);
+                continue;
+            }
+
+            for (const match of matches) {
+                recipientsByKey.set(match.key, match);
+            }
+        }
+
+        return {
+            recipients: Array.from(recipientsByKey.values()),
+            unresolved
+        };
+    }
+
+    function buildBroadcastRecipientLabel(recipient) {
+        if (!recipient) {
+            return 'невідомий отримувач';
+        }
+
+        const usernames = recipient.usernames ? Array.from(recipient.usernames) : [];
+        const phones = recipient.phones ? Array.from(recipient.phones) : [];
+        const names = recipient.names ? Array.from(recipient.names) : [];
+
+        if (usernames.length > 0) {
+            return `@${usernames[0]}`;
+        }
+
+        if (phones.length > 0) {
+            return phones[0];
+        }
+
+        if (names.length > 0) {
+            return names[0];
+        }
+
+        if (recipient.kind === 'username' && recipient.value) {
+            return String(recipient.value);
+        }
+
+        if (recipient.kind === 'chatId' && recipient.value) {
+            return `chatId ${recipient.value}`;
+        }
+
+        return String(recipient.key || 'невідомий отримувач');
+    }
+
     function buildInMemoryRecipientIndex(ownerChatId) {
         const explicitChatIds = new Set();
         const usernameToChatId = new Map();
@@ -5162,15 +5545,6 @@ async function processParsedEvents(parsedEvents) {
         return Array.from(targetsByKey.values());
     }
 
-    function parseOwnerBroadcastText(messageText) {
-        const rawText = String(messageText || '');
-        if (!BROADCAST_TRIGGER_ANYWHERE_REGEX.test(rawText)) {
-            return null;
-        }
-
-        return rawText;
-    }
-
     async function autoBackfillChatIdForRegisteredUser(chatId, msgFrom, activeUser) {
         const targetChatId = parsePositiveChatId(chatId);
         if (!targetChatId || !sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID) {
@@ -5270,17 +5644,67 @@ async function processParsedEvents(parsedEvents) {
             return false;
         }
 
-        const broadcastText = parseOwnerBroadcastText(messageText);
-        if (broadcastText === null) {
+        const broadcastRequest = parseOwnerBroadcastRequest(messageText);
+        if (broadcastRequest === null) {
             return false;
         }
 
-        if (!String(broadcastText || '').trim()) {
-            await bot.sendMessage(chatId, 'Напишіть текст повідомлення і додайте в нього знак ❗️ для розсилки.');
+        if (broadcastRequest.mode === 'empty') {
+            await bot.sendMessage(chatId, 'Напишіть текст повідомлення і додайте в нього знак ❗️ для розсилки всім.');
+            return true;
+        }
+
+        if (broadcastRequest.mode === 'targeted-empty-message') {
+            await bot.sendMessage(chatId, 'Для адресної розсилки використовуйте формат: ❕телефон, @username. текст повідомлення\n\nПриклад:\n❕380501234567, @username. Текст повідомлення');
             return true;
         }
 
         const inMemoryIndex = buildInMemoryRecipientIndex(chatId);
+
+        if (broadcastRequest.mode === 'targeted') {
+            const directory = await loadBroadcastRecipientDirectory(chatId, inMemoryIndex);
+            const { recipients, unresolved } = resolveBroadcastRecipientsBySelectors(directory, broadcastRequest.selectors);
+
+            if (recipients.length === 0) {
+                const unresolvedHint = unresolved.length > 0
+                    ? `\nНе знайдено: ${unresolved.join(', ')}`
+                    : '';
+                await bot.sendMessage(chatId, `Не знайдено жодного адресата для адресної розсилки.${unresolvedHint}`);
+                return true;
+            }
+
+            let sentCount = 0;
+            let failedCount = 0;
+            const sentLabels = [];
+            const failedLabels = [];
+
+            for (const recipient of recipients) {
+                const destination = recipient.kind === 'chatId' ? recipient.value : recipient.value;
+                const recipientLabel = buildBroadcastRecipientLabel(recipient);
+                try {
+                    await bot.sendMessage(destination, broadcastRequest.text);
+                    sentCount += 1;
+                    sentLabels.push(recipientLabel);
+                } catch (error) {
+                    failedCount += 1;
+                    failedLabels.push(recipientLabel);
+                    console.error(`❌ Targeted broadcast send failed for ${recipient.key}:`, error && error.message ? error.message : error);
+                }
+            }
+
+            const sentLine = sentLabels.length > 0
+                ? `\nНадіслано: ${sentLabels.join(', ')}`
+                : '';
+            const failedLine = failedLabels.length > 0
+                ? `\nНе відправлено: ${failedLabels.join(', ')}`
+                : '';
+            const unresolvedLine = unresolved.length > 0
+                ? `\nНе знайдено: ${unresolved.join(', ')}`
+                : '';
+            await bot.sendMessage(chatId, `📨 Адресну розсилку виконано. Успішно: ${sentCount}, Помилки: ${failedCount}${sentLine}${failedLine}${unresolvedLine}`);
+            return true;
+        }
+
         const recipientsByKey = new Map();
 
         for (const recipientChatId of inMemoryIndex.explicitChatIds) {
@@ -5305,7 +5729,7 @@ async function processParsedEvents(parsedEvents) {
         for (const recipient of recipients) {
             const destination = recipient.kind === 'chatId' ? recipient.value : recipient.value;
             try {
-                await bot.sendMessage(destination, broadcastText);
+                await bot.sendMessage(destination, broadcastRequest.text);
                 sentCount += 1;
             } catch (error) {
                 failedCount += 1;
