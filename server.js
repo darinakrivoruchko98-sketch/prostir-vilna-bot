@@ -1993,13 +1993,19 @@ function parseEventFromRow(row, currentDateContext) {
         return { event: null, nextDateContext: dateBase || currentDateContext };
     }
 
+    // Колонка D зберігає ЗАЛИШОК місць (не загальну місткість),
+    // а колонка E — кількість реєстрацій. Тому загальна місткість = D + E.
+    const safeRemaining = Number.isFinite(seats) ? Math.max(0, seats) : 0;
+    const safeRegistrations = Number.isFinite(registrations) ? Math.max(0, registrations) : 0;
+    const totalSeats = safeRemaining + safeRegistrations;
+
     return {
         event: {
             id: `${title.replace(/\s+/g,'_')}_${formatSheetDate(eventDate)}_${formatSheetTime(eventDate)}`,
             name: title,
             date: eventDate,
-            seats: Number.isFinite(seats) ? seats : 0,
-            registrations: Number.isFinite(registrations) ? registrations : 0
+            seats: totalSeats,
+            registrations: safeRegistrations
         },
         nextDateContext: dateBase
     };
@@ -2017,7 +2023,9 @@ async function incrementSheetRegistration(event, fallbackRegistrant) {
     }
 
     const registrationsCount = Number.isFinite(event.registrations) ? event.registrations : 0;
-    const seatsCount = Number.isFinite(event.seats) ? Math.max(0, event.seats) : 0;
+    const totalSeats = Number.isFinite(event.seats) ? Math.max(0, event.seats) : 0;
+    // Зберігаємо залишок місць (D) та кількість реєстрацій (E), щоб D + E = загальна місткість
+    const remainingSeats = Math.max(0, totalSeats - registrationsCount);
 
     try {
         await sheetsClient.spreadsheets.values.update({
@@ -2025,7 +2033,7 @@ async function incrementSheetRegistration(event, fallbackRegistrant) {
             range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`,
             valueInputOption: 'RAW',
             requestBody: {
-                values: [[seatsCount, registrationsCount]]
+                values: [[remainingSeats, registrationsCount]]
             }
         });
     } catch (error) {
@@ -2056,7 +2064,9 @@ async function decrementSheetRegistration(event, registrantProfile) {
     }
 
     const registrationsCount = Number.isFinite(event.registrations) ? event.registrations : 0;
-    const seatsCount = Number.isFinite(event.seats) ? Math.max(0, event.seats) : 0;
+    const totalSeats = Number.isFinite(event.seats) ? Math.max(0, event.seats) : 0;
+    // Зберігаємо залишок місць (D) та кількість реєстрацій (E), щоб D + E = загальна місткість
+    const remainingSeats = Math.max(0, totalSeats - registrationsCount);
 
     try {
         await sheetsClient.spreadsheets.values.update({
@@ -2064,7 +2074,7 @@ async function decrementSheetRegistration(event, registrantProfile) {
             range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`,
             valueInputOption: 'RAW',
             requestBody: {
-                values: [[seatsCount, registrationsCount]]
+                values: [[remainingSeats, registrationsCount]]
             }
         });
     } catch (error) {
