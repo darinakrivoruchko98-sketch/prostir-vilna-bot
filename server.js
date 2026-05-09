@@ -8410,8 +8410,10 @@ bot.on('message', async (msg) => {
                 `✅ <b>Запис на консультацію підтверджено!</b>\n\n` +
                 `👩🏻‍💼 Фахівчиня: ${draft.specialistLabel}\n` +
                 `📅 Дата: ${draft.dateText}\n` +
-                `🕐 Час: ${draft.timeText}\n\n` +
-                `Очікуйте, будь ласка, з вами зв'яжуться за потреби.`, {
+                `🕐 Час: ${draft.timeText}\n` +
+                `📍 Формат: індивідуальна консультація офлайн (вул. Д. Донцова, 4)\n\n` +
+                `📌 Будь ласка, за потреби додаткових уточнень — пишіть нам самостійно. ${draft.key === 'psychologist' ? '@luidmila_psi' : '@DarynaVilna'}`,
+                {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: getMainMenuKeyboard(),
