@@ -195,25 +195,43 @@ function parsePersonalDataRow(row) {
 async function findUserByChatId(chatId) {
     if (!state.sheetsClient || !config.PERSONAL_DATA_SPREADSHEET_ID) return null;
 
-    try {
-        const resp = await state.sheetsClient.spreadsheets.values.get({
-            spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-            range: `${config.PERSONAL_DATA_SHEET_NAME}!A:K`
-        });
-        const rows = resp.data.values || [];
-        const chatIdStr = String(chatId).trim();
-        for (let i = rows.length - 1; i >= 0; i--) {
-            const row = rows[i] || [];
-            const rowChatId = String(row[10] || '').trim();
-            const rowLegacyChatId = String(row[6] || '').trim();
-            const rowLegacyUsernameAsChatId = String(row[7] || '').trim();
-            if (rowChatId === chatIdStr || rowLegacyChatId === chatIdStr || rowLegacyUsernameAsChatId === chatIdStr) {
-                return parsePersonalDataRow(row);
-            }
-        }
-    } catch (e) {
-        console.error('findUserByChatId error:', e && e.message ? e.message : e);
+    const ranges = [];
+    if (config.PERSONAL_DATA_SHEET_NAME) {
+        ranges.push(`${config.PERSONAL_DATA_SHEET_NAME}!A:K`);
+        ranges.push(`'${config.PERSONAL_DATA_SHEET_NAME}'!A:K`);
     }
+    ranges.push('Зареєстровані!A:K');
+    ranges.push("'Зареєстровані'!A:K");
+    ranges.push('A:K');
+
+    const chatIdStr = String(chatId).trim();
+
+    for (const range of ranges) {
+        try {
+            const resp = await state.sheetsClient.spreadsheets.values.get({
+                spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
+                range
+            });
+            const rows = resp.data.values || [];
+            for (let i = rows.length - 1; i >= 0; i--) {
+                const row = rows[i] || [];
+                const rowChatId = String(row[10] || '').trim();
+                const rowLegacyChatId = String(row[6] || '').trim();
+                const rowLegacyUsernameAsChatId = String(row[7] || '').trim();
+                if (rowChatId === chatIdStr || rowLegacyChatId === chatIdStr || rowLegacyUsernameAsChatId === chatIdStr) {
+                    return parsePersonalDataRow(row);
+                }
+            }
+        } catch (e) {
+            const msg = e && e.message ? String(e.message).toLowerCase() : '';
+            if (msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('invalid argument')) {
+                continue;
+            }
+            console.error('findUserByChatId error:', e && e.message ? e.message : e);
+            break;
+        }
+    }
+
     return null;
 }
 
