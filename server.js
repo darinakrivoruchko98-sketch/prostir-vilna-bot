@@ -27,8 +27,8 @@ const APP_TIME_ZONE = process.env.TZ || 'Europe/Kyiv';
 // Захист ідентичності бота: якщо хтось змінить назву/опис через BotFather, бот відновить їх автоматично
 const BOT_USERNAME = process.env.BOT_USERNAME || '';
 const BOT_DISPLAY_NAME = 'Бот простору Вільна🌷';
-const BOT_DESCRIPTION = 'Бот простору «Вільна» — це твій швидкий вхід у події, реєстрації та актуальні активності простору. Тут можна легко записатися на майстер-класи, отримати інформацію про заходи та бути в курсі всього, що відбувається 🩷';
-const BOT_SHORT_DESCRIPTION = process.env.BOT_SHORT_DESCRIPTION || '';
+const BOT_DESCRIPTION = 'Бот простору «Вільна» — твій помічник для реєстрації на заходи, перегляду афіші та отримання актуальної інформації про події простору.';
+const BOT_SHORT_DESCRIPTION = process.env.BOT_SHORT_DESCRIPTION || 'Анонси заходів, реєстрація та підтримка Простору Вільна';
 const logger = require('./src/utils/logging');
 // redirect console calls to logger for unified logging
 console.log = (...args) => logger.info(...args);
