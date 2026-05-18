@@ -4012,6 +4012,19 @@ async function resolveRegistrantFormData(chatId, user) {
 function parsePersonalDataRow(row) {
     const cells = (row || []).map((cell) => String(cell || '').trim());
     const current = {
+        username: cells[0] || '',
+        name: cells[1] || '',
+        phone: cells[2] || '',
+        birth: cells[3] || '',
+        visited: cells[4] || '',
+        status: cells[5] || '',
+        health: cells[6] || '',
+        childrenCount: cells[7] || '',
+        employment: cells[8] || '',
+        gbvAffected: cells[9] || '',
+        chatId: cells[10] || ''
+    };
+    const legacy = {
         username: cells[7] || '',
         name: cells[0] || '',
         phone: cells[1] || '',
@@ -4020,19 +4033,6 @@ function parsePersonalDataRow(row) {
         status: cells[4] || '',
         health: cells[5] || '',
         chatId: cells[6] || '',
-        childrenCount: cells[8] || '',
-        employment: cells[9] || '',
-        gbvAffected: cells[10] || ''
-    };
-    const legacy = {
-        username: cells[0] || '',
-        name: cells[1] || '',
-        phone: cells[2] || '',
-        birth: cells[3] || '',
-        visited: cells[4] || '',
-        status: cells[5] || '',
-        health: cells[6] || '',
-        chatId: cells[7] || '',
         childrenCount: cells[8] || '',
         employment: cells[9] || '',
         gbvAffected: cells[10] || ''
@@ -4065,14 +4065,39 @@ async function loadKnownUserByChatId(chatId) {
         return null;
     }
 
-    try {
-        const found = await findUserByChatId(chatId);
-        if (found) {
-            knownUsers[chatId] = found;
-            return found;
+    const rangesToTry = [];
+    if (PERSONAL_DATA_SHEET_NAME) {
+        rangesToTry.push(`${PERSONAL_DATA_SHEET_NAME}!A:K`);
+        rangesToTry.push(`'${PERSONAL_DATA_SHEET_NAME}'!A:K`);
+    }
+    rangesToTry.push('Зареєстровані!A:K');
+    rangesToTry.push("'Зареєстровані'!A:K");
+    rangesToTry.push('A:K');
+
+    for (const range of rangesToTry) {
+        try {
+            const resp = await sheetsClient.spreadsheets.values.get({
+                spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                range
+            });
+            const rows = resp.data.values || [];
+            for (let i = rows.length - 1; i >= 0; i--) {
+                const row = rows[i] || [];
+                const restored = parsePersonalDataRow(row);
+                if (!restored.chatId) continue;
+                if (String(restored.chatId).trim() === chatIdStr) {
+                    knownUsers[chatId] = restored;
+                    return restored;
+                }
+            }
+        } catch (e) {
+            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+            if (msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('invalid argument')) {
+                continue;
+            }
+            console.error('loadKnownUserByChatId error:', e && e.message ? e.message : e);
+            break;
         }
-    } catch (e) {
-        console.error('loadKnownUserByChatId error:', e && e.message ? e.message : e);
     }
 
     return null;
@@ -4087,7 +4112,15 @@ async function loadKnownUserByPhone(phone) {
         return null;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:J`, 'A:J'];
+    const rangesToTry = [];
+    if (PERSONAL_DATA_SHEET_NAME) {
+        rangesToTry.push(`${PERSONAL_DATA_SHEET_NAME}!A:K`);
+        rangesToTry.push(`'${PERSONAL_DATA_SHEET_NAME}'!A:K`);
+    }
+    rangesToTry.push('Зареєстровані!A:K');
+    rangesToTry.push("'Зареєстровані'!A:K");
+    rangesToTry.push('A:K');
+
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -4099,15 +4132,18 @@ async function loadKnownUserByPhone(phone) {
                 const row = rows[i] || [];
                 const restored = parsePersonalDataRow(row);
                 if (!restored.phone) continue;
-                if (!restored.phone.includes(phoneStr) && phoneStr !== restored.phone) continue;
+                const normalizedPhone = String(restored.phone || '').replace(/\D/g, '');
+                const normalizedInput = String(phoneStr || '').replace(/\D/g, '');
+                if (!normalizedPhone || normalizedPhone !== normalizedInput) continue;
 
                 return restored;
             }
         } catch (e) {
             const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-            if (msg.includes('unable to parse range') || msg.includes('not found')) {
+            if (msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('invalid argument')) {
                 continue;
             }
+            console.error('loadKnownUserByPhone error:', e && e.message ? e.message : e);
             break;
         }
     }
@@ -4124,7 +4160,15 @@ async function loadKnownUserByUsername(username) {
         return null;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:J`, 'A:J'];
+    const rangesToTry = [];
+    if (PERSONAL_DATA_SHEET_NAME) {
+        rangesToTry.push(`${PERSONAL_DATA_SHEET_NAME}!A:K`);
+        rangesToTry.push(`'${PERSONAL_DATA_SHEET_NAME}'!A:K`);
+    }
+    rangesToTry.push('Зареєстровані!A:K');
+    rangesToTry.push("'Зареєстровані'!A:K");
+    rangesToTry.push('A:K');
+
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -4136,16 +4180,16 @@ async function loadKnownUserByUsername(username) {
                 const row = rows[i] || [];
                 const restored = parsePersonalDataRow(row);
                 const normalizedUsername = String(restored.username || '').toLowerCase().replace(/^@/, '');
-                const fallbackUsername = String(row[0] || '').trim().toLowerCase().replace(/^@/, '');
-                if (normalizedUsername !== usernameStr && fallbackUsername !== usernameStr) continue;
+                if (normalizedUsername !== usernameStr) continue;
 
                 return restored;
             }
         } catch (e) {
             const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-            if (msg.includes('unable to parse range') || msg.includes('not found')) {
+            if (msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('invalid argument')) {
                 continue;
             }
+            console.error('loadKnownUserByUsername error:', e && e.message ? e.message : e);
             break;
         }
     }
