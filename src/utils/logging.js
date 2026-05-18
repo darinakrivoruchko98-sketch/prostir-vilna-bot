@@ -11,25 +11,25 @@ function safeAppend(file, line) {
         fs.appendFileSync(path.join(LOG_DIR, file), line + '\n');
     } catch (e) {
         // swallow logging errors to avoid recursive failures
-        console.error('Logging write failed', e && e.message ? e.message : e);
+        process.stderr.write(`Logging write failed ${e && e.message ? e.message : e}\n`);
     }
 }
 
 function info(...args) {
     const line = `[INFO] ${new Date().toISOString()} ` + args.map(String).join(' ');
-    console.log(line);
+    process.stdout.write(line + '\n');
     safeAppend('info.log', line);
 }
 
 function warn(...args) {
     const line = `[WARN] ${new Date().toISOString()} ` + args.map(String).join(' ');
-    console.warn(line);
+    process.stdout.write(line + '\n');
     safeAppend('warn.log', line);
 }
 
 function error(...args) {
     const line = `[ERROR] ${new Date().toISOString()} ` + args.map(String).join(' ');
-    console.error(line);
+    process.stderr.write(line + '\n');
     safeAppend('error.log', line);
 }
 

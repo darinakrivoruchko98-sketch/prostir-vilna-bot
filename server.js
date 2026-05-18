@@ -2316,11 +2316,6 @@ async function findScheduleRowByEvent(event) {
         }
     }
 
-    const markerMatch = await findScheduleRowByEventByNoteTag(event);
-    if (markerMatch) {
-        return markerMatch;
-    }
-
     return null;
 }
 
@@ -3552,6 +3547,43 @@ testDate2.setHours(10, 0);
 async function guardBotIdentity() {
     if (!TOKEN) return;
     const base = `https://api.telegram.org/bot${TOKEN}`;
+
+    async function callTelegramApi(method, body, maxTries = 3) {
+        let lastError;
+        for (let attempt = 1; attempt <= maxTries; attempt++) {
+            try {
+                const response = await fetch(`${base}/${method}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const result = await response.json();
+                if (result.ok) {
+                    return result;
+                }
+
+                lastError = result;
+                const description = String(result.description || '').toLowerCase();
+                const retryAfter = result.parameters && result.parameters.retry_after;
+                const waitSeconds = retryAfter || (description.match(/retry after (\d+)/)?.[1] && Number(RegExp.$1));
+
+                if (response.status === 429 || description.includes('too many requests')) {
+                    const delay = Math.max(1, Number(waitSeconds) || 2);
+                    console.warn(`⚠️ ${method} rate-limited, retrying in ${delay}s (attempt ${attempt}/${maxTries})`);
+                    await new Promise((resolve) => setTimeout(resolve, delay * 1000));
+                    continue;
+                }
+
+                break;
+            } catch (err) {
+                lastError = err;
+                console.warn(`⚠️ ${method} failed (attempt ${attempt}/${maxTries}):`, err && err.message ? err.message : err);
+                await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+            }
+        }
+        throw lastError;
+    }
+
     try {
         const meResponse = await fetch(`${base}/getMe`);
         const meResult = await meResponse.json();
@@ -3566,42 +3598,32 @@ async function guardBotIdentity() {
             console.warn('⚠️ guardBotIdentity getMe failed:', meResult.description || meResult);
         }
 
-        const tasks = [];
         if (BOT_DISPLAY_NAME) {
-            tasks.push(
-                fetch(`${base}/setMyName`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: BOT_DISPLAY_NAME })
-                }).then(r => r.json()).then(r => {
-                    if (!r.ok) console.warn('⚠️ guardBotIdentity setMyName:', r.description);
-                    else console.log('🔒 Bot name verified/restored:', BOT_DISPLAY_NAME);
-                })
-            );
+            try {
+                await callTelegramApi('setMyName', { name: BOT_DISPLAY_NAME });
+                console.log('🔒 Bot name verified/restored:', BOT_DISPLAY_NAME);
+            } catch (error) {
+                console.warn('⚠️ guardBotIdentity setMyName failed:', error && error.description ? error.description : error);
+            }
         }
+
         if (BOT_DESCRIPTION) {
-            tasks.push(
-                fetch(`${base}/setMyDescription`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ description: BOT_DESCRIPTION })
-                }).then(r => r.json()).then(r => {
-                    if (!r.ok) console.warn('⚠️ guardBotIdentity setMyDescription:', r.description);
-                })
-            );
+            try {
+                await callTelegramApi('setMyDescription', { description: BOT_DESCRIPTION });
+                console.log('🔒 Bot description verified/restored');
+            } catch (error) {
+                console.warn('⚠️ guardBotIdentity setMyDescription failed:', error && error.description ? error.description : error);
+            }
         }
+
         if (BOT_SHORT_DESCRIPTION) {
-            tasks.push(
-                fetch(`${base}/setMyShortDescription`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ short_description: BOT_SHORT_DESCRIPTION })
-                }).then(r => r.json()).then(r => {
-                    if (!r.ok) console.warn('⚠️ guardBotIdentity setMyShortDescription:', r.description);
-                })
-            );
+            try {
+                await callTelegramApi('setMyShortDescription', { short_description: BOT_SHORT_DESCRIPTION });
+                console.log('🔒 Bot short description verified/restored');
+            } catch (error) {
+                console.warn('⚠️ guardBotIdentity setMyShortDescription failed:', error && error.description ? error.description : error);
+            }
         }
-        if (tasks.length > 0) await Promise.all(tasks);
     } catch (err) {
         console.error('❌ guardBotIdentity error:', err && err.message ? err.message : err);
     }
