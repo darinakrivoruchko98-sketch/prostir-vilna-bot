@@ -1,48 +1,72 @@
 const fs = require("fs");
 const { google } = require("googleapis");
 
+function parseJsonOrBase64ServiceAccount(rawValue) {
+    if (!rawValue || typeof rawValue !== 'string') return null;
+    const candidate = rawValue.trim();
+    if (!candidate) return null;
+
+    try {
+        const parsed = JSON.parse(candidate);
+        if (parsed.client_email && parsed.private_key) {
+            return parsed;
+        }
+    } catch (e) {
+        // ignore
+    }
+
+    try {
+        const compact = candidate.replace(/\s+/g, '');
+        const decoded = Buffer.from(compact, 'base64').toString('utf8');
+        const parsed = JSON.parse(decoded);
+        if (parsed.client_email && parsed.private_key) {
+            return parsed;
+        }
+    } catch (e) {
+        // ignore
+    }
+
+    return null;
+}
+
 function loadGoogleCredentials() {
-    // 1. GOOGLE_CREDENTIALS env var (base64-encoded JSON — for Dokploy / containers)
-    //    Generate with: base64 -w0 vilna-bot-*.json
-    const credsB64 = process.env.GOOGLE_CREDENTIALS;
-    if (credsB64) {
-        try {
-            let creds = null;
-            try {
-                creds = JSON.parse(credsB64);
-            } catch {
-                creds = JSON.parse(Buffer.from(credsB64, "base64").toString());
-            }
-            if (creds.client_email && creds.private_key) {
-                console.log("🔑 Credentials: GOOGLE_CREDENTIALS env var");
-                return creds;
-            }
-        } catch {}
+    const candidates = [
+        {
+            env: 'GOOGLE_SERVICE_ACCOUNT_JSON',
+            parser: (value) => parseJsonOrBase64ServiceAccount(value)
+        },
+        {
+            env: 'GOOGLE_SERVICE_ACCOUNT_JSON_BASE64',
+            parser: (value) => parseJsonOrBase64ServiceAccount(value)
+        },
+        {
+            env: 'GOOGLE_CREDENTIALS',
+            parser: (value) => parseJsonOrBase64ServiceAccount(value)
+        },
+        {
+            env: 'GOOGLE_CREDENTIALS_JSON',
+            parser: (value) => parseJsonOrBase64ServiceAccount(value)
+        },
+        {
+            env: 'GOOGLE_APPLICATION_CREDENTIALS_JSON',
+            parser: (value) => parseJsonOrBase64ServiceAccount(value)
+        },
+        {
+            env: 'GCP_SERVICE_ACCOUNT_JSON',
+            parser: (value) => parseJsonOrBase64ServiceAccount(value)
+        }
+    ];
+
+    for (const candidate of candidates) {
+        const raw = process.env[candidate.env];
+        if (!raw) continue;
+        const creds = candidate.parser(raw);
+        if (creds && creds.client_email && creds.private_key) {
+            console.log(`🔑 Credentials: ${candidate.env}`);
+            return creds;
+        }
     }
 
-    // 2. GOOGLE_SERVICE_ACCOUNT_JSON (raw JSON string)
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-        try {
-            const creds = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-            if (creds.client_email && creds.private_key) {
-                console.log("🔑 Credentials: GOOGLE_SERVICE_ACCOUNT_JSON env var");
-                return creds;
-            }
-        } catch {}
-    }
-
-    // 3. GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 (base64-encoded JSON)
-    if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64) {
-        try {
-            const creds = JSON.parse(Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "base64").toString());
-            if (creds.client_email && creds.private_key) {
-                console.log("🔑 Credentials: GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 env var");
-                return creds;
-            }
-        } catch {}
-    }
-
-    // 4. Split env fields (common on Railway)
     if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
         console.log("🔑 Credentials: GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY env vars");
         return {
@@ -51,9 +75,6 @@ function loadGoogleCredentials() {
         };
     }
 
-    // 5. GOOGLE_APPLICATION_CREDENTIALS can be either:
-    //    - a file path (classic behavior)
-    //    - a raw JSON string (common misconfiguration on Railway)
     if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
         const gac = process.env.GOOGLE_APPLICATION_CREDENTIALS.trim();
         try {
@@ -77,12 +98,7 @@ function loadGoogleCredentials() {
 
     // 6. Local key file (for local dev — gitignored)
     try {
-        const allFiles = fs.readdirSync(".");
-        console.log("📁 Файли в поточній папці:", allFiles.filter(f => f.endsWith('.json')));
-        
-        const files = allFiles.filter(f => /^vilna-bot-.*\.json$/.test(f));
-        console.log("🔍 Знайдено файлів credentials з регулярним виразом:", files);
-        
+        const files = fs.readdirSync(".").filter(f => /^vilna-bot-.*\.json$/.test(f));
         for (const f of files) {
             try {
                 const data = JSON.parse(fs.readFileSync(f, "utf8"));
