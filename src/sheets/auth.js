@@ -1,4 +1,5 @@
 const fs = require("fs");
+const path = require("path");
 const { google } = require("googleapis");
 
 function parseJsonOrBase64ServiceAccount(rawValue) {
@@ -85,10 +86,18 @@ function loadGoogleCredentials() {
                     return inlineCreds;
                 }
             } else {
-                const fileCreds = JSON.parse(fs.readFileSync(gac, "utf8"));
-                if (fileCreds.client_email && fileCreds.private_key) {
-                    console.log(`🔑 Credentials: GOOGLE_APPLICATION_CREDENTIALS (${gac})`);
-                    return fileCreds;
+                const pathsToTry = [gac, path.resolve(process.cwd(), gac), path.resolve(__dirname, gac)];
+                for (const candidatePath of pathsToTry) {
+                    try {
+                        if (!candidatePath || !fs.existsSync(candidatePath)) continue;
+                        const fileCreds = JSON.parse(fs.readFileSync(candidatePath, "utf8"));
+                        if (fileCreds.client_email && fileCreds.private_key) {
+                            console.log(`🔑 Credentials: GOOGLE_APPLICATION_CREDENTIALS (${candidatePath})`);
+                            return fileCreds;
+                        }
+                    } catch (e) {
+                        // ignore and continue trying other paths
+                    }
                 }
             }
         } catch (e) {
@@ -97,21 +106,25 @@ function loadGoogleCredentials() {
     }
 
     // 6. Local key file (for local dev — gitignored)
-    try {
-        const files = fs.readdirSync(".").filter(f => /^vilna-bot-.*\.json$/.test(f));
-        for (const f of files) {
-            try {
-                const data = JSON.parse(fs.readFileSync(f, "utf8"));
-                if (data.type === "service_account" && data.client_email && data.private_key) {
-                    console.log("🔑 Credentials: key file", f);
-                    return data;
+    const pathsToSearch = [process.cwd(), __dirname];
+    for (const basePath of pathsToSearch) {
+        try {
+            const files = fs.readdirSync(basePath).filter(f => /^vilna-bot-.*\.json$/.test(f));
+            for (const f of files) {
+                try {
+                    const fullPath = path.join(basePath, f);
+                    const data = JSON.parse(fs.readFileSync(fullPath, "utf8"));
+                    if (data.type === "service_account" && data.client_email && data.private_key) {
+                        console.log(`🔑 Credentials: key file ${fullPath}`);
+                        return data;
+                    }
+                } catch (e) {
+                    console.log(`⚠️ Помилка читання файлу ${f}:`, e.message);
                 }
-            } catch (e) {
-                console.log(`⚠️ Помилка читання файлу ${f}:`, e.message);
             }
+        } catch (e) {
+            console.log(`⚠️ Помилка при пошуку локальних файлів у ${basePath}:`, e.message);
         }
-    } catch (e) {
-        console.log("⚠️ Помилка при пошуку локальних файлів:", e.message);
     }
 
     return null;
