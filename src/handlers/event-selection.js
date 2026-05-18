@@ -7,6 +7,15 @@ const { incrementSheetRegistration, isRegistrantAlreadyInEventNote } = require('
 const { formatEventDate, formatShortDate, formatTime } = require('../utils/date');
 const { pluralizeEvents } = require('../utils/text');
 
+function normalizeSelectionText(text) {
+    return String(text || '')
+        .normalize('NFKD')
+        .replace(/[\p{P}\p{S}]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .toLowerCase()
+        .trim();
+}
+
 // Перевіряємо чи натиснута кнопка з заходом (general context, not step 7)
 function handleEventClick(bot, chatId, text, user) {
     let selectedEvent = null;
@@ -21,9 +30,9 @@ function handleEventClick(bot, chatId, text, user) {
 
     // Legacy fallback (залишаємо на крайній випадок)
     if (!selectedEvent) {
-        const normalizedInput = normalizeTitle(text);
+        const normalizedInput = normalizeSelectionText(text);
         selectedEvent = getAllEvents().find((eventItem) => {
-            const normalizedName = normalizeTitle(eventItem.name);
+            const normalizedName = normalizeSelectionText(eventItem.name);
             return normalizedInput.includes(normalizedName) || normalizedName.includes(normalizedInput);
         });
     }
@@ -322,7 +331,11 @@ async function handleStep7EventClick(bot, chatId, text, user) {
     }
 
     if (!selectedEvent) {
-        selectedEvent = avail.find((eventItem) => text.includes(eventItem.name));
+        const normalizedInput = normalizeSelectionText(text);
+        selectedEvent = avail.find((eventItem) => {
+            const normalizedName = normalizeSelectionText(eventItem.name);
+            return normalizedInput.includes(normalizedName) || normalizedName.includes(normalizedInput);
+        });
     }
 
     if (!selectedEvent) return false;
