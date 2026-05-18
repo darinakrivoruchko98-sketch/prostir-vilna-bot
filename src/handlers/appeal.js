@@ -1,4 +1,5 @@
 const state = require('../state');
+const { findUserByChatId } = require('../sheets/personal-data');
 
 function handleAppealStart(bot, chatId, user) {
     user.context = 'appeal';
@@ -13,16 +14,19 @@ function handleAppealStart(bot, chatId, user) {
 
 async function handleAppealText(bot, chatId, text, user, GROUP_ID) {
     if (user.step === 1) {
-        const userName = state.knownUsers[chatId]?.name || `користувач ${chatId}`;
-        const userPhone = state.knownUsers[chatId]?.phone || 'не вказаний';
+        // Завантажуємо актуальні дані користувача з таблиці
+        const userData = await findUserByChatId(chatId);
+        const userName = userData?.name || state.knownUsers[chatId]?.name || `користувач ${chatId}`;
+        const userPhone = userData?.phone || state.knownUsers[chatId]?.phone || 'не вказаний';
+        const userUsername = userData?.username || state.knownUsers[chatId]?.username || '';
 
         const appealMessage = `
 📬 <b>Нове звернення</b>
 
-👤 <b>Ім'я:</b> ${userName}
+👤 <b>ПІБ:</b> ${userName}
 📱 <b>Телефон:</b> ${userPhone}
 🔗 <b>Telegram ID:</b> ${chatId}
-
+${userUsername ? `👤 <b>Username:</b> @${userUsername}\n` : ''}
 📝 <b>Текст звернення:</b>
 ${text}
         `;

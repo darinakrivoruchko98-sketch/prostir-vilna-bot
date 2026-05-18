@@ -8,23 +8,29 @@ async function appendRegistrationRow(chatId, user) {
     }
 
     // Структура таблиці "Зареєстровані":
-    // A: Прізвище Ім'я По-батькові (ПІБ)
-    // B: Телефон
-    // C: Дата народження
-    // D: Чи відвідували простір?
-    // E: ВПО/МО
-    // F: Інвалідність/Суттєві проблеми
-    // G: chatId користувача
-    // H: username (опціонально)
+    // A: Ім'я акаунта
+    // B: Прізвище Ім'я По-батькові
+    // C: Телефон
+    // D: Дата народження
+    // E: Відвідування
+    // F: ВПО/МО
+    // G: Інвалідність/Суттєві проблеми
+    // H: Діти
+    // I: Зайнятість
+    // J: ГНЗ
+    // K: Чат ID
     const values = [
-        user.name || "",           // Колонка A: ПІБ
-        user.phone || "",          // Колонка B: Телефон
-        user.birth || "",          // Колонка C: Дата народження
-        user.visited || "",        // Колонка D: Чи відвідували?
-        user.status || "",         // Колонка E: ВПО/МО
-        user.health || "",         // Колонка F: Інвалідність
-        String(chatId),              // Колонка G: ID користувача (для пошуку)
-        user.username || ""         // Колонка H: username (опціонально)
+        user.username || "",       // Колонка A: Ім'я акаунта
+        user.name || "",           // Колонка B: ПІБ
+        user.phone || "",          // Колонка C: Телефон
+        user.birth || "",          // Колонка D: Дата народження
+        user.visited || "",        // Колонка E: Відвідування
+        user.status || "",         // Колонка F: ВПО/МО
+        user.health || "",         // Колонка G: Інвалідність/Суттєві проблеми
+        user.childrenCount || "",  // Колонка H: Діти
+        user.employment || "",     // Колонка I: Зайнятість
+        user.gbvAffected || "",    // Колонка J: ГНЗ
+        String(chatId)             // Колонка K: Чат ID
     ];
 
     const findFirstFreeRow = (rows) => {
@@ -61,7 +67,7 @@ async function appendRegistrationRow(chatId, user) {
             console.log(`\n📝 Спроба ${attempt}/${maxTries}: Читання листа "${config.PERSONAL_DATA_SHEET_NAME}"...`);
             const existingResp = await state.sheetsClient.spreadsheets.values.get({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${config.PERSONAL_DATA_SHEET_NAME}!A:H`
+                range: `${config.PERSONAL_DATA_SHEET_NAME}!A:K`
             });
             const rows = existingResp.data.values || [];
             console.log(`✅ Лист прочитаний. Рядків: ${rows.length}`);
@@ -71,7 +77,7 @@ async function appendRegistrationRow(chatId, user) {
 
             await state.sheetsClient.spreadsheets.values.update({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${config.PERSONAL_DATA_SHEET_NAME}!A${targetRow}:H${targetRow}`,
+                range: `${config.PERSONAL_DATA_SHEET_NAME}!A${targetRow}:K${targetRow}`,
                 valueInputOption: "RAW",
                 requestBody: { values: [values] }
             });
@@ -98,22 +104,22 @@ async function appendRegistrationRow(chatId, user) {
             const msg = errorMsg.toLowerCase();
             if ((msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('sheet') ) && attempt === 1) {
                 try {
-                    console.warn('⚠️  Спроба fallback-діапазону A:H (перший аркуш)...');
+                    console.warn('⚠️  Спроба fallback-діапазону A:K (перший аркуш)...');
 
                     const existingResp = await state.sheetsClient.spreadsheets.values.get({
                         spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                        range: "A:H",
+                        range: "A:K",
                     });
                     const rows = existingResp.data.values || [];
                     const targetRow = findFirstFreeRow(rows);
 
                     await state.sheetsClient.spreadsheets.values.update({
                         spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                        range: `A${targetRow}:H${targetRow}`,
+                        range: `A${targetRow}:K${targetRow}`,
                         valueInputOption: "RAW",
                         requestBody: { values: [values] }
                     });
-                    console.log(`✅ Записано в таблицю (fallback A:H, рядок ${targetRow}) ✅\n`);
+                    console.log(`✅ Записано в таблицю (fallback A:K, рядок ${targetRow}) ✅\n`);
                     return;
                 } catch (e2) {
                     lastErr = e2;
@@ -142,31 +148,67 @@ async function appendRegistrationRow(chatId, user) {
     throw new Error('Unknown error writing to sheet');
 }
 
+function parsePersonalDataRow(row) {
+    const cells = (row || []).map((cell) => String(cell || '').trim());
+    const current = {
+        username: cells[0] || '',
+        name: cells[1] || '',
+        phone: cells[2] || '',
+        birth: cells[3] || '',
+        visited: cells[4] || '',
+        status: cells[5] || '',
+        health: cells[6] || '',
+        childrenCount: cells[7] || '',
+        employment: cells[8] || '',
+        gbvAffected: cells[9] || '',
+        chatId: cells[10] || ''
+    };
+    const legacy = {
+        username: cells[7] || '',
+        name: cells[0] || '',
+        phone: cells[1] || '',
+        birth: cells[2] || '',
+        visited: cells[3] || '',
+        status: cells[4] || '',
+        health: cells[5] || '',
+        chatId: cells[6] || '',
+        childrenCount: cells[8] || '',
+        employment: cells[9] || '',
+        gbvAffected: cells[10] || ''
+    };
+
+    return {
+        username: current.username || legacy.username,
+        name: current.name || legacy.name,
+        phone: current.phone || legacy.phone,
+        birth: current.birth || legacy.birth,
+        visited: current.visited || legacy.visited,
+        status: current.status || legacy.status,
+        health: current.health || legacy.health,
+        childrenCount: current.childrenCount || legacy.childrenCount,
+        employment: current.employment || legacy.employment,
+        gbvAffected: current.gbvAffected || legacy.gbvAffected,
+        chatId: current.chatId || legacy.chatId
+    };
+}
+
 async function findUserByChatId(chatId) {
     if (!state.sheetsClient || !config.PERSONAL_DATA_SPREADSHEET_ID) return null;
 
     try {
         const resp = await state.sheetsClient.spreadsheets.values.get({
             spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-            range: `${config.PERSONAL_DATA_SHEET_NAME}!A:H`
+            range: `${config.PERSONAL_DATA_SHEET_NAME}!A:K`
         });
         const rows = resp.data.values || [];
-        const chatIdStr = String(chatId);
-        // Find the latest matching row (chatId is now in column G = index 6)
+        const chatIdStr = String(chatId).trim();
         for (let i = rows.length - 1; i >= 0; i--) {
             const row = rows[i] || [];
-            const rowChatId = String(row[6] || '').trim();
-            const rowAltChatId = String(row[7] || '').trim();
-            if (rowChatId === chatIdStr || rowAltChatId === chatIdStr) {
-                return {
-                    name: row[0] || '',      // Column A: ПІБ
-                    phone: row[1] || '',     // Column B: Телефон
-                    birth: row[2] || '',     // Column C: Дата народження
-                    visited: row[3] || '',   // Column D: Чи відвідували?
-                    status: row[4] || '',    // Column E: ВПО/МО
-                    health: row[5] || '',    // Column F: Інвалідність
-                    username: row[7] || ''   // Column H: username, optional
-                };
+            const rowChatId = String(row[10] || '').trim();
+            const rowLegacyChatId = String(row[6] || '').trim();
+            const rowLegacyUsernameAsChatId = String(row[7] || '').trim();
+            if (rowChatId === chatIdStr || rowLegacyChatId === chatIdStr || rowLegacyUsernameAsChatId === chatIdStr) {
+                return parsePersonalDataRow(row);
             }
         }
     } catch (e) {

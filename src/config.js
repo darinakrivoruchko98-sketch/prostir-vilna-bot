@@ -4,6 +4,8 @@ const DEFAULT_BOT_TOKEN = "8448480345:AAH48UBqGxkrzc_vyT6mKsQsc3264ifhLgg";
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || DEFAULT_BOT_TOKEN;
 const GROUP_ID = process.env.GROUP_ID;
 const CHAT_ID = process.env.CHAT_ID;
+// Адміни (можна додавати через ADMIN_IDS або просто в коді)
+const ADMIN_IDS = (process.env.ADMIN_IDS || '375328037').split(',').map(id => Number(id.trim()));
 // Таблиця для розкладу та реєстрацій на заходи
 const DEFAULT_SCHEDULE_SPREADSHEET_ID = "1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8";
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || DEFAULT_SCHEDULE_SPREADSHEET_ID;
@@ -62,6 +64,7 @@ module.exports = {
     TOKEN,
     GROUP_ID,
     CHAT_ID,
+    ADMIN_IDS,
     SPREADSHEET_ID,
     SCHEDULE_SHEET_NAME,
     PERSONAL_DATA_SPREADSHEET_ID,

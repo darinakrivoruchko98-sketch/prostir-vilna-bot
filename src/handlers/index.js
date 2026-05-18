@@ -1,5 +1,6 @@
 const state = require('../state');
 const { handleStart, handleBack, handleReturnToMenu } = require('./menu');
+const { isAdmin, handleAdminMenu, handleStatistics, handleViewRegistrations, handleEditEvents } = require('./admin');
 const { handleContacts } = require('./contacts');
 const { handleAppealStart, handleAppealText } = require('./appeal');
 const { handleAfishaMenu, resolveAfishaDateSelection, showDateAgenda } = require('./afisha');
@@ -18,6 +19,24 @@ function registerHandlers(bot, GROUP_ID) {
         if (text === '/start') {
             handleStart(bot, chatId);
             return;
+        }
+
+        // === ОБРОБКА АДМІНА ===
+        if (isAdmin(chatId)) {
+            if (text === "📊 Статистика") {
+                await handleStatistics(bot, chatId);
+                return;
+            }
+
+            if (text === "📋 Переглянути реєстрації") {
+                await handleViewRegistrations(bot, chatId);
+                return;
+            }
+
+            if (text === "✏️ Редагувати заходи") {
+                await handleEditEvents(bot, chatId);
+                return;
+            }
         }
 
         // === ОБРОБКА ПОВІДОМЛЕНЬ З ГРУПИ/КАНАЛУ ===

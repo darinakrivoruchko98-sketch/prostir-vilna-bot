@@ -1,4 +1,5 @@
 const state = require('../state');
+const { isAdmin } = require('./admin');
 
 const MAIN_MENU_KEYBOARD = {
     keyboard: [
@@ -10,9 +11,23 @@ const MAIN_MENU_KEYBOARD = {
     resize_keyboard: true
 };
 
+const ADMIN_MENU_KEYBOARD = {
+    keyboard: [
+        [{ text: "📊 Статистика" }],
+        [{ text: "📋 Переглянути реєстрації" }],
+        [{ text: "✏️ Редагувати заходи" }],
+        [{ text: "Афіша заходів" }],
+        [{ text: "Назад" }]
+    ],
+    resize_keyboard: true
+};
+
 function handleStart(bot, chatId) {
-    bot.sendMessage(chatId, "Меню:", {
-        reply_markup: MAIN_MENU_KEYBOARD
+    const menuKeyboard = isAdmin(chatId) ? ADMIN_MENU_KEYBOARD : MAIN_MENU_KEYBOARD;
+    const greeting = isAdmin(chatId) ? "🔐 Адміністраторське меню:" : "Меню:";
+    
+    bot.sendMessage(chatId, greeting, {
+        reply_markup: menuKeyboard
     });
     delete state.users[chatId];
 }
@@ -27,8 +42,11 @@ function handleBack(bot, chatId) {
         delete user.afishaPendingEventName;
         user.context = null;
     }
-    bot.sendMessage(chatId, "Меню:", {
-        reply_markup: MAIN_MENU_KEYBOARD
+    const menuKeyboard = isAdmin(chatId) ? ADMIN_MENU_KEYBOARD : MAIN_MENU_KEYBOARD;
+    const greeting = isAdmin(chatId) ? "🔐 Адміністраторське меню:" : "Меню:";
+    
+    bot.sendMessage(chatId, greeting, {
+        reply_markup: menuKeyboard
     });
     delete state.users[chatId];
 }
@@ -41,13 +59,17 @@ function handleReturnToMenu(bot, chatId) {
         delete state.users[chatId].afishaPendingEventName;
     }
     delete state.users[chatId];
-    bot.sendMessage(chatId, "Меню:", {
-        reply_markup: MAIN_MENU_KEYBOARD
+    const menuKeyboard = isAdmin(chatId) ? ADMIN_MENU_KEYBOARD : MAIN_MENU_KEYBOARD;
+    const greeting = isAdmin(chatId) ? "🔐 Адміністраторське меню:" : "Меню:";
+    
+    bot.sendMessage(chatId, greeting, {
+        reply_markup: menuKeyboard
     });
 }
 
 module.exports = {
     MAIN_MENU_KEYBOARD,
+    ADMIN_MENU_KEYBOARD,
     handleStart,
     handleBack,
     handleReturnToMenu,
