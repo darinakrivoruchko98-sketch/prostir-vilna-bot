@@ -14,7 +14,8 @@ async function appendRegistrationRow(chatId, user) {
     // D: Чи відвідували простір?
     // E: ВПО/МО
     // F: Інвалідність/Суттєві проблеми
-    // G: Ім'я акаунта (chatId для ідентифікації)
+    // G: chatId користувача
+    // H: username (опціонально)
     const values = [
         user.name || "",           // Колонка A: ПІБ
         user.phone || "",          // Колонка B: Телефон
@@ -22,7 +23,8 @@ async function appendRegistrationRow(chatId, user) {
         user.visited || "",        // Колонка D: Чи відвідували?
         user.status || "",         // Колонка E: ВПО/МО
         user.health || "",         // Колонка F: Інвалідність
-        String(chatId)              // Колонка G: ID користувача (для пошуку)
+        String(chatId),              // Колонка G: ID користувача (для пошуку)
+        user.username || ""         // Колонка H: username (опціонально)
     ];
 
     const findFirstFreeRow = (rows) => {
@@ -59,7 +61,7 @@ async function appendRegistrationRow(chatId, user) {
             console.log(`\n📝 Спроба ${attempt}/${maxTries}: Читання листа "${config.PERSONAL_DATA_SHEET_NAME}"...`);
             const existingResp = await state.sheetsClient.spreadsheets.values.get({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${config.PERSONAL_DATA_SHEET_NAME}!A:G`
+                range: `${config.PERSONAL_DATA_SHEET_NAME}!A:H`
             });
             const rows = existingResp.data.values || [];
             console.log(`✅ Лист прочитаний. Рядків: ${rows.length}`);
@@ -69,7 +71,7 @@ async function appendRegistrationRow(chatId, user) {
 
             await state.sheetsClient.spreadsheets.values.update({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${config.PERSONAL_DATA_SHEET_NAME}!A${targetRow}:G${targetRow}`,
+                range: `${config.PERSONAL_DATA_SHEET_NAME}!A${targetRow}:H${targetRow}`,
                 valueInputOption: "RAW",
                 requestBody: { values: [values] }
             });
@@ -96,26 +98,26 @@ async function appendRegistrationRow(chatId, user) {
             const msg = errorMsg.toLowerCase();
             if ((msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('sheet') ) && attempt === 1) {
                 try {
-                    console.warn('⚠️  Спроба fallback-діапазону A:G (перший аркуш)...');
+                    console.warn('⚠️  Спроба fallback-діапазону A:H (перший аркуш)...');
 
                     const existingResp = await state.sheetsClient.spreadsheets.values.get({
                         spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                        range: "A:G",
+                        range: "A:H",
                     });
                     const rows = existingResp.data.values || [];
                     const targetRow = findFirstFreeRow(rows);
 
                     await state.sheetsClient.spreadsheets.values.update({
                         spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                        range: `A${targetRow}:G${targetRow}`,
+                        range: `A${targetRow}:H${targetRow}`,
                         valueInputOption: "RAW",
                         requestBody: { values: [values] }
                     });
-                    console.log(`✅ Записано в таблицю (fallback A:G, рядок ${targetRow}) ✅\n`);
+                    console.log(`✅ Записано в таблицю (fallback A:H, рядок ${targetRow}) ✅\n`);
                     return;
                 } catch (e2) {
                     lastErr = e2;
-                    console.error('❌ Fallback append to A:G failed:', e2 && e2.message ? e2.message : e2);
+                    console.error('❌ Fallback append to A:H failed:', e2 && e2.message ? e2.message : e2);
                 }
             }
 
@@ -146,20 +148,24 @@ async function findUserByChatId(chatId) {
     try {
         const resp = await state.sheetsClient.spreadsheets.values.get({
             spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-            range: `${config.PERSONAL_DATA_SHEET_NAME}!A:G`
+            range: `${config.PERSONAL_DATA_SHEET_NAME}!A:H`
         });
         const rows = resp.data.values || [];
         const chatIdStr = String(chatId);
         // Find the latest matching row (chatId is now in column G = index 6)
         for (let i = rows.length - 1; i >= 0; i--) {
-            if (rows[i][6] === chatIdStr) {  // Column G (index 6) contains chatId
+            const row = rows[i] || [];
+            const rowChatId = String(row[6] || '').trim();
+            const rowAltChatId = String(row[7] || '').trim();
+            if (rowChatId === chatIdStr || rowAltChatId === chatIdStr) {
                 return {
-                    name: rows[i][0] || '',      // Column A: ПІБ
-                    phone: rows[i][1] || '',     // Column B: Телефон
-                    birth: rows[i][2] || '',     // Column C: Дата народження
-                    visited: rows[i][3] || '',   // Column D: Чи відвідували?
-                    status: rows[i][4] || '',    // Column E: ВПО/МО
-                    health: rows[i][5] || ''     // Column F: Інвалідність
+                    name: row[0] || '',      // Column A: ПІБ
+                    phone: row[1] || '',     // Column B: Телефон
+                    birth: row[2] || '',     // Column C: Дата народження
+                    visited: row[3] || '',   // Column D: Чи відвідували?
+                    status: row[4] || '',    // Column E: ВПО/МО
+                    health: row[5] || '',    // Column F: Інвалідність
+                    username: row[7] || ''   // Column H: username, optional
                 };
             }
         }

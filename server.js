@@ -8,6 +8,7 @@ const path = require("path");
 const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
 const { google } = require("googleapis");
+const { findUserByChatId } = require('./src/sheets/personal-data');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
 const PORT = process.env.PORT || 8080;
@@ -4159,6 +4160,27 @@ async function resolveRegistrantFormData(chatId, user) {
         return resolved;
     }
 
+    const sheetProfile = await loadKnownUserByChatId(chatId);
+    if (sheetProfile) {
+        Object.assign(resolved, sheetProfile);
+    } else if (!resolved.phone && user && user.phone) {
+        const phoneProfile = await loadKnownUserByPhone(user.phone);
+        if (phoneProfile) {
+            Object.assign(resolved, phoneProfile);
+        }
+    } else if (!resolved.name && user && user.username) {
+        const usernameProfile = await loadKnownUserByUsername(user.username);
+        if (usernameProfile) {
+            Object.assign(resolved, usernameProfile);
+        }
+    }
+
+    const hasAllAfterSheet = resolved.name && resolved.phone && resolved.birth && resolved.visited && resolved.status && resolved.health &&
+        resolved.childrenCount && resolved.employment && resolved.gbvAffected;
+    if (hasAllAfterSheet) {
+        return resolved;
+    }
+
     const normalizePhone = (value) => String(value || '').replace(/\D/g, '');
     const inputPhone = normalizePhone(resolved.phone);
     const inputName = String(resolved.name || '').trim().toLowerCase();
@@ -4206,6 +4228,50 @@ async function resolveRegistrantFormData(chatId, user) {
     return resolved;
 }
 
+function parsePersonalDataRow(row) {
+    const cells = (row || []).map((cell) => String(cell || '').trim());
+    const current = {
+        username: cells[7] || '',
+        name: cells[0] || '',
+        phone: cells[1] || '',
+        birth: cells[2] || '',
+        visited: cells[3] || '',
+        status: cells[4] || '',
+        health: cells[5] || '',
+        chatId: cells[6] || '',
+        childrenCount: cells[8] || '',
+        employment: cells[9] || '',
+        gbvAffected: cells[10] || ''
+    };
+    const legacy = {
+        username: cells[0] || '',
+        name: cells[1] || '',
+        phone: cells[2] || '',
+        birth: cells[3] || '',
+        visited: cells[4] || '',
+        status: cells[5] || '',
+        health: cells[6] || '',
+        chatId: cells[7] || '',
+        childrenCount: cells[8] || '',
+        employment: cells[9] || '',
+        gbvAffected: cells[10] || ''
+    };
+
+    return {
+        username: current.username || legacy.username,
+        name: current.name || legacy.name,
+        phone: current.phone || legacy.phone,
+        birth: current.birth || legacy.birth,
+        visited: current.visited || legacy.visited,
+        status: current.status || legacy.status,
+        health: current.health || legacy.health,
+        chatId: current.chatId || legacy.chatId,
+        childrenCount: current.childrenCount || legacy.childrenCount,
+        employment: current.employment || legacy.employment,
+        gbvAffected: current.gbvAffected || legacy.gbvAffected
+    };
+}
+
 async function loadKnownUserByChatId(chatId) {
     const chatIdStr = String(chatId || '').trim();
     if (!chatIdStr) return null;
@@ -4218,8 +4284,16 @@ async function loadKnownUserByChatId(chatId) {
         return null;
     }
 
-    // У новій схемі таблиці chatId не зберігається окремою колонкою.
-    // Пошук виконується по username/phone у відповідних функціях.
+    try {
+        const found = await findUserByChatId(chatId);
+        if (found) {
+            knownUsers[chatId] = found;
+            return found;
+        }
+    } catch (e) {
+        console.error('loadKnownUserByChatId error:', e && e.message ? e.message : e);
+    }
+
     return null;
 }
 
@@ -4242,21 +4316,9 @@ async function loadKnownUserByPhone(phone) {
             const rows = resp.data.values || [];
             for (let i = rows.length - 1; i >= 0; i--) {
                 const row = rows[i] || [];
-                const rowPhone = String(row[2] || '').trim(); // Column C (index 2)
-                if (!rowPhone.includes(phoneStr) && phoneStr !== rowPhone) continue;
-
-                const restored = {
-                    name: String(row[1] || '').trim(),
-                    phone: String(row[2] || '').trim(),
-                    birth: String(row[3] || '').trim(),
-                    visited: String(row[4] || '').trim(),
-                    status: String(row[5] || '').trim(),
-                    health: String(row[6] || '').trim(),
-                    childrenCount: String(row[7] || '').trim(),
-                    employment: String(row[8] || '').trim(),
-                    gbvAffected: String(row[9] || '').trim(),
-                    username: String(row[0] || '').trim()
-                };
+                const restored = parsePersonalDataRow(row);
+                if (!restored.phone) continue;
+                if (!restored.phone.includes(phoneStr) && phoneStr !== restored.phone) continue;
 
                 return restored;
             }
@@ -4291,21 +4353,10 @@ async function loadKnownUserByUsername(username) {
             const rows = resp.data.values || [];
             for (let i = rows.length - 1; i >= 0; i--) {
                 const row = rows[i] || [];
-                const rowUsername = String(row[0] || '').trim().toLowerCase(); // Column A (index 0)
-                if (rowUsername !== usernameStr && !rowUsername.endsWith(usernameStr.replace('@', ''))) continue;
-
-                const restored = {
-                    name: String(row[1] || '').trim(),
-                    phone: String(row[2] || '').trim(),
-                    birth: String(row[3] || '').trim(),
-                    visited: String(row[4] || '').trim(),
-                    status: String(row[5] || '').trim(),
-                    health: String(row[6] || '').trim(),
-                    childrenCount: String(row[7] || '').trim(),
-                    employment: String(row[8] || '').trim(),
-                    gbvAffected: String(row[9] || '').trim(),
-                    username: String(row[0] || '').trim()
-                };
+                const restored = parsePersonalDataRow(row);
+                const normalizedUsername = String(restored.username || '').toLowerCase().replace(/^@/, '');
+                const fallbackUsername = String(row[0] || '').trim().toLowerCase().replace(/^@/, '');
+                if (normalizedUsername !== usernameStr && fallbackUsername !== usernameStr) continue;
 
                 return restored;
             }
@@ -5222,6 +5273,23 @@ async function processParsedEvents(parsedEvents) {
             await showAfishaDaysMenu(chatId);
             return;
         }
+
+        const sheetProfile = await loadKnownUserByChatId(chatId);
+        if (sheetProfile) {
+            Object.assign(user, sheetProfile);
+        } else if (user.phone) {
+            const phoneProfile = await loadKnownUserByPhone(user.phone);
+            if (phoneProfile) {
+                Object.assign(user, phoneProfile);
+            }
+        } else if (user.username) {
+            const usernameProfile = await loadKnownUserByUsername(user.username);
+            if (usernameProfile) {
+                Object.assign(user, usernameProfile);
+            }
+        }
+
+        user.profileHydrated = true;
 
         const registrantData = await resolveRegistrantFormData(chatId, user);
         const hasAllData = registrantData.name && registrantData.phone && registrantData.birth &&
