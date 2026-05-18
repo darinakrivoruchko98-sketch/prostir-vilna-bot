@@ -21,7 +21,11 @@ function handleEventClick(bot, chatId, text, user) {
 
     // Legacy fallback (залишаємо на крайній випадок)
     if (!selectedEvent) {
-        selectedEvent = getAllEvents().find((eventItem) => text.includes(eventItem.name));
+        const normalizedInput = normalizeTitle(text);
+        selectedEvent = getAllEvents().find((eventItem) => {
+            const normalizedName = normalizeTitle(eventItem.name);
+            return normalizedInput.includes(normalizedName) || normalizedName.includes(normalizedInput);
+        });
     }
 
     if (!selectedEvent) return null;

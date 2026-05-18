@@ -1592,6 +1592,20 @@ function resolveAfishaEventIdFromButtonText(user, text) {
         }
     }
 
+    const candidateEventIds = Object.values(user.eventButtonMap);
+    const candidateEvents = candidateEventIds
+        .map((eventId) => getAllEvents().find((eventItem) => eventItem.id === eventId))
+        .filter(Boolean);
+
+    const partialMatches = candidateEvents.filter((eventItem) => {
+        const normalizedEventName = normalizeCommandText(eventItem.name);
+        return normalizedInput.includes(normalizedEventName) || normalizedEventName.includes(normalizedInput);
+    });
+
+    if (partialMatches.length === 1) {
+        return partialMatches[0].id;
+    }
+
     return null;
 }
 
