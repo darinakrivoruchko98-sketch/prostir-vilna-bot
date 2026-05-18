@@ -24,9 +24,17 @@ const BROADCAST_ALL_TRIGGER_REGEX = /❗️?|‼️/;
 const BROADCAST_TARGETED_TRIGGER_REGEX = /❕/;
 const APP_TIME_ZONE = process.env.TZ || 'Europe/Kyiv';
 // Захист ідентичності бота: якщо хтось змінить назву/опис через BotFather, бот відновить їх автоматично
-const BOT_DISPLAY_NAME = process.env.BOT_DISPLAY_NAME || 'Бот простору Вільна м. Дніпро';
-const BOT_DESCRIPTION = process.env.BOT_DESCRIPTION || '🌿 Простір Вільна — місце підтримки, творчості та відновлення у м. Дніпро. У чат-боті ви знайдете актуальні анонси заходів, реєстрації на майстер-класи, групові зустрічі, арт-терапію та корисну інформацію про події простору ✨';
+const BOT_USERNAME = process.env.BOT_USERNAME || '';
+const BOT_DISPLAY_NAME = 'Бот простору Вільна🌷';
+const BOT_DESCRIPTION = 'Бот простору «Вільна» — це твій швидкий вхід у події, реєстрації та актуальні активності простору. Тут можна легко записатися на майстер-класи, отримати інформацію про заходи та бути в курсі всього, що відбувається 🩷';
 const BOT_SHORT_DESCRIPTION = process.env.BOT_SHORT_DESCRIPTION || '';
+const logger = require('./src/utils/logging');
+// redirect console calls to logger for unified logging
+console.log = (...args) => logger.info(...args);
+console.info = (...args) => logger.info(...args);
+console.warn = (...args) => logger.warn(...args);
+console.error = (...args) => logger.error(...args);
+console.debug = (...args) => logger.info(...args);
 const REMINDER_DELIVERY_WINDOW_MINUTES = 10;
 const REMINDER_SHORT_WINDOW_MINUTES = 1;
 const REMINDER_24H_HOURS_MIN = 1;
@@ -128,6 +136,61 @@ bot.on('polling_error', async (error) => {
 
     // Інші помилки - просто логуємо
     console.error('⚠️ polling_error:', error);
+});
+
+// Recent actions for simple undo (keyed by chatId)
+const recentActions = new Map();
+function recordRecentAction(chatId, action) {
+    try {
+        if (!chatId) return;
+        recentActions.set(String(chatId), { action, ts: Date.now() });
+        logger.info('Recorded recent action for undo', chatId, action && action.type ? action.type : '');
+    } catch (e) {
+        logger.warn('Failed to record recent action', e && e.message ? e.message : e);
+    }
+}
+
+async function performUndoForChat(chatId) {
+    const entry = recentActions.get(String(chatId));
+    if (!entry || !entry.action) return { ok: false, reason: 'no-action' };
+    const a = entry.action;
+    try {
+        if (a.type === 'register') {
+            // attempt to unregister the user from the event
+            const evId = a.eventId;
+            const res = await unregisterFromEvent(chatId, evId);
+            if (res && res.status === 'ok') {
+                recentActions.delete(String(chatId));
+                return { ok: true };
+            }
+            return { ok: false, reason: 'unregister-failed' };
+        }
+    } catch (err) {
+        logger.error('Undo action failed', err && err.message ? err.message : err);
+        return { ok: false, reason: 'error' };
+    }
+    return { ok: false, reason: 'unsupported' };
+}
+
+bot.on('callback_query', async (callbackQuery) => {
+    try {
+        const data = String(callbackQuery.data || '');
+        const chatId = callbackQuery.from && callbackQuery.from.id;
+        if (data.startsWith('UNDO_REGISTER:')) {
+            const eventId = data.split(':')[1];
+            await bot.answerCallbackQuery(callbackQuery.id, { text: 'Виконується відміна...' });
+            const undoRes = await performUndoForChat(chatId);
+            if (undoRes.ok) {
+                await bot.sendMessage(chatId, '✅ Реєстрацію скасовано.');
+            } else {
+                await bot.sendMessage(chatId, '❌ Не вдалося скасувати реєстрацію.');
+            }
+        } else {
+            await bot.answerCallbackQuery(callbackQuery.id, { text: 'Невідома дія' });
+        }
+    } catch (err) {
+        logger.error('callback_query handler error', err && err.message ? err.message : err);
+    }
 });
 
 // Скидаємо лічильник помилок кожну хвилину
@@ -2045,7 +2108,8 @@ async function incrementSheetRegistration(event, fallbackRegistrant) {
             scheduleSheet: match.scheduleSheet,
             rowIndex: match.rowIndex,
             registrationsCount,
-            fallbackRegistrant
+            fallbackRegistrant,
+            eventId: event.id
         });
     } catch (error) {
         console.error('❌ Не вдалося оновити нотатку реєстрації у розкладі:', error && error.message ? error.message : error);
@@ -2086,7 +2150,8 @@ async function decrementSheetRegistration(event, registrantProfile) {
             scheduleSheet: match.scheduleSheet,
             rowIndex: match.rowIndex,
             registrationsCount,
-            removeRegistrant: registrantProfile
+            removeRegistrant: registrantProfile,
+            eventId: event.id
         });
     } catch (error) {
         console.error('❌ Не вдалося оновити нотатку після відписки:', error && error.message ? error.message : error);
@@ -2164,9 +2229,58 @@ function parseRegistrantsFromNote(noteText) {
     return registrants;
 }
 
+async function findScheduleRowByEventByNoteTag(event) {
+    if (!event || !event.id || !SPREADSHEET_ID || !sheetsClient) {
+        return null;
+    }
+
+    for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
+        try {
+            const resp = await sheetsClient.spreadsheets.get({
+                spreadsheetId: SPREADSHEET_ID,
+                ranges: [`${scheduleSheet}!E:E`],
+                includeGridData: true,
+                fields: 'sheets(data(rowData(values(note))))'
+            });
+
+            const noteRows = resp
+                && resp.data
+                && resp.data.sheets
+                && resp.data.sheets[0]
+                && resp.data.sheets[0].data
+                && resp.data.sheets[0].data[0]
+                && Array.isArray(resp.data.sheets[0].data[0].rowData)
+                ? resp.data.sheets[0].data[0].rowData
+                : [];
+
+            for (const [rowIndex, rowDataRow] of noteRows.entries()) {
+                const note = extractRowNote(rowDataRow, 0);
+                if (!note) continue;
+                const noteEventId = extractScheduleNoteEventId(note);
+                if (noteEventId && noteEventId === event.id) {
+                    return { scheduleSheet, rowIndex };
+                }
+            }
+        } catch (error) {
+            const message = (error && error.message ? String(error.message) : '').toLowerCase();
+            if (message.includes('unable to parse range') || message.includes('not found')) {
+                continue;
+            }
+            console.error(`❌ Помилка пошуку рядка події за міткою нотатки у листі ${scheduleSheet}:`, error && error.message ? error.message : error);
+        }
+    }
+
+    return null;
+}
+
 async function findScheduleRowByEvent(event) {
     if (!event || !event.date || !SPREADSHEET_ID || !sheetsClient) {
         return null;
+    }
+
+    const markerMatch = await findScheduleRowByEventByNoteTag(event);
+    if (markerMatch) {
+        return markerMatch;
     }
 
     for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
@@ -2202,6 +2316,11 @@ async function findScheduleRowByEvent(event) {
         }
     }
 
+    const markerMatch = await findScheduleRowByEventByNoteTag(event);
+    if (markerMatch) {
+        return markerMatch;
+    }
+
     return null;
 }
 
@@ -2228,21 +2347,50 @@ function isSameRegistrant(item, candidateNameKey, candidatePhoneKey) {
         || (!candidateNameKey && candidatePhoneKey && samePhone);
 }
 
-function buildRegistrantsNoteFromList(registrationsCount, registrants) {
+const SCHEDULE_NOTE_EVENT_ID_TAG = 'EVENT_ID:';
+
+function extractScheduleNoteEventId(noteText) {
+    if (!noteText) return '';
+    const lines = String(noteText).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    for (const line of lines) {
+        const match = line.match(/^EVENT_ID\s*:\s*(.+)$/i);
+        if (match) {
+            return String(match[1] || '').trim();
+        }
+    }
+    return '';
+}
+
+function removeScheduleNoteEventIdTag(noteText) {
+    if (!noteText) return '';
+    return String(noteText).split(/\r?\n/)
+        .filter((line) => !/^EVENT_ID\s*:/i.test(String(line).trim()))
+        .join('\n')
+        .trim();
+}
+
+function ensureScheduleNoteEventIdTag(noteText, eventId) {
+    const cleaned = removeScheduleNoteEventIdTag(noteText || '');
+    if (!eventId) {
+        return cleaned;
+    }
+    if (!cleaned) {
+        return `${SCHEDULE_NOTE_EVENT_ID_TAG}${eventId}`;
+    }
+    return `${cleaned}\n\n${SCHEDULE_NOTE_EVENT_ID_TAG}${eventId}`;
+}
+
+function buildRegistrantsNoteFromList(registrationsCount, registrants, eventId = '') {
     const safeCount = Number.isFinite(registrationsCount) ? registrationsCount : registrants.length;
     const header = `Зареєстровано: ${safeCount}`;
-
-    if (registrants.length === 0) {
-        return header;
-    }
-
     const people = registrants.map((item, index) => {
         const name = String(item.name || '').trim() || 'Без імені';
         const phone = String(item.phone || '').trim();
         return `${index + 1}. ${name}${phone ? ` | ${phone}` : ''}`;
     });
 
-    return `${header}\n\n${people.join('\n')}`;
+    const content = people.length === 0 ? header : `${header}\n\n${people.join('\n')}`;
+    return eventId ? `${content}\n\n${SCHEDULE_NOTE_EVENT_ID_TAG}${eventId}` : content;
 }
 
 function getEventIdentityKey(event) {
@@ -2324,6 +2472,118 @@ async function buildScheduleEventNoteIndex() {
     return index;
 }
 
+async function reconcileScheduleNotesWithEvents(loadedEvents) {
+    if (!SPREADSHEET_ID || !sheetsClient || !Array.isArray(loadedEvents) || loadedEvents.length === 0) {
+        return;
+    }
+
+    const eventsById = new Map(
+        loadedEvents
+            .filter((ev) => ev && ev.id && ev.scheduleSheetName && Number.isFinite(ev.scheduleRowNumber))
+            .map((ev) => [ev.id, ev])
+    );
+
+    for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
+        try {
+            const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, scheduleSheet);
+            if (sheetId === null || typeof sheetId === 'undefined') {
+                continue;
+            }
+
+            const notesResp = await sheetsClient.spreadsheets.get({
+                spreadsheetId: SPREADSHEET_ID,
+                ranges: [`${scheduleSheet}!E:E`],
+                includeGridData: true,
+                fields: 'sheets(data(rowData(values(note))))'
+            });
+
+            const noteRows = notesResp
+                && notesResp.data
+                && notesResp.data.sheets
+                && notesResp.data.sheets[0]
+                && notesResp.data.sheets[0].data
+                && notesResp.data.sheets[0].data[0]
+                && Array.isArray(notesResp.data.sheets[0].data[0].rowData)
+                ? notesResp.data.sheets[0].data[0].rowData
+                : [];
+
+            const requests = [];
+            for (const [rowIndex, rowDataRow] of noteRows.entries()) {
+                const note = extractRowNote(rowDataRow, 0);
+                const noteEventId = extractScheduleNoteEventId(note);
+                if (!noteEventId) {
+                    continue;
+                }
+
+                const targetEvent = eventsById.get(noteEventId);
+                if (!targetEvent || targetEvent.scheduleSheetName !== scheduleSheet) {
+                    continue;
+                }
+
+                const targetRowIndex = targetEvent.scheduleRowNumber - 1;
+                if (targetRowIndex === rowIndex) {
+                    continue;
+                }
+
+                const targetNoteRow = noteRows[targetRowIndex];
+                const targetNote = extractRowNote(targetNoteRow, 0);
+                const targetNoteEventId = extractScheduleNoteEventId(targetNote);
+                if (targetNote.trim() && targetNoteEventId !== noteEventId) {
+                    console.warn(`⚠️ Пропущено переміщення нотатки для події ${noteEventId}: цільовий рядок ${targetRowIndex + 1} містить іншу нотатку.`);
+                    continue;
+                }
+
+                requests.push({
+                    repeatCell: {
+                        range: {
+                            sheetId,
+                            startRowIndex: targetRowIndex,
+                            endRowIndex: targetRowIndex + 1,
+                            startColumnIndex: 4,
+                            endColumnIndex: 5
+                        },
+                        cell: {
+                            note
+                        },
+                        fields: 'note'
+                    }
+                });
+
+                requests.push({
+                    repeatCell: {
+                        range: {
+                            sheetId,
+                            startRowIndex: rowIndex,
+                            endRowIndex: rowIndex + 1,
+                            startColumnIndex: 4,
+                            endColumnIndex: 5
+                        },
+                        cell: {
+                            note: ''
+                        },
+                        fields: 'note'
+                    }
+                });
+
+                console.log(`ℹ️ Переміщення нотатки для події ${noteEventId}: рядок ${rowIndex + 1} → ${targetRowIndex + 1} у листі ${scheduleSheet}`);
+            }
+
+            if (requests.length > 0) {
+                await sheetsClient.spreadsheets.batchUpdate({
+                    spreadsheetId: SPREADSHEET_ID,
+                    requestBody: { requests }
+                });
+            }
+        } catch (error) {
+            const message = (error && error.message ? String(error.message) : '').toLowerCase();
+            if (message.includes('unable to parse range') || message.includes('not found')) {
+                continue;
+            }
+            console.error(`❌ Помилка узгодження нотаток розкладу у листі ${scheduleSheet}:`, error && error.message ? error.message : error);
+        }
+    }
+}
+
 async function isRegistrantAlreadyInEventNote(event, registrantProfile) {
     if (!event || !registrantProfile || !SPREADSHEET_ID || !sheetsClient) {
         return false;
@@ -2386,10 +2646,11 @@ async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, exis
         }
     }
 
-    return buildRegistrantsNoteFromList(registrationsCount, registrants);
+    const eventId = extractScheduleNoteEventId(existingNote);
+    return buildRegistrantsNoteFromList(registrationsCount, registrants, eventId);
 }
 
-async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registrationsCount, fallbackRegistrant, removeRegistrant }) {
+async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registrationsCount, fallbackRegistrant, removeRegistrant, eventId }) {
     if (!scheduleSheet || rowIndex < 0 || !SPREADSHEET_ID || !sheetsClient) {
         return;
     }
@@ -2402,6 +2663,7 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
     const existingNote = await getScheduleCellNote(scheduleSheet, rowIndex);
     let nextNote;
 
+    const existingEventId = extractScheduleNoteEventId(existingNote) || eventId;
     if (removeRegistrant) {
         // При відписці: парсимо, видаляємо, перебудовуємо
         let registrants = parseRegistrantsFromNote(existingNote);
@@ -2410,7 +2672,7 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
         if (removeNameKey || removePhoneKey) {
             registrants = registrants.filter((item) => !isSameRegistrant(item, removeNameKey, removePhoneKey));
         }
-        nextNote = buildRegistrantsNoteFromList(registrationsCount, registrants);
+        nextNote = buildRegistrantsNoteFromList(registrationsCount, registrants, existingEventId);
     } else if (fallbackRegistrant) {
         // При реєстрації: ТІЛЬКИ ДОПИСУЄМО нового учасника в кінець нотатки.
         // Не перебудовуємо повністю — інакше можна втратити записи що вже є.
@@ -2441,6 +2703,8 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
                 nextNote = `${headerLine}\n\n${existingNote.trim()}\n${newLine}`;
             }
         }
+
+        nextNote = ensureScheduleNoteEventIdTag(nextNote, existingEventId);
     } else {
         return; // Нічого робити
     }
@@ -2849,20 +3113,32 @@ async function startSelectedEventsRegistration(chatId, user, options = {}) {
         delete user.lastAfishaRegisteredEventName;
     }
 
-    await bot.sendMessage(chatId, buildRegistrationResultsMessage(
+    const messageText = buildRegistrationResultsMessage(
         successEvents,
         failedEvents,
         isFriendMode ? 'Подругу успішно зареєстровано на' : 'Ви успішно зареєстровані на'
-    ), {
-        parse_mode: 'HTML',
-        reply_markup: {
-            keyboard: isFriendMode
-                ? [[{ text: FRIEND_FLOW_BUTTONS.addAnother }], [{ text: NAVIGATION_BUTTONS.menu }]]
-                : instantAfisha
-                    ? getAfishaInstantRegistrationKeyboard()
-                    : [[{ text: NAVIGATION_BUTTONS.menu }]],
-            resize_keyboard: true
+    );
+
+    // build reply markup with optional inline undo for last registered event
+    let replyMarkup = {
+        keyboard: isFriendMode
+            ? [[{ text: FRIEND_FLOW_BUTTONS.addAnother }], [{ text: NAVIGATION_BUTTONS.menu }]]
+            : instantAfisha
+                ? getAfishaInstantRegistrationKeyboard()
+                : [[{ text: NAVIGATION_BUTTONS.menu }]],
+        resize_keyboard: true
+    };
+
+    if (!isFriendMode && successEvents && successEvents.length > 0) {
+        const lastEvent = successEvents[successEvents.length - 1];
+        if (lastEvent && lastEvent.id) {
+            replyMarkup = Object.assign({}, replyMarkup, { inline_keyboard: [[{ text: 'Відмінити', callback_data: `UNDO_REGISTER:${lastEvent.id}` }]] });
         }
+    }
+
+    await bot.sendMessage(chatId, messageText, {
+        parse_mode: 'HTML',
+        reply_markup: replyMarkup
     });
 
     if (instantAfisha && !isFriendMode) {
@@ -3277,6 +3553,19 @@ async function guardBotIdentity() {
     if (!TOKEN) return;
     const base = `https://api.telegram.org/bot${TOKEN}`;
     try {
+        const meResponse = await fetch(`${base}/getMe`);
+        const meResult = await meResponse.json();
+        if (meResult.ok && meResult.result) {
+            const currentUsername = meResult.result.username || '';
+            const currentName = meResult.result.first_name || '';
+            console.log(`🔒 Bot token belongs to @${currentUsername}, name="${currentName}"`);
+            if (BOT_USERNAME && currentUsername && currentUsername !== BOT_USERNAME) {
+                console.warn(`⚠️ BOT_USERNAME mismatch: expected @${BOT_USERNAME}, got @${currentUsername}`);
+            }
+        } else {
+            console.warn('⚠️ guardBotIdentity getMe failed:', meResult.description || meResult);
+        }
+
         const tasks = [];
         if (BOT_DISPLAY_NAME) {
             tasks.push(
@@ -3437,6 +3726,8 @@ async function loadEventsFromSheet() {
         if (events.length === 0) {
             console.warn(`⚠️ Розклад прочитано, але заходів не знайдено. Перевірте дані у листі ${SCHEDULE_SHEET_NAME}.`);
         }
+
+        await reconcileScheduleNotesWithEvents(events);
 
         const previousEvents = Array.from(previousEventsById.values());
         const eventRemap = buildLikelyEditedEventMap(previousEvents, events);
@@ -3705,7 +3996,28 @@ async function resolveRegistrantProfile(chatId, user, providedName, providedPhon
         resolved.phone = String((user && user.phone) || '').trim();
     }
 
+    const knownProfile = knownUsers[String(chatId)] || knownUsers[chatId];
+    if (knownProfile) {
+        if (!resolved.name) {
+            resolved.name = String(knownProfile.name || '').trim();
+        }
+        if (!resolved.phone) {
+            resolved.phone = String(knownProfile.phone || '').trim();
+        }
+    }
+
     return resolved;
+}
+
+function isExactRegistrantMatch(item, candidateNameKey, candidatePhoneKey) {
+    const nameKey = normalizeRegistrantName(item.name);
+    const phoneKey = normalizeRegistrantPhone(item.phone);
+
+    if (candidateNameKey && candidatePhoneKey) {
+        return nameKey === candidateNameKey && phoneKey === candidatePhoneKey;
+    }
+
+    return isSameRegistrant(item, candidateNameKey, candidatePhoneKey);
 }
 
 async function restoreUserRegistrationsFromSheet(chatId, user) {
@@ -3767,7 +4079,7 @@ async function restoreUserRegistrationsFromSheet(chatId, user) {
             if (!noteText) continue;
 
             const registrants = parseRegistrantsFromNote(noteText);
-            const inNote = registrants.some((item) => isSameRegistrant(item, normalizedName, normalizedPhone));
+            const inNote = registrants.some((item) => isExactRegistrantMatch(item, normalizedName, normalizedPhone));
             if (!inNote) continue;
 
             userEventRegistrations[chatId].push({
@@ -4129,7 +4441,9 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
                 reminded1h: false
             });
             saveReminderStateToDisk();
-            console.log(`📝 Збережено реєстрацію для нагадувань: ${chatId} → ${eventName} (${evObj.date})`);
+            logger.info(`Saved reminder registration: ${chatId} → ${eventName}`);
+            // record undo action for this chat
+            try { recordRecentAction(chatId, { type: 'register', eventId }); } catch (e) { logger.warn('recordRecentAction failed', e && e.message ? e.message : e); }
         }
     }
 
@@ -4149,7 +4463,7 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
                 registrantPhone: registrantProfile.phone
             });
             saveReminderStateToDisk();
-            console.log(`👭 Збережено реєстрацію подруги: ${chatId} → ${eventName} (${registrantProfile.name || 'без імені'})`);
+            logger.info(`Saved friend registration: ${chatId} → ${eventName} (${registrantProfile.name || 'без name'})`);
         }
     }
 
