@@ -146,22 +146,24 @@ async function handleRegister(bot, chatId, user) {
     const eventName = user.selectedEventName;
     if (!eventId || !eventName) return;
 
-    // Populate user data from knownUsers if missing (e.g. afisha quick registration)
-    if (!user.name && state.knownUsers && state.knownUsers[chatId]) {
-        const known = state.knownUsers[chatId];
-        user.name = known.name;
-        user.phone = known.phone;
-    } else if (!user.name) {
-        const found = await findUserByChatId(chatId);
-        if (found) {
-            state.knownUsers[chatId] = found;
-            user.name = found.name;
-            user.phone = found.phone;
+    // Спочатку перевіряємо, чи користувач вже зареєстрований
+    let userFound = state.knownUsers && state.knownUsers[chatId];
+    
+    if (!userFound) {
+        userFound = await findUserByChatId(chatId);
+        if (userFound) {
+            state.knownUsers[chatId] = userFound;
         }
     }
 
-    // If in afisha context and user data is not available, redirect to registration
-    if (user.context === 'afisha' && !user.name) {
+    // Якщо користувач знайдений у базі, зберігаємо його дані
+    if (userFound) {
+        user.name = userFound.name;
+        user.phone = userFound.phone;
+    }
+
+    // ВАЖЛИВО: Якщо користувач НЕ зареєстрований, просимо його зареєструватись ОДИН РАЗ
+    if (!userFound) {
         user.afishaFullRegistration = true;
         user.afishaPendingEventId = eventId;
         user.afishaPendingEventName = eventName;
@@ -170,6 +172,7 @@ async function handleRegister(bot, chatId, user) {
         return;
     }
 
+    // Якщо користувач уже зареєстрований, реєструємо його відразу на захід
     try {
         const result = await registerForSelectedEvent(chatId, user, user.name || '', user.phone || '');
 
@@ -344,7 +347,7 @@ async function handleStep7EventClick(bot, chatId, text, user) {
     const seatsLeft = await getSeatsLeft(selectedEvent.id);
     const seatsInfo = seatsLeft > 0
         ? `💺 Місць залишилось: ${seatsLeft}\n`
-        : `❌ Місця закінчилися\n`;
+        : `❌ Місця закінчилася\n`;
 
     const buttons = [];
     if (seatsLeft > 0) {
