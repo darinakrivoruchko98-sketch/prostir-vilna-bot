@@ -29,7 +29,15 @@ function parseJsonOrBase64ServiceAccount(rawValue) {
     return null;
 }
 
+let cachedCredentials = null;
+let cachedSheetsClient = null;
+
 function loadGoogleCredentials() {
+    // Если уже кешировали, возвращаем сразу
+    if (cachedCredentials) {
+        return cachedCredentials;
+    }
+
     const candidates = [
         {
             env: 'GOOGLE_SERVICE_ACCOUNT_JSON',
@@ -63,16 +71,19 @@ function loadGoogleCredentials() {
         const creds = candidate.parser(raw);
         if (creds && creds.client_email && creds.private_key) {
             console.log(`🔑 Credentials: ${candidate.env}`);
+            cachedCredentials = creds;
             return creds;
         }
     }
 
     if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
         console.log("🔑 Credentials: GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY env vars");
-        return {
+        const creds = {
             client_email: process.env.GOOGLE_CLIENT_EMAIL,
             private_key: process.env.GOOGLE_PRIVATE_KEY,
         };
+        cachedCredentials = creds;
+        return creds;
     }
 
     if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
@@ -82,12 +93,14 @@ function loadGoogleCredentials() {
                 const inlineCreds = JSON.parse(gac);
                 if (inlineCreds.client_email && inlineCreds.private_key) {
                     console.log("🔑 Credentials: GOOGLE_APPLICATION_CREDENTIALS (inline JSON)");
+                    cachedCredentials = inlineCreds;
                     return inlineCreds;
                 }
             } else {
                 const fileCreds = JSON.parse(fs.readFileSync(gac, "utf8"));
                 if (fileCreds.client_email && fileCreds.private_key) {
                     console.log(`🔑 Credentials: GOOGLE_APPLICATION_CREDENTIALS (${gac})`);
+                    cachedCredentials = fileCreds;
                     return fileCreds;
                 }
             }
@@ -104,6 +117,7 @@ function loadGoogleCredentials() {
                 const data = JSON.parse(fs.readFileSync(f, "utf8"));
                 if (data.type === "service_account" && data.client_email && data.private_key) {
                     console.log("🔑 Credentials: key file", f);
+                    cachedCredentials = data;
                     return data;
                 }
             } catch (e) {
@@ -118,13 +132,22 @@ function loadGoogleCredentials() {
 }
 
 async function createAuthorizedSheetsClient() {
+    // Если уже есть кешированный клиент, возвращаем его
+    if (cachedSheetsClient) {
+        console.log("♻️ Использую кешированный Google Sheets клиент");
+        return cachedSheetsClient;
+    }
+
     const creds = loadGoogleCredentials();
     if (!creds) {
+        const errorMsg = "Не знайдено Google credentials. Задайте GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, GOOGLE_CREDENTIALS, " +
+            "GOOGLE_CLIENT_EMAIL+GOOGLE_PRIVATE_KEY, GOOGLE_APPLICATION_CREDENTIALS або покладіть vilna-bot-*.json у кореневу папку";
         console.error("❌ Google credentials не знайдено!");
-        throw new Error(
-            "Не знайдено Google credentials. Задайте GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, GOOGLE_CREDENTIALS, " +
-            "GOOGLE_CLIENT_EMAIL+GOOGLE_PRIVATE_KEY, GOOGLE_APPLICATION_CREDENTIALS або покладіть vilna-bot-*.json у кореневу папку"
-        );
+        console.error(errorMsg);
+        console.error("\n📝 Перевір Railway Variables:");
+        console.error("   - GOOGLE_CREDENTIALS (base64)");
+        console.error("   - або GOOGLE_CLIENT_EMAIL + GOOGLE_PRIVATE_KEY");
+        throw new Error(errorMsg);
     }
 
     console.log(`✅ Credentials завантажені від ${creds.client_email}`);
@@ -142,7 +165,11 @@ async function createAuthorizedSheetsClient() {
         const token = await client.getAccessToken();
         console.log(`🔐 Google Sheets credentials валідні`);
         console.log(`   Service account: ${creds.client_email}`);
-        return google.sheets({ version: "v4", auth: client });
+        
+        const sheetsClient = google.sheets({ version: "v4", auth: client });
+        cachedSheetsClient = sheetsClient; // Кешируем клиент
+        
+        return sheetsClient;
     } catch (error) {
         console.error(`\n❌ === ПОМИЛКА АВТОРИЗАЦІЇ GOOGLE SHEETS ===`);
         console.error(`Помилка: ${error && error.message ? error.message : error}`);
@@ -156,7 +183,13 @@ async function createAuthorizedSheetsClient() {
     }
 }
 
+// Експортуємо функцію для отримання кешованого клієнта
+function getCachedSheetsClient() {
+    return cachedSheetsClient;
+}
+
 module.exports = {
     loadGoogleCredentials,
     createAuthorizedSheetsClient,
+    getCachedSheetsClient,
 };
