@@ -1,0 +1,13 @@
+
+  "type": "service_account",
+  "project_id": "vilna-bot",
+  "private_key_id": "2760b2a3626271468dd3d1947db704ee996cc311",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQC4s010cd3qRD87\n5SlLi62EB33UsF9CoE3P24kqmVEV0G43Ee4kiRx22aVQO9st6WojL0emF1ecLw7d\nHJuF3EHet7tLxJEkzlRXdsg4mqyQ4N9BbJIC2ayV8HnF8HHKqzP1v+YPe37zpioI\nNkSKfsNar8o1BbtA2rlUCPQTp/JpFcQuBfVccbii8QgMkcUTLU7aeY+hEi8XnTnr\njACykBlsNmWf53yJpgtaOe5RRt9/8/A1L2pG090/OX+TtSfWM00L0uF1kXwWNmyk\noeCzzqoPW0wCo80W3e9R7Jb2x3slTevrB9JGxALIt0qF6fhbq/cTuGwuIK+2g+pu\ncaV5gSU1AgMBAAECggEANQlvzWdBJRsx2T4lzIawbcBE9sUqpZQoo+5ThgL+kLgI\nXhHtA1rH7Kz01oRJnPZwvue9uEjtpHCy4PVtB1RHKfAyfUBVuW7yMydtuStZMEUS\ndtP5XY4qC+hA34D6/AqLYh8Xrgx1WPu3CCKlLevWpvzhoLYjnizwmNv1UoughWH4\nz1sA7P19HenUbF8D3pnl8y4ZMYW5dFl9YQAQJxMMgiIF2OG8lQRKQAveC7w+sDf5\n4uq9He95l6rs6VNt30BDZFiODZUoZtrjUZDyPy0WM9qfT19zJAYpZmT5ke3AlGb5\n9ko86SkxOnlVOJLLQ1dh13REt2rBkPuzgM4JNxBqJQKBgQDbc1y31fkBhGhbeGZa\nxcGwWX8aAghaP6wISQUNvljI3T5/xpGKeZfg5IcVG0/IyC12R1z0gEDwGzNMtM4D\naU4nuW89k7bp6KMT7P0c4cmAJX99gUF5P9uL0sAwN0n5sisZ4yfPc6XlIFtFn2ii\n7myp/U2ZNW7CP6MH1RBhFVQQMwKBgQDXdk6jglScWy2RhOaXz4L7acHFAGJxhmen\npnPVmKLXM4GeHsXCFlr623oKOpKfcCUgXdKtYG64iPCaOZdeuEFhfpLIn3CTE18p\newmU0cVRg3EkI1kR/lwHSUWtPdHI3WWwbVNWPAnNBaEkOuLYHI627Fq+IrIM3UDI\nF9QiBzBs9wKBgBNdR6Y1LGbU3zyLEEUcRC4ih5Os8D2+dpi4kMiYrk7zLuupgvg8\nKInAwKa9JTorZ8+TFoHAu3o0fD9diPxGE45vz4AYg8B6NcGxXNhqmBRFus1BVZy0\nZNQewbS/fDibXzBGmiG1K8NfKo6nNV2DOnV5k5pcW6yqXuF3DJ30etl/AoGAP2bz\n6w+OAFigRyL5jBCnNX5AY80iKs/nLqE/ksoQmQzyBmp9vQhBC3KMLfhgbwRcGHMj\nbJtk2W6KhoeN8HR94MeTP/AS+2SG6zjmb+Fuk/b+0yiHrFDSGd7I3xrC4b2sj8cL\n7+NI6wjOC1A8smVs5Y0Vgr/I7xooVvkUFlNRP68CgYBCryDkRffDsQq6/okXucUH\nMvsTVBr53wlwCJ3aRhYbPxo+zrN4AA0pUeaGrnUzAiOZodE5yd2jPaQqd49haCyl\nKys2Wm+IzQj70+J/mXM6NzKAbLtEqBVSLJ4clGVoW09DonoSeLD4Zvo+k4FkPCtE\nZw+eGcAEvueb+RIJUiQvpQ==\n-----END PRIVATE KEY-----\n",
+  "client_email": "vilna-bot@vilna-bot.iam.gserviceaccount.com",
+  "client_id": "100153428891223418496",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/vilna-bot%40vilna-bot.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
