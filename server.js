@@ -3399,7 +3399,7 @@ async function startFriendRegistrationFlow(chatId, user) {
     user.context = null;
 
     await bot.sendMessage(chatId,
-        "👭 <b>Реєстрація подруги</b>\n\nСпочатку внесіть її дані, а потім оберемо заходи.\n\n📝 <b>Крок 1/9:</b> Введіть ПІБ подруги (Прізвище Ім'я По батькові):", {
+        "👭 <b>Реєстрація подруги</b>\n\nСпочатку внесіть її дані, а потім оберемо заходи.\n\n📝 <b>Крок 1/10:</b> Введіть ПІБ подруги (Прізвище Ім'я По батькові):", {
         parse_mode: 'HTML',
         reply_markup: {
             keyboard: [[{ text: "❌ Скасувати реєстрацію" }]],
@@ -3429,6 +3429,7 @@ function getMissingRegistrantStep(registrantData) {
     : !registrantData.shellingImpact ? 7
     : !registrantData.employment ? 8
     : !registrantData.beneficiaryCategory ? 9
+    : !registrantData.gzn ? 10
         : 0;
 }
 
@@ -4107,6 +4108,7 @@ async function appendRegistrationRow(chatId, user) {
         user.evacuationStatus || "",
         user.shellingImpact || "",
         user.employment || "",
+        user.gzn || "",
         user.beneficiaryCategory || "",
         String(chatId || '')
     ];
@@ -4177,7 +4179,7 @@ async function appendRegistrationRow(chatId, user) {
 
         for (let i = searchStartIndex; i < rows.length; i++) {
             const row = rows[i] || [];
-            const personalDataHasValues = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].some((idx) => String(row[idx] || '').trim() !== '');
+            const personalDataHasValues = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].some((idx) => String(row[idx] || '').trim() !== '');
             if (!personalDataHasValues) {
                 targetRow = i + 1;
                 break;
@@ -4210,11 +4212,11 @@ async function appendRegistrationRow(chatId, user) {
             console.log(`\n📝 Спроба ${attempt}/${maxTries} запису в таблицю`);
             console.log(`Spreadsheet ID: ${PERSONAL_DATA_SPREADSHEET_ID}`);
             console.log(`Sheet Name: ${PERSONAL_DATA_SHEET_NAME}`);
-            console.log(`Range: ${PERSONAL_DATA_SHEET_NAME}!A:K`);
+            console.log(`Range: ${PERSONAL_DATA_SHEET_NAME}!A:L`);
             
             const existingResp = await sheetsClient.spreadsheets.values.get({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${PERSONAL_DATA_SHEET_NAME}!A:K`,
+                range: `${PERSONAL_DATA_SHEET_NAME}!A:L`,
             });
             const rows = existingResp.data.values || [];
             const existingRowNumber = findExistingRowByIdentity(rows);
@@ -4227,7 +4229,7 @@ async function appendRegistrationRow(chatId, user) {
 
             await sheetsClient.spreadsheets.values.update({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${PERSONAL_DATA_SHEET_NAME}!A${targetRow}:K${targetRow}`,
+                range: `${PERSONAL_DATA_SHEET_NAME}!A${targetRow}:L${targetRow}`,
                 valueInputOption: "RAW",
                 requestBody: { values: [valuesToWrite] }
             });
@@ -4247,11 +4249,11 @@ async function appendRegistrationRow(chatId, user) {
             const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
             if ((msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('sheet') ) && attempt === 1) {
                 try {
-                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:K (перший аркуш)');
+                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:L (перший аркуш)');
 
                     const existingResp = await sheetsClient.spreadsheets.values.get({
                         spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                        range: "A:K",
+                        range: "A:L",
                     });
                     const rows = existingResp.data.values || [];
                     const existingRowNumber = findExistingRowByIdentity(rows);
@@ -4261,15 +4263,15 @@ async function appendRegistrationRow(chatId, user) {
 
                     await sheetsClient.spreadsheets.values.update({
                         spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                        range: `A${targetRow}:K${targetRow}`,
+                        range: `A${targetRow}:L${targetRow}`,
                         valueInputOption: "RAW",
                         requestBody: { values: [valuesToWrite] }
                     });
-                    console.log(`Записано в таблицю (fallback A:K, рядок ${targetRow}) ✅`);
+                    console.log(`Записано в таблицю (fallback A:L, рядок ${targetRow}) ✅`);
                     return;
                 } catch (e2) {
                     lastErr = e2;
-                    console.error('Fallback append to A:K failed:', e2 && e2.message ? e2.message : e2);
+                    console.error('Fallback append to A:L failed:', e2 && e2.message ? e2.message : e2);
                 }
             }
 
@@ -4451,7 +4453,7 @@ async function resolveRegistrantFormData(chatId, user) {
     };
 
     const hasAll = resolved.name && resolved.phone && resolved.birth && resolved.status && resolved.health &&
-        resolved.evacuationStatus && resolved.shellingImpact && resolved.employment && resolved.beneficiaryCategory;
+        resolved.evacuationStatus && resolved.shellingImpact && resolved.employment && resolved.gzn && resolved.beneficiaryCategory;
     if (hasAll || !sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID) {
         return resolved;
     }
@@ -4472,7 +4474,7 @@ async function resolveRegistrantFormData(chatId, user) {
     }
 
     const hasAllAfterSheet = resolved.name && resolved.phone && resolved.birth && resolved.status && resolved.health &&
-        resolved.evacuationStatus && resolved.shellingImpact && resolved.employment && resolved.beneficiaryCategory;
+        resolved.evacuationStatus && resolved.shellingImpact && resolved.employment && resolved.gzn && resolved.beneficiaryCategory;
     if (hasAllAfterSheet) {
         return resolved;
     }
@@ -4481,7 +4483,7 @@ async function resolveRegistrantFormData(chatId, user) {
     const inputPhone = normalizePhone(resolved.phone);
     const inputName = String(resolved.name || '').trim().toLowerCase();
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:K`, 'A:K'];
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:L`, 'A:L'];
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -4508,7 +4510,8 @@ async function resolveRegistrantFormData(chatId, user) {
                 if (!resolved.evacuationStatus) resolved.evacuationStatus = String(row[6] || '').trim();
                 if (!resolved.shellingImpact) resolved.shellingImpact = String(row[7] || '').trim();
                 if (!resolved.employment) resolved.employment = String(row[8] || '').trim();
-                if (!resolved.beneficiaryCategory) resolved.beneficiaryCategory = String(row[9] || '').trim();
+                if (!resolved.gzn) resolved.gzn = String(row[9] || '').trim();
+                if (!resolved.beneficiaryCategory) resolved.beneficiaryCategory = String(row[10] || '').trim();
 
                 return resolved;
             }
@@ -4536,8 +4539,9 @@ function parsePersonalDataRow(row) {
         evacuationStatus: cells[6] || '',
         shellingImpact: cells[7] || '',
         employment: cells[8] || '',
-        beneficiaryCategory: cells[9] || '',
-        chatId: cells[10] || ''
+        gzn: cells[9] || '',
+        beneficiaryCategory: cells[10] || '',
+        chatId: cells[11] || ''
     };
     const legacy = {
         username: cells[7] || cells[0] || '',
@@ -4549,8 +4553,9 @@ function parsePersonalDataRow(row) {
         evacuationStatus: '',
         shellingImpact: '',
         employment: cells[9] || cells[8] || '',
+        gzn: '',
         beneficiaryCategory: '',
-        chatId: cells[10] || cells[7] || cells[6] || ''
+        chatId: cells[11] || cells[10] || cells[7] || cells[6] || ''
     };
 
     return {
@@ -4564,6 +4569,7 @@ function parsePersonalDataRow(row) {
         shellingImpact: current.shellingImpact || legacy.shellingImpact,
         chatId: current.chatId || legacy.chatId,
         employment: current.employment || legacy.employment,
+        gzn: current.gzn || legacy.gzn,
         beneficiaryCategory: current.beneficiaryCategory || legacy.beneficiaryCategory
     };
 }
@@ -4604,7 +4610,7 @@ async function loadKnownUserByPhone(phone) {
         return null;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:K`, 'A:K'];
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:L`, 'A:L'];
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -4641,7 +4647,7 @@ async function loadKnownUserByUsername(username) {
         return null;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:K`, 'A:K'];
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:L`, 'A:L'];
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -4687,10 +4693,11 @@ function showAfishaRegistrationForm(chatId, user) {
     if (step === 3) question = "<b>3. Дата народження</b>";
     if (step === 4) question = "<b>4. ВПО/МО</b>";
     if (step === 5) question = "<b>5. Стан здоров'я</b>";
-    if (step === 6) question = "<b>6. Евакуаційний статус особи</b>";
+    if (step === 6) question = "<b>6. Евакуаційний статус</b>";
     if (step === 7) question = "<b>7. Вплив обстрілів</b>";
     if (step === 8) question = "<b>8. Зайнятість</b>";
-    if (step === 9) question = "<b>9. До яких категорій належите?</b>";
+    if (step === 9) question = "<b>9. Категорія</b>";
+    if (step === 10) question = "<b>10. Чи маєте ви досвід або потребу, пов'язану з ГЗН?</b>";
 
     let keyboard = [[{ text: "❌ Скасувати реєстрацію" }]];
     if (step === 4) {
@@ -4739,6 +4746,12 @@ function showAfishaRegistrationForm(chatId, user) {
             [{ text: "Представниця сім'ї ветерана" }],
             [{ text: "Особа у складних життєвих обставинах" }],
             [{ text: "Нічого із вищезазначеного" }],
+            [{ text: "❌ Скасувати реєстрацію" }]
+        ];
+    } else if (step === 10) {
+        keyboard = [
+            [{ text: "Так" }, { text: "Ні" }],
+            [{ text: "Поки не хочу відповідати" }],
             [{ text: "❌ Скасувати реєстрацію" }]
         ];
     }
@@ -6161,7 +6174,7 @@ async function processParsedEvents(parsedEvents) {
             return Array.from(entriesByKey.values());
         }
 
-        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:K`, 'A:K', `${PERSONAL_DATA_SHEET_NAME}!A:G`, 'A:G'];
+        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:L`, 'A:L', `${PERSONAL_DATA_SHEET_NAME}!A:G`, 'A:G'];
         for (const range of rangesToTry) {
             try {
                 const resp = await sheetsClient.spreadsheets.values.get({
@@ -6176,7 +6189,7 @@ async function processParsedEvents(parsedEvents) {
                     const name = row[1];
                     const phone = row[2];
 
-                    const directChatId = parsePositiveChatId(row[10]) || parsePositiveChatId(row[6]);
+                    const directChatId = parsePositiveChatId(row[11]) || parsePositiveChatId(row[10]) || parsePositiveChatId(row[6]);
                     const usernameKey = normalizeUsernameForBroadcast(username);
                     const phoneKey = normalizePhoneForBroadcast(phone);
                     const nameKey = normalizeNameForBroadcast(name);
@@ -6344,7 +6357,7 @@ async function processParsedEvents(parsedEvents) {
         }
 
         const targetsByKey = new Map();
-        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:K`, 'A:K', `${PERSONAL_DATA_SHEET_NAME}!A:G`, 'A:G'];
+        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:L`, 'A:L', `${PERSONAL_DATA_SHEET_NAME}!A:G`, 'A:G'];
 
         const addChatIdTarget = (rawId) => {
             const chatId = parsePositiveChatId(rawId);
@@ -6375,7 +6388,7 @@ async function processParsedEvents(parsedEvents) {
                 for (let i = 1; i < rows.length; i++) {
                     const row = rows[i] || [];
 
-                    const directChatId = parsePositiveChatId(row[10]) || parsePositiveChatId(row[6]);
+                    const directChatId = parsePositiveChatId(row[11]) || parsePositiveChatId(row[10]) || parsePositiveChatId(row[6]);
                     if (directChatId) {
                         addChatIdTarget(directChatId);
                         continue;
@@ -6429,7 +6442,7 @@ async function processParsedEvents(parsedEvents) {
             return false;
         }
 
-        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:K`, 'A:K'];
+        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:L`, 'A:L'];
 
         for (const range of rangesToTry) {
             try {
@@ -6446,7 +6459,7 @@ async function processParsedEvents(parsedEvents) {
 
                 for (let i = 1; i < rows.length; i++) {
                     const row = rows[i] || [];
-                    const rowChatId = parsePositiveChatId(row[10]) || parsePositiveChatId(row[6]);
+                    const rowChatId = parsePositiveChatId(row[11]) || parsePositiveChatId(row[10]) || parsePositiveChatId(row[6]);
                     if (rowChatId === targetChatId) {
                         return false;
                     }
@@ -7306,7 +7319,8 @@ bot.on('message', async (msg) => {
         if (user.step === 1) {
             if (isLikelyInvalidRegistrantName(text)) {
                 await bot.sendMessage(chatId,
-                    "❌ Введіть, будь ласка, коректне ПІБ (мінімум ім'я та прізвище), а не назву кнопки меню.", {
+                    "❌ Введіть, будь ласка, коректне ПІБ ", {
+                    parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [
                             [{ text: "❌ Скасувати реєстрацію" }]
@@ -7594,17 +7608,12 @@ bot.on('message', async (msg) => {
             registrationDraft.employment = text;
             user.step = 9;
 
-            await bot.sendMessage(chatId, "📝 <b>Крок 9/9:</b> До яких категорій належите?", {
+            await bot.sendMessage(chatId, "📝 <b>Крок 9/10:</b> Чи маєте ви досвід або потребу, пов'язану з ГЗН?", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
-                        [{ text: "Вагітна" }, { text: "Одинока мати" }],
-                        [{ text: "Багатодітна мати (3 і більше дітей)" }],
-                        [{ text: "Ветеранка" }],
-                        [{ text: "Представниця сім'ї загиблого воїна" }],
-                        [{ text: "Представниця сім'ї ветерана" }],
-                        [{ text: "Особа у складних життєвих обставинах" }],
-                        [{ text: "Нічого із вищезазначеного" }],
+                        [{ text: "Так" }, { text: "Ні" }],
+                        [{ text: "Поки не хочу відповідати" }],
                         [{ text: "❌ Скасувати реєстрацію" }]
                     ],
                     resize_keyboard: true
@@ -7614,28 +7623,14 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 9) {
-            const beneficiaryCategoryOptions = [
-                'Вагітна',
-                'Одинока мати',
-                'Багатодітна мати (3 і більше дітей)',
-                'Ветеранка',
-                "Представниця сім'ї загиблого воїна",
-                "Представниця сім'ї ветерана",
-                'Особа у складних життєвих обставинах',
-                'Нічого із вищезазначеного'
-            ];
-            if (!beneficiaryCategoryOptions.includes(text)) {
-                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть категорію кнопками.", {
+            const gznOptions = ['Так', 'Ні', 'Поки не хочу відповідати'];
+            if (!gznOptions.includes(text)) {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть варіант кнопками.", {
                     parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [
-                            [{ text: "Вагітна" }, { text: "Одинока мати" }],
-                            [{ text: "Багатодітна мати (3 і більше дітей)" }],
-                            [{ text: "Ветеранка" }],
-                            [{ text: "Представниця сім'ї загиблого воїна" }],
-                            [{ text: "Представниця сім'ї ветерана" }],
-                            [{ text: "Особа у складних життєвих обставинах" }],
-                            [{ text: "Нічого із вищезазначеного" }],
+                            [{ text: "Так" }, { text: "Ні" }],
+                            [{ text: "Поки не хочу відповідати" }],
                             [{ text: "❌ Скасувати реєстрацію" }]
                         ],
                         resize_keyboard: true
@@ -7645,6 +7640,24 @@ bot.on('message', async (msg) => {
             }
 
             registrationDraft.beneficiaryCategory = text;
+            user.step = 10;
+
+            await bot.sendMessage(chatId, "📝 <b>Крок 10/10:</b> Чи маєте ви досвід або потребу, пов'язану з ГЗН?", {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "Так" }, { text: "Ні" }],
+                        [{ text: "Поки не хочу відповідати" }],
+                        [{ text: "❌ Скасувати реєстрацію" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (user.step === 10) {
+            registrationDraft.gzn = text;
 
             try {
                 console.log(`\n📝 === ЗБЕРЕЖЕННЯ РЕЄСТРАЦІЇ ===`);
@@ -7658,6 +7671,7 @@ bot.on('message', async (msg) => {
                     evacuationStatus: registrationDraft.evacuationStatus,
                     shellingImpact: registrationDraft.shellingImpact,
                     employment: registrationDraft.employment,
+                    gzn: registrationDraft.gzn,
                     beneficiaryCategory: registrationDraft.beneficiaryCategory,
                     friendMode: isFriendRegistrationMode(user)
                 });
@@ -7679,6 +7693,7 @@ bot.on('message', async (msg) => {
                         evacuationStatus: registrationDraft.evacuationStatus,
                         shellingImpact: registrationDraft.shellingImpact,
                         employment: registrationDraft.employment,
+                        gzn: registrationDraft.gzn,
                         beneficiaryCategory: registrationDraft.beneficiaryCategory,
                         username: user.username || ""
                     };
@@ -7777,6 +7792,7 @@ bot.on('message', async (msg) => {
                     evacuationStatus: registrationDraft.evacuationStatus,
                     shellingImpact: registrationDraft.shellingImpact,
                     employment: registrationDraft.employment,
+                    gzn: registrationDraft.gzn,
                     beneficiaryCategory: registrationDraft.beneficiaryCategory
                 });
                 console.error(`Помилка:`, error);

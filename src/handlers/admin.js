@@ -70,7 +70,7 @@ async function handleViewRegistrations(bot, chatId) {
 
         const resp = await state.sheetsClient.spreadsheets.values.get({
             spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-            range: `${config.PERSONAL_DATA_SHEET_NAME}!A:K`
+            range: `${config.PERSONAL_DATA_SHEET_NAME}!A:L`
         });
         
         const rows = resp.data.values || [];
@@ -88,7 +88,7 @@ async function handleViewRegistrations(bot, chatId) {
             const username = row[0] || '';
             const name = row[1] || '';
             const phone = row[2] || '';
-            const chatId_row = row[10] || '';
+            const chatId_row = row[11] || '';
             
             if (name.trim()) {
                 registrationList += `👤 <b>${name}</b>\n`;

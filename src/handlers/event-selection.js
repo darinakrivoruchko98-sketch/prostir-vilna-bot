@@ -3,7 +3,7 @@ const { getAllEvents } = require('../events/store');
 const { findEventByButtonText } = require('../events/parser');
 const { appendEventRegistration, getSeatsLeft } = require('../sheets/registration');
 const { findUserByChatId } = require('../sheets/personal-data');
-const { incrementSheetRegistration, isRegistrantAlreadyInEventNote } = require('../sheets/schedule');
+const { appendEventReservation, incrementSheetRegistration, isRegistrantAlreadyInEventNote } = require('../sheets/schedule');
 const { formatEventDate, formatShortDate, formatTime } = require('../utils/date');
 const { pluralizeEvents } = require('../utils/text');
 
@@ -98,10 +98,6 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
     }
 
     const seatsLeft = await getSeatsLeft(eventId);
-    if (seatsLeft <= 0) {
-        return { status: 'no-seats' };
-    }
-
     const registrantProfile = resolveRegistrantProfile(chatId, user, providedName || '', providedPhone || '');
 
     const evObj = state.events.find(e => e.id === eventId);
@@ -110,6 +106,29 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
         if (alreadyRegistered) {
             return { status: 'already-registered' };
         }
+    }
+
+    if (seatsLeft <= 0) {
+        if (!evObj) {
+            return { status: 'no-seats' };
+        }
+
+        const reserveResult = await appendEventReservation(evObj, {
+            userId: registrantProfile.userId,
+            name: registrantProfile.name,
+            phone: registrantProfile.phone
+        });
+
+        if (reserveResult && reserveResult.status === 'ok') {
+            delete user.selectedEventName;
+            delete user.selectedEventId;
+            delete user.afishaFullRegistration;
+            delete user.afishaPendingEventId;
+            delete user.afishaPendingEventName;
+            return { status: 'reserve-added' };
+        }
+
+        return { status: 'no-seats' };
     }
 
     await appendEventRegistration(user, evObj || { name: eventName, date: new Date() }, {
@@ -127,7 +146,7 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
         if (typeof evObj.seats === 'number') evObj.seats = Math.max(0, evObj.seats - 1);
     }
 
-    if (user.step === 7) {
+    if (user.step === 11) {
         if (!user.selectedEvents) user.selectedEvents = [];
         user.selectedEvents.push({ id: eventId, name: eventName });
     }
@@ -186,12 +205,17 @@ async function handleRegister(bot, chatId, user) {
             return;
         }
 
+        if (result.status === 'reserve-added') {
+            bot.sendMessage(chatId, "🕒 Місць поки немає, але вас додано в резерв. Коли кількість місць збільшиться, бот перенесе вас у реєстрацію автоматично.");
+            return;
+        }
+
         if (result.status === 'already-registered') {
             bot.sendMessage(chatId, "ℹ️ Ви вже зареєстровані на цей захід.");
             return;
         }
     } catch (registrationError) {
-        console.error('Error during event registration flow', registrationError && registrationError.message ? registrationError.message : registrationError);
+        console.error('Помилка під час реєстрації на захід', registrationError && registrationError.message ? registrationError.message : registrationError);
         bot.sendMessage(chatId, "Помилка при записі реєстрації в таблицю. Спробуйте ще раз.");
         return;
     }

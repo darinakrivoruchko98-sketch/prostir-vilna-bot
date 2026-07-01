@@ -2,6 +2,7 @@ const state = require('../state');
 const config = require('../config');
 const { createAuthorizedSheetsClient } = require('./auth');
 const { parseEventFromRow } = require('../events/parser');
+const { promoteReserveRegistrantsIfNeeded } = require('./schedule');
 
 function startPollingIfNeeded(bot) {
     if (state.pollingStarted) return;
@@ -17,6 +18,7 @@ async function loadEventsFromSheet() {
     }
 
     try {
+        const previousEventsById = new Map((state.events || []).map((event) => [event.id, event]));
         let rows = [];
         const readErrors = [];
         for (const scheduleSheet of config.SCHEDULE_SHEET_CANDIDATES) {
@@ -94,6 +96,14 @@ async function loadEventsFromSheet() {
             }
 
             seen.add(ev.id);
+            const previousEvent = previousEventsById.get(ev.id);
+            if (previousEvent && Number.isFinite(previousEvent.seats) && ev.seats > previousEvent.seats) {
+                try {
+                    await promoteReserveRegistrantsIfNeeded(ev, previousEvent.seats);
+                } catch (promotionErr) {
+                    console.error('⚠️ Не вдалося автоматично перенести резерв для заходу', ev.id, promotionErr && promotionErr.message ? promotionErr.message : promotionErr);
+                }
+            }
             state.events.push(ev);
             console.log(`   📅 Завантажено: ${ev.name} | ${ev.date.toLocaleDateString('uk-UA')} | ${ev.seats} місць`);
         }
@@ -147,6 +157,7 @@ async function ensureRegistrationsSheet() {
 async function initSheets(bot) {
     try {
         state.sheetsClient = await createAuthorizedSheetsClient();
+        state.bot = bot;
 
         console.log("Google Sheets підключено ✅");
         startPollingIfNeeded(bot);
@@ -170,7 +181,7 @@ async function initSheets(bot) {
         }
         state.sheetsRefreshInterval = setInterval(() => {
             loadEventsFromSheet();
-        }, 60000);
+        }, 15000);
 
     } catch (err) {
         console.error("Sheets error", err && err.message ? err.message : err);

@@ -164,6 +164,76 @@ function normalizeRegistrantPhone(value) {
     return String(value || '').replace(/\D+/g, '');
 }
 
+function formatRegistrantLine(item, index) {
+    const name = item.name || `user ${item.userId}`;
+    const phone = item.phone || 'без номера';
+    return `${index + 1}. ${name} — ${phone}`;
+}
+
+function parseScheduleNoteSections(noteText) {
+    const sections = {
+        registered: [],
+        reserve: []
+    };
+
+    let currentSection = 'registered';
+    const lines = String(noteText || '').split(/\r?\n/);
+
+    for (const rawLine of lines) {
+        const line = String(rawLine || '').trim();
+        if (!line) continue;
+        if (/^EVENT_ID\s*:/i.test(line)) continue;
+        if (/^Зареєстровано\s*:/i.test(line)) {
+            currentSection = 'registered';
+            continue;
+        }
+        if (/^Резерв\s*:/i.test(line)) {
+            currentSection = 'reserve';
+            continue;
+        }
+        if (/^Список порожній$/i.test(line)) continue;
+
+        const match = line.match(/^\s*\d+\.\s*(.*?)\s*—\s*(.*?)\s*$/);
+        if (!match) continue;
+
+        const rawName = String(match[1] || '').trim();
+        const rawPhone = String(match[2] || '').trim();
+        const userMatch = rawName.match(/^user\s+(\d+)$/i);
+        const entry = {
+            userId: userMatch ? String(userMatch[1] || '').trim() : '',
+            name: userMatch ? '' : rawName,
+            phone: /^без\s+номера$/i.test(rawPhone) ? '' : rawPhone
+        };
+
+        if (currentSection === 'reserve') {
+            sections.reserve.push(entry);
+        } else {
+            sections.registered.push(entry);
+        }
+    }
+
+    return sections;
+}
+
+function buildScheduleNoteText({ registered = [], reserve = [], registrationsCount = 0, eventId = '' } = {}) {
+    const safeRegisteredCount = Number.isFinite(Number(registrationsCount)) ? Number(registrationsCount) : 0;
+    const registeredLines = registered.map((item, index) => formatRegistrantLine(item, index));
+    const reserveLines = reserve.map((item, index) => formatRegistrantLine(item, index));
+
+    const parts = [];
+    if (registeredLines.length === 0) {
+        parts.push(`Зареєстровано: ${safeRegisteredCount}\n\nСписок порожній`);
+    } else {
+        parts.push(`Зареєстровано: ${Math.max(safeRegisteredCount, registeredLines.length)}\n\n${registeredLines.join('\n')}`);
+    }
+
+    if (reserveLines.length > 0) {
+        parts.push(`Резерв: ${reserveLines.length}\n\n${reserveLines.join('\n')}`);
+    }
+
+    return ensureScheduleNoteEventIdTag(parts.join('\n\n'), eventId);
+}
+
 const SCHEDULE_NOTE_EVENT_ID_TAG = 'EVENT_ID:';
 
 function extractScheduleNoteEventId(noteText) {
@@ -225,26 +295,8 @@ async function getScheduleCellNote(scheduleSheet, rowIndex) {
 }
 
 function parseRegistrantsFromNote(noteText) {
-    if (!noteText) return [];
-    const lines = String(noteText).split('\n');
-    const parsed = [];
-    for (const line of lines) {
-        const cleanedLine = String(line || '').trim();
-        if (/^EVENT_ID\s*:/i.test(cleanedLine)) {
-            continue;
-        }
-        const match = cleanedLine.match(/^\s*\d+\.\s*(.*?)\s*—\s*(.*?)\s*$/);
-        if (!match) continue;
-        const rawName = String(match[1] || '').trim();
-        const rawPhone = String(match[2] || '').trim();
-        const userMatch = rawName.match(/^user\s+(\d+)$/i);
-        parsed.push({
-            userId: userMatch ? String(userMatch[1] || '').trim() : '',
-            name: userMatch ? '' : rawName,
-            phone: /^без\s+номера$/i.test(rawPhone) ? '' : rawPhone
-        });
-    }
-    return parsed;
+    const sections = parseScheduleNoteSections(noteText);
+    return [...sections.registered, ...sections.reserve];
 }
 
 async function findScheduleRowByEventByNoteTag(event) {
@@ -284,6 +336,38 @@ async function findScheduleRowByEventByNoteTag(event) {
                 continue;
             }
             logger.error(`Error finding event row by note marker in sheet ${scheduleSheet}:`, e && e.message ? e.message : e);
+        }
+    }
+
+    return null;
+}
+
+async function findScheduleRowForEvent(event) {
+    const byTag = await findScheduleRowByEventByNoteTag(event);
+    if (byTag) return byTag;
+
+    for (const scheduleSheet of config.SCHEDULE_SHEET_CANDIDATES) {
+        try {
+            const resp = await retryRequest(() => state.sheetsClient.spreadsheets.values.get({
+                spreadsheetId: config.SPREADSHEET_ID,
+                range: `${scheduleSheet}!A:E`
+            }));
+            const rows = resp.data.values || [];
+            for (let i = 0; i < rows.length; i++) {
+                const parsedEvent = parseEventFromRow(rows[i], null).event;
+                if (!parsedEvent) continue;
+
+                const sameTitle = normalizeTitle(parsedEvent.name) === normalizeTitle(event.name);
+                const sameMinute = Math.abs(parsedEvent.date.getTime() - event.date.getTime()) < 60 * 1000;
+                if (sameTitle && sameMinute) {
+                    return { scheduleSheet, rowIndex: i };
+                }
+            }
+        } catch (e) {
+            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+            if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                continue;
+            }
         }
     }
 
@@ -333,7 +417,8 @@ async function isRegistrantAlreadyInEventNote(event, registrantProfile) {
 }
 
 async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, existingNote, eventId = '') {
-    const registrants = parseRegistrantsFromNote(existingNote);
+    const sections = parseScheduleNoteSections(existingNote);
+    const registrants = sections.registered.slice();
     if (fallbackRegistrant) {
         const fallbackUserId = String(fallbackRegistrant.userId || '').trim();
         const fallbackName = String(fallbackRegistrant.name || '').trim();
@@ -348,21 +433,163 @@ async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, exis
         }
     }
 
-    if (registrants.length === 0) {
-        const safeCount = Number.isFinite(Number(registrationsCount)) ? Number(registrationsCount) : 0;
-        return ensureScheduleNoteEventIdTag(`Зареєстровано: ${safeCount}\n\nСписок порожній`, eventId || extractScheduleNoteEventId(existingNote));
-    }
+    return buildScheduleNoteText({
+        registered: registrants,
+        reserve: sections.reserve,
+        registrationsCount,
+        eventId: eventId || extractScheduleNoteEventId(existingNote)
+    });
+}
 
-    const safeCount = Number.isFinite(Number(registrationsCount)) ? Number(registrationsCount) : 0;
-    const displayCount = Math.max(safeCount, registrants.length);
+async function appendEventReservation(event, fallbackRegistrant) {
+    if (!state.sheetsClient || !config.SPREADSHEET_ID) return { status: 'no-client' };
 
-    const lines = registrants.map((item, index) => {
-        const name = item.name || `user ${item.userId}`;
-        const phone = item.phone || 'без номера';
-        return `${index + 1}. ${name} — ${phone}`;
+    const match = await findScheduleRowForEvent(event);
+    if (!match) return { status: 'not-found' };
+
+    const { scheduleSheet, rowIndex } = match;
+    const resp = await retryRequest(() => state.sheetsClient.spreadsheets.values.get({
+        spreadsheetId: config.SPREADSHEET_ID,
+        range: `${scheduleSheet}!D${rowIndex + 1}:E${rowIndex + 1}`
+    }));
+    const vals = (resp.data && resp.data.values && resp.data.values[0]) || [];
+    const currRegistrations = parseInt(vals[1] || '0', 10);
+    const existingNote = await getScheduleCellNote(scheduleSheet, rowIndex);
+    const sections = parseScheduleNoteSections(existingNote);
+
+    const profile = {
+        userId: String((fallbackRegistrant && fallbackRegistrant.userId) || '').trim(),
+        name: String((fallbackRegistrant && fallbackRegistrant.name) || '').trim(),
+        phone: String((fallbackRegistrant && fallbackRegistrant.phone) || '').trim()
+    };
+
+    const profileName = normalizeRegistrantName(profile.name);
+    const profilePhone = normalizeRegistrantPhone(profile.phone);
+    const profileUserId = String(profile.userId || '').trim();
+
+    const allEntries = [...sections.registered, ...sections.reserve];
+    const alreadyExists = allEntries.some((item) => {
+        const itemName = normalizeRegistrantName(item.name || '');
+        const itemPhone = normalizeRegistrantPhone(item.phone || '');
+        const itemUserId = String(item.userId || '').trim();
+        return (profileUserId && itemUserId && profileUserId === itemUserId) ||
+            (profileName && itemName && profileName === itemName && profilePhone && itemPhone && profilePhone === itemPhone);
     });
 
-    return ensureScheduleNoteEventIdTag(`Зареєстровано: ${displayCount}\n\n${lines.join('\n')}`, eventId || extractScheduleNoteEventId(existingNote));
+    if (alreadyExists) {
+        return { status: 'already-registered' };
+    }
+
+    sections.reserve.push(profile);
+    const noteText = buildScheduleNoteText({
+        registered: sections.registered,
+        reserve: sections.reserve,
+        registrationsCount: currRegistrations,
+        eventId: event.id
+    });
+
+    if (String(existingNote || '').trim() !== String(noteText || '').trim()) {
+        await retryRequest(() => state.sheetsClient.spreadsheets.batchUpdate({
+            spreadsheetId: config.SPREADSHEET_ID,
+            requestBody: {
+                requests: [{
+                    repeatCell: {
+                        range: {
+                            sheetId: await getSheetIdByTitle(config.SPREADSHEET_ID, scheduleSheet),
+                            startRowIndex: rowIndex,
+                            endRowIndex: rowIndex + 1,
+                            startColumnIndex: 4,
+                            endColumnIndex: 5
+                        },
+                        cell: { note: noteText },
+                        fields: 'note'
+                    }
+                }]
+            }
+        }));
+    }
+
+    return { status: 'ok' };
+}
+
+async function promoteReserveRegistrantsIfNeeded(event, previousSeats) {
+    if (!event || !state.sheetsClient || !config.SPREADSHEET_ID) return { promoted: 0, reserveLeft: 0 };
+
+    const match = await findScheduleRowForEvent(event);
+    if (!match) return { promoted: 0, reserveLeft: 0 };
+
+    const { scheduleSheet, rowIndex } = match;
+    const resp = await retryRequest(() => state.sheetsClient.spreadsheets.values.get({
+        spreadsheetId: config.SPREADSHEET_ID,
+        range: `${scheduleSheet}!D${rowIndex + 1}:E${rowIndex + 1}`
+    }));
+    const vals = (resp.data && resp.data.values && resp.data.values[0]) || [];
+    const currSeats = parseInt(vals[0] || '0', 10);
+    const currRegistrations = parseInt(vals[1] || '0', 10);
+    const increase = Math.max(0, currSeats - Math.max(0, parseInt(previousSeats || '0', 10)));
+    if (increase <= 0) return { promoted: 0, reserveLeft: 0 };
+
+    const existingNote = await getScheduleCellNote(scheduleSheet, rowIndex);
+    const sections = parseScheduleNoteSections(existingNote);
+    if (sections.reserve.length === 0) return { promoted: 0, reserveLeft: 0 };
+
+    const promoted = sections.reserve.splice(0, Math.min(increase, sections.reserve.length));
+    if (promoted.length === 0) return { promoted: 0, reserveLeft: sections.reserve.length };
+
+    const newSeats = Math.max(0, currSeats - promoted.length);
+    const newRegistrations = currRegistrations + promoted.length;
+
+    await retryRequest(() => state.sheetsClient.spreadsheets.values.update({
+        spreadsheetId: config.SPREADSHEET_ID,
+        range: `${scheduleSheet}!D${rowIndex + 1}:E${rowIndex + 1}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[String(newSeats), String(newRegistrations)]] }
+    }));
+
+    const noteText = buildScheduleNoteText({
+        registered: [...sections.registered, ...promoted],
+        reserve: sections.reserve,
+        registrationsCount: newRegistrations,
+        eventId: event.id
+    });
+
+    if (String(existingNote || '').trim() !== String(noteText || '').trim()) {
+        await retryRequest(() => state.sheetsClient.spreadsheets.batchUpdate({
+            spreadsheetId: config.SPREADSHEET_ID,
+            requestBody: {
+                requests: [{
+                    repeatCell: {
+                        range: {
+                            sheetId: await getSheetIdByTitle(config.SPREADSHEET_ID, scheduleSheet),
+                            startRowIndex: rowIndex,
+                            endRowIndex: rowIndex + 1,
+                            startColumnIndex: 4,
+                            endColumnIndex: 5
+                        },
+                        cell: { note: noteText },
+                        fields: 'note'
+                    }
+                }]
+            }
+        }));
+    }
+
+    event.seats = newSeats;
+    event.registrations = newRegistrations;
+
+    if (state.bot && typeof state.bot.sendMessage === 'function') {
+        for (const person of promoted) {
+            const userId = String(person.userId || '').trim();
+            if (!userId) continue;
+            try {
+                await state.bot.sendMessage(userId, `✅ Вас перенесли з резерву до реєстрації на захід «${event.name}».`);
+            } catch (notifyErr) {
+                logger.warn('Failed to notify promoted reserve user', userId, notifyErr && notifyErr.message ? notifyErr.message : notifyErr);
+            }
+        }
+    }
+
+    return { promoted: promoted.length, reserveLeft: sections.reserve.length };
 }
 
 async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registrationsCount, fallbackRegistrant, eventId, removeRegistrant }) {
@@ -379,7 +606,8 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
     let noteText = '';
     if (removeRegistrant) {
         // remove matching registrant from existing note
-        const parsed = parseRegistrantsFromNote(existingNote);
+        const sections = parseScheduleNoteSections(existingNote);
+        const parsed = sections.registered;
         const remName = normalizeRegistrantName(removeRegistrant.name || '');
         const remPhone = normalizeRegistrantPhone(removeRegistrant.phone || '');
         const filtered = parsed.filter((it) => {
@@ -395,18 +623,30 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
 
         const safeCount = Number.isFinite(Number(registrationsCount)) ? Number(registrationsCount) : 0;
         const displayCount = Math.max(safeCount, filtered.length);
-        if (filtered.length === 0) {
-            noteText = ensureScheduleNoteEventIdTag(`Зареєстровано: ${displayCount}\n\nСписок порожній`, eventId || extractScheduleNoteEventId(existingNote));
-        } else {
-            const lines = filtered.map((item, idx) => {
-                const name = item.name || `user ${item.userId}`;
-                const phone = item.phone || 'без номера';
-                return `${idx + 1}. ${name} — ${phone}`;
-            });
-            noteText = ensureScheduleNoteEventIdTag(`Зареєстровано: ${displayCount}\n\n${lines.join('\n')}`, eventId || extractScheduleNoteEventId(existingNote));
-        }
+        noteText = buildScheduleNoteText({
+            registered: filtered,
+            reserve: sections.reserve,
+            registrationsCount: displayCount,
+            eventId: eventId || extractScheduleNoteEventId(existingNote)
+        });
     } else {
-        noteText = await buildRegistrantsNote(registrationsCount, fallbackRegistrant, existingNote, eventId);
+        const sections = parseScheduleNoteSections(existingNote);
+        const fallbackToAdd = fallbackRegistrant ? {
+            userId: String(fallbackRegistrant.userId || '').trim(),
+            name: String(fallbackRegistrant.name || '').trim(),
+            phone: String(fallbackRegistrant.phone || '').trim()
+        } : null;
+
+        if (fallbackToAdd && (fallbackToAdd.name || fallbackToAdd.phone || fallbackToAdd.userId)) {
+            sections.registered.push(fallbackToAdd);
+        }
+
+        noteText = buildScheduleNoteText({
+            registered: sections.registered,
+            reserve: sections.reserve,
+            registrationsCount,
+            eventId
+        });
     }
 
     if (String(existingNote || '').trim() === String(noteText || '').trim()) {
@@ -589,7 +829,10 @@ async function incrementSheetRegistration(event, fallbackRegistrant) {
 
 module.exports = {
     appendEventToSheet,
+    appendEventReservation,
     incrementSheetRegistration,
     isRegistrantAlreadyInEventNote,
+    parseScheduleNoteSections,
+    promoteReserveRegistrantsIfNeeded,
     undoLastSheetsAction: undoLastAction
 };

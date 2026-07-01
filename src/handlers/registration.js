@@ -3,7 +3,6 @@ const { appendRegistrationRow } = require('../sheets/personal-data');
 const { registerForSelectedEvent } = require('./event-selection');
 
 function handleRegistrationStart(bot, chatId, user) {
-    // Спочатку запитуємо особисті дані
     user.step = 1;
     bot.sendMessage(chatId, "Прізвище Ім'я По-батькові");
 }
@@ -26,10 +25,18 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
     if (user.step === 3) {
         user.birth = text;
         user.step = 4;
-        // step 4: ask visited with buttons
-        bot.sendMessage(chatId, "Чи відвідували Простір раніше?", {
+        bot.sendMessage(chatId, "📝 <b>Крок 4/9:</b> Ваш ВПО/МО статус:
+
+<b>Не ВПО, що постраждали від війни:</b> Громадяни, які живуть у рідних містах, але їхнє житло було зруйноване/пошкоджене, або вони отримали фізичні чи психологічні травми, втратили майно або джерело доходу внаслідок бойових дій.
+
+<b>Не ВПО, що не постраждали від війни:</b> Люди, які проживають у відносно безпечних регіонах, чиє майно, здоров'я та фінансовий стан не зазнали прямого впливу бойових дій.", {
+            parse_mode: 'HTML',
             reply_markup: {
-                keyboard: [[{ text: "Так" }, { text: "Ні" }]],
+                keyboard: [
+                    [{ text: "ВПО" }],
+                    [{ text: "Не ВПО, що постраждали від війни" }],
+                    [{ text: "Не ВПО, що не постраждали від війни" }]
+                ],
                 resize_keyboard: true
             }
         });
@@ -37,12 +44,16 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
     }
 
     if (user.step === 4) {
-        user.visited = text;
+        user.status = text;
         user.step = 5;
-        // step 5: status buttons
-        bot.sendMessage(chatId, "ВПО/МО:", {
+        bot.sendMessage(chatId, "📝 <b>Крок 5/9:</b> Стан здоров'я:", {
+            parse_mode: 'HTML',
             reply_markup: {
-                keyboard: [[{ text: "ВПО" }, { text: "Місцева" }]],
+                keyboard: [
+                    [{ text: "Ні, немає істотних проблем зі здоров'ям" }],
+                    [{ text: "Ні, але є істотні проблеми зі здоров'ям" }],
+                    [{ text: "Інвалідність" }]
+                ],
                 resize_keyboard: true
             }
         });
@@ -50,15 +61,16 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
     }
 
     if (user.step === 5) {
-        user.status = text;
+        user.health = text;
         user.step = 6;
-        // step 6: health buttons
-        bot.sendMessage(chatId, "Інвалідність/суттєві проблеми:", {
+        bot.sendMessage(chatId, "📝 <b>Крок 6/9:</b> Евакуаційний статус особи:", {
+            parse_mode: 'HTML',
             reply_markup: {
                 keyboard: [
-                    [{ text: "Інвалідність" }],
-                    [{ text: "Суттєві проблеми" }],
-                    [{ text: "Немає" }]
+                    [{ text: "Евакуація з попереднього місця проживання за останні 6 місяців" }],
+                    [{ text: "Перебування в транзитному центрі та/або в процесі евакуації" }],
+                    [{ text: "Готуюсь до евакуації" }],
+                    [{ text: "Нічого з зазначеного" }]
                 ],
                 resize_keyboard: true
             }
@@ -67,21 +79,94 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
     }
 
     if (user.step === 6) {
-        user.health = text;
+        user.evacuationStatus = text;
+        user.step = 7;
+        bot.sendMessage(chatId, "📝 <b>Крок 7/9:</b> Вплив обстрілів:", {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: "Так, постраждала протягом останніх 72 годин" }],
+                    [{ text: "Так, постраждала протягом останніх 3 місяців" }],
+                    [{ text: "Ні, не постраждала" }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return true;
+    }
 
+    if (user.step === 7) {
+        user.shellingImpact = text;
+        user.step = 8;
+        bot.sendMessage(chatId, "📝 <b>Крок 8/9:</b> Зайнятість:", {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: "Працюю" }, { text: "Не працюю" }],
+                    [{ text: "Пенсіонерка" }, { text: "Студентка" }],
+                    [{ text: "Школярка" }, { text: "ФОП" }],
+                    [{ text: "Волонтерка" }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return true;
+    }
+
+    if (user.step === 8) {
+        user.employment = text;
+        user.step = 9;
+        bot.sendMessage(chatId, "📝 <b>Крок 9/10:</b> Чи маєте ви досвід або потребу, пов'язану з ГЗН?", {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: "Так" }, { text: "Ні" }],
+                    [{ text: "Поки не хочу відповідати" }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return true;
+    }
+
+    if (user.step === 9) {
+        user.gzn = text;
+        user.step = 10;
+        bot.sendMessage(chatId, "📝 <b>Крок 10/10:</b> До яких категорій належите?", {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: "Вагітна" }, { text: "Одинока мати" }],
+                    [{ text: "Багатодітна мати (3 і більше дітей)" }],
+                    [{ text: "Ветеранка" }],
+                    [{ text: "Представниця сім'ї загиблого воїна" }],
+                    [{ text: "Представниця сім'ї ветерана" }],
+                    [{ text: "Особа у складних життєвих обставинах" }],
+                    [{ text: "Нічого із вищезазначеного" }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return true;
+    }
+
+    if (user.step === 10) {
+        user.beneficiaryCategory = text;
         try {
             await appendRegistrationRow(chatId, user);
-            // Remember user for quick registration from afisha
             state.knownUsers[chatId] = {
                 name: user.name,
                 phone: user.phone,
                 birth: user.birth,
-                visited: user.visited,
                 status: user.status,
                 health: user.health,
+                evacuationStatus: user.evacuationStatus,
+                shellingImpact: user.shellingImpact,
+                employment: user.employment,
+                gzn: user.gzn,
+                beneficiaryCategory: user.beneficiaryCategory,
             };
 
-            // If came from afisha with pending event, auto-register
             if (user.afishaFullRegistration) {
                 user.selectedEventId = user.afishaPendingEventId;
                 user.selectedEventName = user.afishaPendingEventName;
@@ -93,6 +178,10 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
                 }
                 if (result.status === 'no-seats') {
                     bot.sendMessage(chatId, "❌ Вибачте, місця закінчилися.");
+                    return true;
+                }
+                if (result.status === 'reserve-added') {
+                    bot.sendMessage(chatId, "🕒 Місць поки немає, але вас додано в резерв. Коли кількість місць збільшиться, бот перенесе вас у реєстрацію автоматично.");
                     return true;
                 }
                 if (result.status === 'already-registered') {
@@ -112,7 +201,10 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
                 return true;
             }
 
-            bot.sendMessage(chatId, "✅ Ваші дані збережено!", {
+            user.step = 11;
+            user.selectedEvents = [];
+
+            bot.sendMessage(chatId, "✅ Ваші дані збережено! Натисніть «Далі», щоб обрати заходи.", {
                 reply_markup: {
                     keyboard: [[{ text: "Далі" }]],
                     resize_keyboard: true
@@ -127,10 +219,6 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
                 }
             });
         }
-
-        // Перейти до обрання заходів
-        user.step = 7;
-        user.selectedEvents = [];
         return true;
     }
 
