@@ -56,6 +56,10 @@ const DARYNA_CHAT_ID = process.env.DARYNA_CHAT_ID || config.DARYNA_CHAT_ID || '3
 const PSYCHOLOGIST_CHAT_ID = process.env.PSYCHOLOGIST_CHAT_ID || config.PSYCHOLOGIST_CHAT_ID || '';
 const LIUDMYLA_CHAT_ID = process.env.LIUDMYLA_CHAT_ID || config.LIUDMYLA_CHAT_ID || '677175948';
 const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
+const ADMIN_CHAT_IDS = Array.from(new Set([
+    Number(String(BROADCAST_OWNER_CHAT_ID || '').trim()),
+    Number(String(DARYNA_CHAT_ID || '').trim())
+].filter((id) => Number.isFinite(id))));
 
 // Таблиця розкладу: https://docs.google.com/spreadsheets/d/1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8/edit
 // Таблиця персональних даних: https://docs.google.com/spreadsheets/d/1hbpFgrCAECIYSLkgYzXUe2OgV_3FxI3NWvEwUxyizQE/edit
@@ -85,6 +89,34 @@ app.use(express.json());
 // Telegram бот з polling режимом
 const bot = new TelegramBot(TOKEN, { polling: true });
 let stoppingBecauseOfPollingConflict = false;
+
+async function configureBotCommandMenus() {
+    try {
+        const userCommands = [
+            { command: 'start', description: 'Почати роботу' }
+        ];
+
+        await bot.setMyCommands(userCommands);
+
+        const adminCommands = [
+            ...userCommands,
+            { command: 'add_event', description: 'Додати захід у розклад' }
+        ];
+
+        for (const adminChatId of ADMIN_CHAT_IDS) {
+            await bot.setMyCommands(adminCommands, {
+                scope: {
+                    type: 'chat',
+                    chat_id: adminChatId
+                }
+            });
+        }
+    } catch (error) {
+        console.warn('⚠️ Не вдалося налаштувати меню команд Telegram:', error && error.message ? error.message : error);
+    }
+}
+
+configureBotCommandMenus();
 
 let pollingErrorCount = 0;
 const pollingErrorThreshold = 5; // Після 5 помилок на хвилину - перезавантажити
@@ -288,6 +320,8 @@ let appealMessagesMap = {}; // Мапа: message_id звернення в гру
 let events = []; // масив для зберігання заходів
 let userEventRegistrations = {}; // Мапа: chatId → [{eventId, eventName, eventDate, reminded24h: false, reminded1h: false}]
 let friendEventRegistrations = {}; // Мапа: chatId → [{registrationKey, eventId, eventName, eventDate, registrantName, registrantPhone}]
+let userEventReserveRegistrations = {}; // Мапа: chatId → [{eventId, eventName, eventDate, registrantName, registrantPhone}]
+let friendEventReserveRegistrations = {}; // Мапа: chatId → [{registrationKey, eventId, eventName, eventDate, registrantName, registrantPhone}]
 let lastWeeklyScheduleNotesCleanupKey = null;
 const REMINDER_RESTORE_CACHE_MS = 60 * 1000;
 const reminderRestoreInFlight = new Map();
@@ -464,6 +498,61 @@ function setAllReminderSlotsEnabled(settings, enabled) {
 function shouldSendReminder(minutesUntilEvent, targetMinutes, deliveryWindowMinutes) {
     return minutesUntilEvent >= targetMinutes - deliveryWindowMinutes &&
         minutesUntilEvent <= targetMinutes + deliveryWindowMinutes;
+}
+
+function resolveCurrentEventForReminderRegistration(registration, eventsById, fallbackEvents) {
+    if (!registration) {
+        return null;
+    }
+
+    const directMatch = registration.eventId ? eventsById.get(String(registration.eventId)) : null;
+    if (directMatch) {
+        return directMatch;
+    }
+
+    const registrationName = normalizeTitle(registration.eventName || '');
+    if (!registrationName) {
+        return null;
+    }
+
+    const registrationDate = registration.eventDate instanceof Date
+        ? registration.eventDate
+        : new Date(registration.eventDate);
+    const hasRegistrationDate = registrationDate instanceof Date && !Number.isNaN(registrationDate.getTime());
+
+    let bestMatch = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (const event of fallbackEvents) {
+        if (!event || !event.date) {
+            continue;
+        }
+
+        if (normalizeTitle(event.name) !== registrationName) {
+            continue;
+        }
+
+        const score = hasRegistrationDate
+            ? Math.abs(event.date.getTime() - registrationDate.getTime())
+            : event.date.getTime();
+
+        if (score < bestScore) {
+            bestScore = score;
+            bestMatch = event;
+        }
+    }
+
+    if (!bestMatch) {
+        return null;
+    }
+
+    // Підбираємо лише найближчий однойменний захід у межах 36 годин,
+    // щоб не переприв'язати реєстрацію до іншої дати.
+    if (hasRegistrationDate && bestScore > 36 * 60 * 60 * 1000) {
+        return null;
+    }
+
+    return bestMatch;
 }
 
 function normalizeReminderRegistration(raw) {
@@ -917,6 +1006,27 @@ function normalizeBirthDateStrict(input) {
     return `${match[1]}.${match[2]}.${match[3]}`;
 }
 
+function isLikelyInvalidRegistrantName(value) {
+    const normalized = normalizeCommandText(String(value || ''));
+    if (!normalized) return true;
+
+    const blockedPhrases = [
+        normalizeCommandText(MAIN_MENU_BUTTONS.afisha),
+        normalizeCommandText(MAIN_MENU_BUTTONS.contacts),
+        normalizeCommandText(MAIN_MENU_BUTTONS.reminders),
+        normalizeCommandText(NAVIGATION_BUTTONS.menu),
+        normalizeCommandText('афіша заходів'),
+        normalizeCommandText('меню')
+    ];
+
+    if (blockedPhrases.includes(normalized)) {
+        return true;
+    }
+
+    const tokens = String(value || '').trim().split(/\s+/).filter(Boolean);
+    return tokens.length < 2;
+}
+
 function matchesCommand(text, ...variants) {
     const normalizedText = normalizeCommandText(text);
     return variants.some((variant) => normalizeCommandText(variant) === normalizedText);
@@ -927,6 +1037,7 @@ const MAIN_MENU_BUTTONS = {
     unsubscribe: '❌ Відписатись від заходів',
     friend: '👭 Зареєструвати подругу',
     unsubscribeFriend: '👭❌ Відписати подругу',
+    editProfile: '✏️ Редагувати профіль',
     consultations: '🗨️ Індивідуальні консультації',
     violenceHelp: '🚨 Допомога при насильстві',
     reminders: '🔔 Нагадування',
@@ -947,6 +1058,15 @@ const UNSUBSCRIBE_MENU_BUTTONS = {
 
 const FRIEND_FLOW_BUTTONS = {
     addAnother: '👭 Зареєструвати ще подругу'
+};
+
+const PROFILE_EDIT_BUTTONS = {
+    changeName: '✏️ Змінити ПІБ',
+    changePhone: '📱 Змінити телефон'
+};
+
+const AFISHA_ACTION_BUTTONS = {
+    reserve: '🕓 Записатись в резерв'
 };
 
 const AFISHA_DAY_BUTTONS = {
@@ -1407,6 +1527,8 @@ async function notifyUsersAboutCancelledEvents(cancelledEvents) {
 // Перевірка та відправка нагадувань про заходи
 async function checkAndSendReminders() {
     const now = new Date();
+    const allEvents = getAllEvents();
+    const eventsById = new Map(allEvents.map((event) => [event.id, event]));
     let hasReminderChanges = false;
     
     for (const chatId in userEventRegistrations) {
@@ -1421,6 +1543,26 @@ async function checkAndSendReminders() {
         const registrations = userEventRegistrations[chatId];
         
         for (const reg of registrations) {
+            const resolvedEvent = resolveCurrentEventForReminderRegistration(reg, eventsById, allEvents);
+            if (!resolvedEvent || !resolvedEvent.date || resolvedEvent.date <= now) {
+                continue;
+            }
+
+            if (reg.eventId !== resolvedEvent.id) {
+                reg.eventId = resolvedEvent.id;
+                hasReminderChanges = true;
+            }
+
+            const resolvedTime = resolvedEvent.date.getTime();
+            const registrationTime = reg.eventDate instanceof Date
+                ? reg.eventDate.getTime()
+                : new Date(reg.eventDate).getTime();
+
+            if (!Number.isFinite(registrationTime) || registrationTime !== resolvedTime) {
+                reg.eventDate = resolvedEvent.date;
+                hasReminderChanges = true;
+            }
+
             const timeUntilEvent = reg.eventDate - now;
             const hoursUntilEvent = timeUntilEvent / (1000 * 60 * 60);
             const minutesUntilEvent = timeUntilEvent / (1000 * 60);
@@ -1552,13 +1694,32 @@ function formatSeatsCount(count) {
     return `${count} ${seatWord}`;
 }
 
+function formatPeopleCount(count) {
+    const normalizedCount = Math.abs(Number(count));
+    const lastTwoDigits = normalizedCount % 100;
+    const lastDigit = normalizedCount % 10;
+
+    let peopleWord = 'людей';
+    if (lastTwoDigits < 11 || lastTwoDigits > 14) {
+        if (lastDigit === 1) {
+            peopleWord = 'людина';
+        } else if (lastDigit >= 2 && lastDigit <= 4) {
+            peopleWord = 'людини';
+        }
+    }
+
+    return `${count} ${peopleWord}`;
+}
+
 // Форматує блок інформації про захід для повідомлення
 function formatEventDetails(event) {
     const time = String(event.date.getHours()).padStart(2,'0')+":"+
                  String(event.date.getMinutes()).padStart(2,'0');
     const seatsLeft = event.seats - (event.registrations || 0);
+    const registrationsCount = Math.max(0, Number(event.registrations) || 0);
+    const reserveCount = Math.max(0, Number(event.reserveCount) || 0);
     const seatsLabel = seatsLeft > 0 ? formatSeatsCount(seatsLeft) : "❌ закрито";
-    return `Назва: ${event.name}\nЧас: ${time}\nМісць залишилось: ${seatsLabel}`;
+    return `Назва: ${event.name}\nЧас: ${time}\nМісць залишилось: ${seatsLabel}\nЗареєстровано: ${formatPeopleCount(registrationsCount)}\nРезерв: ${formatPeopleCount(reserveCount)}`;
 }
 
 function resolveAfishaEventIdFromButtonText(user, text) {
@@ -1837,7 +1998,9 @@ async function showDayAgenda(chatId, dayName) {
         const seatsLeft = await getSeatsLeft(ev.id);
         const time = String(ev.date.getHours()).padStart(2,'0') + ":" + String(ev.date.getMinutes()).padStart(2,'0');
         const seatsLabel = seatsLeft > 0 ? `💺 ${formatSeatsCount(seatsLeft)}` : `❌ закрито`;
-        msg += `Назва: ${ev.name}\nЧас: ${time}\nМісць залишилось: ${seatsLabel}\n\n`;
+        const registrationsLabel = `👥 Зареєстровано: ${formatPeopleCount(Math.max(0, Number(ev.registrations) || 0))}`;
+        const reserveLabel = `🕓 Резерв: ${formatPeopleCount(Math.max(0, Number(ev.reserveCount) || 0))}`;
+        msg += `Назва: ${ev.name}\nЧас: ${time}\nМісць залишилось: ${seatsLabel}\n${registrationsLabel}\n${reserveLabel}\n\n`;
     }
 
     const buttons = [];
@@ -1846,7 +2009,9 @@ async function showDayAgenda(chatId, dayName) {
         const seatsLeft = await getSeatsLeft(ev.id);
         const time = String(ev.date.getHours()).padStart(2,'0') + ":" + String(ev.date.getMinutes()).padStart(2,'0');
         const seatsLabel = seatsLeft > 0 ? `💺 ${formatSeatsCount(seatsLeft)}` : `❌ закрито`;
-        const buttonText = `${ev.name} | ${time} | ${seatsLabel}`;
+        const registrationsLabel = `👥 ${formatPeopleCount(Math.max(0, Number(ev.registrations) || 0))}`;
+        const reserveLabel = `🕓 ${formatPeopleCount(Math.max(0, Number(ev.reserveCount) || 0))}`;
+        const buttonText = `${ev.name} | ${time} | ${seatsLabel} | ${registrationsLabel} | ${reserveLabel}`;
         buttons.push([{ text: buttonText }]);
         eventButtonMap[buttonText] = ev.id;
     }
@@ -2010,6 +2175,7 @@ function parseEventFromRow(row, currentDateContext) {
     let title = cells[2] ? String(cells[2]).trim() : '';
     let seats = parseInt(cells[3], 10);
     let registrations = parseInt(cells[4], 10);
+    let reserveCount = parseInt(cells[5], 10);
 
     if (!time) {
         const line = nonEmpty.join(' ');
@@ -2041,16 +2207,21 @@ function parseEventFromRow(row, currentDateContext) {
     }
 
     if (!Number.isFinite(seats)) {
-        // Не підхоплюємо колонку E (registrations) як місткість — це призводило б до seatsLeft=0
+        // Не підхоплюємо колонки E/F (registrations/reserve) як місткість.
         const registrationsIdx = 4;
+        const reserveIdx = 5;
         const seatCell = cells.find((cell, idx) =>
-            idx !== dateIndex && idx !== timeIndex && idx !== registrationsIdx && /\d+/.test(cell)
+            idx !== dateIndex && idx !== timeIndex && idx !== registrationsIdx && idx !== reserveIdx && /\d+/.test(cell)
         );
         seats = seatCell ? parseInt((seatCell.match(/\d+/) || [0])[0], 10) : 0;
     }
 
     if (!Number.isFinite(registrations)) {
         registrations = 0;
+    }
+
+    if (!Number.isFinite(reserveCount)) {
+        reserveCount = 0;
     }
 
     if (!dateBase || !time || !title) {
@@ -2083,7 +2254,8 @@ function parseEventFromRow(row, currentDateContext) {
             name: title,
             date: eventDate,
             seats: totalSeats,
-            registrations: safeRegistrations
+            registrations: safeRegistrations,
+            reserveCount: Math.max(0, reserveCount)
         },
         nextDateContext: dateBase
     };
@@ -2610,12 +2782,12 @@ async function isRegistrantAlreadyInEventNote(event, registrantProfile) {
         return false;
     }
 
-    const existingNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex);
+    const existingNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex, 'E');
     const registrants = parseRegistrantsFromNote(existingNote);
     return registrants.some((item) => isSameRegistrant(item, normalizedName, normalizedPhone));
 }
 
-async function getScheduleCellNote(scheduleSheet, rowIndex) {
+async function getScheduleCellNote(scheduleSheet, rowIndex, columnLetter = 'E') {
     if (!scheduleSheet || rowIndex < 0 || !SPREADSHEET_ID || !sheetsClient) {
         return '';
     }
@@ -2623,7 +2795,7 @@ async function getScheduleCellNote(scheduleSheet, rowIndex) {
     try {
         const resp = await sheetsClient.spreadsheets.get({
             spreadsheetId: SPREADSHEET_ID,
-            ranges: [`${scheduleSheet}!E${rowIndex + 1}`],
+            ranges: [`${scheduleSheet}!${columnLetter}${rowIndex + 1}`],
             includeGridData: true,
             fields: 'sheets(data(rowData(values(note))))'
         });
@@ -2637,9 +2809,330 @@ async function getScheduleCellNote(scheduleSheet, rowIndex) {
 
         return String(note || '');
     } catch (error) {
-        console.error(`❌ Помилка читання нотатки з ${scheduleSheet}!E${rowIndex + 1}:`, error && error.message ? error.message : error);
+        console.error(`❌ Помилка читання нотатки з ${scheduleSheet}!${columnLetter}${rowIndex + 1}:`, error && error.message ? error.message : error);
         return '';
     }
+}
+
+function normalizeRegistrantUserId(value) {
+    const digits = String(value || '').replace(/\D/g, '');
+    return digits || '';
+}
+
+function parseReserveRegistrantsFromNote(noteText) {
+    const text = String(noteText || '').trim();
+    if (!text) return [];
+
+    const reservists = [];
+    const seen = new Set();
+    const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    for (const line of lines) {
+        if (/^резерв\s*:/i.test(line)) {
+            continue;
+        }
+
+        const cleaned = line
+            .replace(/^[-*•]\s*/, '')
+            .replace(/^\d+[.)-]?\s*/, '')
+            .trim();
+
+        if (!cleaned) continue;
+
+        const parts = cleaned.split('|').map((part) => String(part || '').trim());
+        const name = String(parts[0] || '').trim();
+        const phone = String(parts[1] || '').trim();
+        const userId = String(parts[2] || '').trim();
+
+        if (!name && !phone && !userId) {
+            continue;
+        }
+
+        const key = `${normalizeRegistrantName(name)}|${normalizeRegistrantPhone(phone)}|${normalizeRegistrantUserId(userId)}`;
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        reservists.push({ name, phone, userId });
+    }
+
+    return reservists;
+}
+
+function buildReserveNoteFromList(reserveCount, reservists, eventId = '') {
+    const safeCount = Number.isFinite(reserveCount) ? reserveCount : reservists.length;
+    const header = `Резерв: ${safeCount}`;
+    const people = reservists.map((item, index) => {
+        const name = String(item.name || '').trim() || 'Без імені';
+        const phone = String(item.phone || '').trim();
+        const userId = String(item.userId || '').trim();
+        const identityTail = [phone, userId].filter(Boolean).join(' | ');
+        return `${index + 1}. ${name}${identityTail ? ` | ${identityTail}` : ''}`;
+    });
+
+    const content = people.length === 0 ? header : `${header}\n\n${people.join('\n')}`;
+    return eventId ? `${content}\n\n${SCHEDULE_NOTE_EVENT_ID_TAG}${eventId}` : content;
+}
+
+async function updateSheetReserveCount(event) {
+    if (!event || !sheetsClient || !SPREADSHEET_ID) {
+        return;
+    }
+
+    const match = await findScheduleRowByEvent(event);
+    if (!match) {
+        return;
+    }
+
+    const reserveCount = Number.isFinite(event.reserveCount) ? Math.max(0, event.reserveCount) : 0;
+    try {
+        await sheetsClient.spreadsheets.values.update({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `${match.scheduleSheet}!F${match.rowIndex + 1}:F${match.rowIndex + 1}`,
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[reserveCount]]
+            }
+        });
+    } catch (error) {
+        console.error('❌ Не вдалося оновити кількість резерву у розкладі:', error && error.message ? error.message : error);
+    }
+}
+
+async function updateScheduleReserveNote({ scheduleSheet, rowIndex, reserveCount, addRegistrant, removeRegistrant, eventId }) {
+    if (!scheduleSheet || rowIndex < 0 || !SPREADSHEET_ID || !sheetsClient) {
+        return;
+    }
+
+    const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, scheduleSheet);
+    if (sheetId === null || typeof sheetId === 'undefined') {
+        return;
+    }
+
+    const existingNote = await getScheduleCellNote(scheduleSheet, rowIndex, 'F');
+    const existingEventId = extractScheduleNoteEventId(existingNote) || eventId;
+    let reservists = parseReserveRegistrantsFromNote(existingNote);
+
+    if (removeRegistrant) {
+        const removeNameKey = normalizeRegistrantName(removeRegistrant.name);
+        const removePhoneKey = normalizeRegistrantPhone(removeRegistrant.phone);
+        const removeUserIdKey = normalizeRegistrantUserId(removeRegistrant.userId);
+        reservists = reservists.filter((item) => {
+            const sameName = normalizeRegistrantName(item.name) === removeNameKey;
+            const samePhone = normalizeRegistrantPhone(item.phone) === removePhoneKey;
+            const sameUserId = normalizeRegistrantUserId(item.userId) === removeUserIdKey;
+
+            if (removeNameKey && removePhoneKey) {
+                return !(sameName && samePhone);
+            }
+            if (removeUserIdKey) {
+                return !sameUserId;
+            }
+            if (removeNameKey) {
+                return !sameName;
+            }
+            if (removePhoneKey) {
+                return !samePhone;
+            }
+            return true;
+        });
+    }
+
+    if (addRegistrant) {
+        const candidateName = String(addRegistrant.name || '').trim();
+        const candidatePhone = String(addRegistrant.phone || '').trim();
+        const candidateUserId = String(addRegistrant.userId || '').trim();
+        const candidateNameKey = normalizeRegistrantName(candidateName);
+        const candidatePhoneKey = normalizeRegistrantPhone(candidatePhone);
+        const candidateUserIdKey = normalizeRegistrantUserId(candidateUserId);
+
+        const alreadyExists = reservists.some((item) => {
+            const sameName = normalizeRegistrantName(item.name) === candidateNameKey;
+            const samePhone = normalizeRegistrantPhone(item.phone) === candidatePhoneKey;
+            const sameUserId = normalizeRegistrantUserId(item.userId) === candidateUserIdKey;
+
+            return (candidateNameKey && candidatePhoneKey && sameName && samePhone)
+                || (candidateUserIdKey && sameUserId);
+        });
+
+        if (!alreadyExists) {
+            reservists.push({
+                name: candidateName,
+                phone: candidatePhone,
+                userId: candidateUserId
+            });
+        }
+    }
+
+    const noteText = buildReserveNoteFromList(reserveCount, reservists, existingEventId);
+
+    await sheetsClient.spreadsheets.batchUpdate({
+        spreadsheetId: SPREADSHEET_ID,
+        requestBody: {
+            requests: [
+                {
+                    repeatCell: {
+                        range: {
+                            sheetId,
+                            startRowIndex: rowIndex,
+                            endRowIndex: rowIndex + 1,
+                            startColumnIndex: 5,
+                            endColumnIndex: 6
+                        },
+                        cell: {
+                            note: noteText
+                        },
+                        fields: 'note'
+                    }
+                }
+            ]
+        }
+    });
+}
+
+async function isRegistrantAlreadyInEventReserveNote(event, registrantProfile) {
+    if (!event || !registrantProfile || !SPREADSHEET_ID || !sheetsClient) {
+        return false;
+    }
+
+    const normalizedName = normalizeRegistrantName(registrantProfile.name);
+    const normalizedPhone = normalizeRegistrantPhone(registrantProfile.phone);
+    const normalizedUserId = normalizeRegistrantUserId(registrantProfile.userId || registrantProfile.chatId);
+    if (!normalizedName && !normalizedPhone && !normalizedUserId) {
+        return false;
+    }
+
+    const match = await findScheduleRowByEvent(event);
+    if (!match) {
+        return false;
+    }
+
+    const existingNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex, 'F');
+    const reservists = parseReserveRegistrantsFromNote(existingNote);
+    return reservists.some((item) => {
+        const sameName = normalizeRegistrantName(item.name) === normalizedName;
+        const samePhone = normalizeRegistrantPhone(item.phone) === normalizedPhone;
+        const sameUserId = normalizeRegistrantUserId(item.userId) === normalizedUserId;
+        return (normalizedName && normalizedPhone && sameName && samePhone) || (normalizedUserId && sameUserId);
+    });
+}
+
+async function addRegistrantToReserve(event, registrantProfile) {
+    if (!event || !registrantProfile) {
+        return false;
+    }
+
+    const duplicateInReserve = await isRegistrantAlreadyInEventReserveNote(event, registrantProfile);
+    if (duplicateInReserve) {
+        return false;
+    }
+
+    const match = await findScheduleRowByEvent(event);
+    if (!match) {
+        return false;
+    }
+
+    event.reserveCount = Math.max(0, Number(event.reserveCount) || 0) + 1;
+    await updateSheetReserveCount(event);
+    await updateScheduleReserveNote({
+        scheduleSheet: match.scheduleSheet,
+        rowIndex: match.rowIndex,
+        reserveCount: event.reserveCount,
+        addRegistrant: {
+            name: registrantProfile.name,
+            phone: registrantProfile.phone,
+            userId: registrantProfile.userId || registrantProfile.chatId
+        },
+        eventId: event.id
+    });
+
+    return true;
+}
+
+async function promoteFirstReserveRegistrantToRegistration(event) {
+    if (!event || !sheetsClient || !SPREADSHEET_ID) {
+        return false;
+    }
+
+    const seatsLeft = Math.max(0, (Number(event.seats) || 0) - (Number(event.registrations) || 0));
+    if (seatsLeft <= 0) {
+        return false;
+    }
+
+    const match = await findScheduleRowByEvent(event);
+    if (!match) {
+        return false;
+    }
+
+    const reserveNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex, 'F');
+    const reservists = parseReserveRegistrantsFromNote(reserveNote);
+    if (reservists.length === 0) {
+        return false;
+    }
+
+    const promoted = reservists[0];
+    const remainingReserve = reservists.slice(1);
+
+    event.reserveCount = remainingReserve.length;
+    await updateSheetReserveCount(event);
+    await updateScheduleReserveNote({
+        scheduleSheet: match.scheduleSheet,
+        rowIndex: match.rowIndex,
+        reserveCount: event.reserveCount,
+        removeRegistrant: promoted,
+        eventId: event.id
+    });
+
+    event.registrations = Math.max(0, Number(event.registrations) || 0) + 1;
+    await incrementSheetRegistration(event, {
+        name: promoted.name,
+        phone: promoted.phone,
+        userId: promoted.userId
+    });
+
+    const promotedChatId = Number(String(promoted.userId || '').trim());
+    if (Number.isFinite(promotedChatId) && promotedChatId > 0) {
+        if (!userEventRegistrations[promotedChatId]) {
+            userEventRegistrations[promotedChatId] = [];
+        }
+
+        const exists = userEventRegistrations[promotedChatId].some((entry) => entry.eventId === event.id);
+        if (!exists) {
+            userEventRegistrations[promotedChatId].push({
+                eventId: event.id,
+                eventName: event.name,
+                eventDate: event.date,
+                registrantName: String(promoted.name || '').trim(),
+                registrantPhone: String(promoted.phone || '').trim(),
+                reminded24h: false,
+                reminded1h: false
+            });
+            saveReminderStateToDisk();
+        }
+
+        const reserveForUser = userEventReserveRegistrations[promotedChatId] || [];
+        userEventReserveRegistrations[promotedChatId] = reserveForUser.filter((entry) => entry.eventId !== event.id);
+        if (userEventReserveRegistrations[promotedChatId].length === 0) {
+            delete userEventReserveRegistrations[promotedChatId];
+        }
+
+        try {
+            await bot.sendMessage(promotedChatId,
+                `✅ Ви були в резерві на захід "${event.name}".\n\nЗвільнилося місце, вас додано до списку зареєстрованих.`, {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(promotedChatId),
+                    resize_keyboard: true
+                }
+            });
+        } catch (error) {
+            console.error(`❌ Не вдалося надіслати повідомлення про переведення з резерву (chatId=${promotedChatId}):`, error && error.message ? error.message : error);
+        }
+    }
+
+    return true;
 }
 
 async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, existingNote) {
@@ -2854,12 +3347,12 @@ function createEmptyFriendRegistrationDraft() {
         name: '',
         phone: '',
         birth: '',
-        visited: '',
         status: '',
         health: '',
-        childrenCount: '',
+        evacuationStatus: '',
+        shellingImpact: '',
         employment: '',
-        gbvAffected: ''
+        beneficiaryCategory: ''
     };
 }
 
@@ -2930,12 +3423,12 @@ function getMissingRegistrantStep(registrantData) {
     return !registrantData.name ? 1
         : !registrantData.phone ? 2
         : !registrantData.birth ? 3
-        : !registrantData.visited ? 4
-        : !registrantData.status ? 5
-        : !registrantData.health ? 6
-    : !registrantData.childrenCount ? 7
+        : !registrantData.status ? 4
+        : !registrantData.health ? 5
+    : !registrantData.evacuationStatus ? 6
+    : !registrantData.shellingImpact ? 7
     : !registrantData.employment ? 8
-    : !registrantData.gbvAffected ? 9
+    : !registrantData.beneficiaryCategory ? 9
         : 0;
 }
 
@@ -2996,6 +3489,7 @@ async function checkPendingRegistrationSelections() {
 function resetSelectedEventsFlow(user) {
     clearPendingRegistrationSelection(user);
     delete user.afishaMultiRegistration;
+    delete user.afishaReserveMode;
     delete user.afishaEventIndex;
     delete user.currentMultiEventId;
     delete user.currentMultiEventName;
@@ -3004,12 +3498,15 @@ function resetSelectedEventsFlow(user) {
     delete user.currentSelectedEventId;
     delete user.selectedEventId;
     delete user.selectedEventName;
+    delete user.pendingReserveEventId;
+    delete user.pendingReserveEventName;
 }
 
 async function completeSelectedEventsRegistration(chatId, user, registrantName, registrantPhone, options = {}) {
     const selectedEvents = [...(user.selectedEventsList || [])];
     const successEvents = [];
     const alreadyRegisteredEvents = [];
+    const reserveEvents = [];
     const failedEvents = [];
 
     for (const selectedEvent of selectedEvents) {
@@ -3029,6 +3526,10 @@ async function completeSelectedEventsRegistration(chatId, user, registrantName, 
         } else if (result.status === 'already-registered') {
             alreadyRegisteredEvents.push(details);
             failedEvents.push(`${formatSelectedEventLine(details)} — ви вже зареєстровані`);
+        } else if (result.status === 'already-reserved') {
+            failedEvents.push(`${formatSelectedEventLine(details)} — ви вже в резерві`);
+        } else if (result.status === 'reserved') {
+            reserveEvents.push(details);
         } else if (result.status === 'no-seats') {
             failedEvents.push(`${formatSelectedEventLine(details)} — місця закінчилися`);
         } else {
@@ -3040,15 +3541,25 @@ async function completeSelectedEventsRegistration(chatId, user, registrantName, 
     user.step = 0;
     user.registrationMode = false;
 
-    return { successEvents, alreadyRegisteredEvents, failedEvents };
+    return { successEvents, alreadyRegisteredEvents, reserveEvents, failedEvents };
 }
 
-function buildRegistrationResultsMessage(successEvents, failedEvents, successTitle = 'Ви успішно зареєстровані на') {
+function buildRegistrationResultsMessage(successEvents, reserveEvents, failedEvents, successTitle = 'Ви успішно зареєстровані на') {
     let message = '';
 
     if (successEvents.length > 0) {
         message += `✅ <b>${successTitle}:</b>\n\n`;
         successEvents.forEach((event) => {
+            message += `${formatSelectedEventLine(event)}\n`;
+        });
+    }
+
+    if (reserveEvents.length > 0) {
+        if (message) {
+            message += '\n';
+        }
+        message += '🕓 <b>Додано в резерв:</b>\n\n';
+        reserveEvents.forEach((event) => {
             message += `${formatSelectedEventLine(event)}\n`;
         });
     }
@@ -3068,6 +3579,7 @@ function buildRegistrationResultsMessage(successEvents, failedEvents, successTit
 
 async function startSelectedEventsRegistration(chatId, user, options = {}) {
     const instantAfisha = options.instantAfisha === true || user.afishaInstantMode === true;
+    user.afishaReserveMode = options.reserveMode === true;
 
     if (!user.selectedEventsList || user.selectedEventsList.length === 0) {
         await bot.sendMessage(chatId, '❌ Немає вибраних заходів. Оберіть захід з афіші.', {
@@ -3093,29 +3605,30 @@ async function startSelectedEventsRegistration(chatId, user, options = {}) {
         user.name = registrantData.name;
         user.phone = registrantData.phone;
         user.birth = registrantData.birth;
-        user.visited = registrantData.visited;
         user.status = registrantData.status;
         user.health = registrantData.health;
-        user.childrenCount = registrantData.childrenCount;
+        user.evacuationStatus = registrantData.evacuationStatus;
+        user.shellingImpact = registrantData.shellingImpact;
         user.employment = registrantData.employment;
-        user.gbvAffected = registrantData.gbvAffected;
+        user.beneficiaryCategory = registrantData.beneficiaryCategory;
     }
 
     const missingStep = getMissingRegistrantStep(registrantData);
+    const hasExistingProfile = !isFriendMode && Boolean(user.name && user.phone);
 
-    if (missingStep > 0) {
+    if (missingStep > 0 && !hasExistingProfile) {
         user.step = missingStep;
         user.registrationMode = true;
         showAfishaRegistrationForm(chatId, user);
         return;
     }
 
-    const { successEvents, alreadyRegisteredEvents, failedEvents } = await completeSelectedEventsRegistration(
+    const { successEvents, alreadyRegisteredEvents, reserveEvents, failedEvents } = await completeSelectedEventsRegistration(
         chatId,
         user,
         registrantData.name,
         registrantData.phone,
-        { skipReminders: isFriendMode }
+        { skipReminders: isFriendMode, reserveMode: user.afishaReserveMode === true }
     );
 
     if (instantAfisha && !isFriendMode) {
@@ -3125,6 +3638,7 @@ async function startSelectedEventsRegistration(chatId, user, options = {}) {
 
     const messageText = buildRegistrationResultsMessage(
         successEvents,
+        reserveEvents,
         failedEvents,
         isFriendMode ? 'Подругу успішно зареєстровано на' : 'Ви успішно зареєстровані на'
     );
@@ -3153,7 +3667,8 @@ async function startSelectedEventsRegistration(chatId, user, options = {}) {
 
     if (instantAfisha && !isFriendMode) {
         const lastEvent = successEvents[successEvents.length - 1]
-            || alreadyRegisteredEvents[alreadyRegisteredEvents.length - 1];
+            || alreadyRegisteredEvents[alreadyRegisteredEvents.length - 1]
+            || reserveEvents[reserveEvents.length - 1];
         if (lastEvent) {
             user.lastAfishaRegisteredEventId = lastEvent.id;
             user.lastAfishaRegisteredEventName = lastEvent.name;
@@ -3447,7 +3962,7 @@ async function loadEventsFromSheet() {
             try {
                 const resp = await sheetsClient.spreadsheets.values.get({
                     spreadsheetId: SPREADSHEET_ID,
-                    range: `${scheduleSheet}!A:E`
+                    range: `${scheduleSheet}!A:F`
                 });
                 rows = resp.data.values || [];
                 if (rows && rows.length) {
@@ -3469,16 +3984,16 @@ async function loadEventsFromSheet() {
             try {
                 const alt2 = await sheetsClient.spreadsheets.values.get({
                     spreadsheetId: SPREADSHEET_ID,
-                    range: "A:E"
+                    range: "A:F"
                 });
                 rows = alt2.data.values || [];
                 if (rows && rows.length) {
-                    activeScheduleSheet = 'A:E';
-                    console.log('   Використано діапазон A:E');
+                    activeScheduleSheet = 'A:F';
+                    console.log('   Використано діапазон A:F');
                 }
             } catch (e) {
                 const msg = e && e.message ? e.message : String(e);
-                readErrors.push({ sheet: 'A:E', message: msg });
+                readErrors.push({ sheet: 'A:F', message: msg });
             }
         }
 
@@ -3507,7 +4022,7 @@ async function loadEventsFromSheet() {
             }
 
             const ev = parsed.event;
-            // Нормалізуємо назву аркуша: не зберігаємо діапазони на зразок 'A:E'
+            // Нормалізуємо назву аркуша: не зберігаємо діапазони на зразок 'A:F'
             const normalizedSheetName = (activeScheduleSheet && !/^[A-Z]+:[A-Z]+$/i.test(activeScheduleSheet))
                 ? activeScheduleSheet
                 : (SCHEDULE_SHEET_NAME || '');
@@ -3587,12 +4102,12 @@ async function appendRegistrationRow(chatId, user) {
         user.name || "",
         user.phone || "",
         user.birth || "",
-        user.visited || "",
         user.status || "",
         user.health || "",
-        user.childrenCount || "",
+        user.evacuationStatus || "",
+        user.shellingImpact || "",
         user.employment || "",
-        user.gbvAffected || "",
+        user.beneficiaryCategory || "",
         String(chatId || '')
     ];
 
@@ -3927,16 +4442,16 @@ async function resolveRegistrantFormData(chatId, user) {
         name: String((user && user.name) || '').trim(),
         phone: String((user && user.phone) || '').trim(),
         birth: String((user && user.birth) || '').trim(),
-        visited: String((user && user.visited) || '').trim(),
         status: String((user && user.status) || '').trim(),
         health: String((user && user.health) || '').trim(),
-        childrenCount: String((user && user.childrenCount) || '').trim(),
+        evacuationStatus: String((user && user.evacuationStatus) || '').trim(),
+        shellingImpact: String((user && user.shellingImpact) || '').trim(),
         employment: String((user && user.employment) || '').trim(),
-        gbvAffected: String((user && user.gbvAffected) || '').trim()
+        beneficiaryCategory: String((user && user.beneficiaryCategory) || '').trim()
     };
 
-    const hasAll = resolved.name && resolved.phone && resolved.birth && resolved.visited && resolved.status && resolved.health &&
-        resolved.childrenCount && resolved.employment && resolved.gbvAffected;
+    const hasAll = resolved.name && resolved.phone && resolved.birth && resolved.status && resolved.health &&
+        resolved.evacuationStatus && resolved.shellingImpact && resolved.employment && resolved.beneficiaryCategory;
     if (hasAll || !sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID) {
         return resolved;
     }
@@ -3956,8 +4471,8 @@ async function resolveRegistrantFormData(chatId, user) {
         }
     }
 
-    const hasAllAfterSheet = resolved.name && resolved.phone && resolved.birth && resolved.visited && resolved.status && resolved.health &&
-        resolved.childrenCount && resolved.employment && resolved.gbvAffected;
+    const hasAllAfterSheet = resolved.name && resolved.phone && resolved.birth && resolved.status && resolved.health &&
+        resolved.evacuationStatus && resolved.shellingImpact && resolved.employment && resolved.beneficiaryCategory;
     if (hasAllAfterSheet) {
         return resolved;
     }
@@ -3966,7 +4481,7 @@ async function resolveRegistrantFormData(chatId, user) {
     const inputPhone = normalizePhone(resolved.phone);
     const inputName = String(resolved.name || '').trim().toLowerCase();
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:J`, 'A:J'];
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:K`, 'A:K'];
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -3988,12 +4503,12 @@ async function resolveRegistrantFormData(chatId, user) {
                 if (!resolved.name) resolved.name = String(row[1] || '').trim();
                 if (!resolved.phone) resolved.phone = String(row[2] || '').trim();
                 if (!resolved.birth) resolved.birth = String(row[3] || '').trim();
-                if (!resolved.visited) resolved.visited = String(row[4] || '').trim();
-                if (!resolved.status) resolved.status = String(row[5] || '').trim();
-                if (!resolved.health) resolved.health = String(row[6] || '').trim();
-                if (!resolved.childrenCount) resolved.childrenCount = String(row[7] || '').trim();
+                if (!resolved.status) resolved.status = String(row[4] || '').trim();
+                if (!resolved.health) resolved.health = String(row[5] || '').trim();
+                if (!resolved.evacuationStatus) resolved.evacuationStatus = String(row[6] || '').trim();
+                if (!resolved.shellingImpact) resolved.shellingImpact = String(row[7] || '').trim();
                 if (!resolved.employment) resolved.employment = String(row[8] || '').trim();
-                if (!resolved.gbvAffected) resolved.gbvAffected = String(row[9] || '').trim();
+                if (!resolved.beneficiaryCategory) resolved.beneficiaryCategory = String(row[9] || '').trim();
 
                 return resolved;
             }
@@ -4012,30 +4527,30 @@ async function resolveRegistrantFormData(chatId, user) {
 function parsePersonalDataRow(row) {
     const cells = (row || []).map((cell) => String(cell || '').trim());
     const current = {
-        username: cells[7] || '',
-        name: cells[0] || '',
-        phone: cells[1] || '',
-        birth: cells[2] || '',
-        visited: cells[3] || '',
-        status: cells[4] || '',
-        health: cells[5] || '',
-        chatId: cells[6] || '',
-        childrenCount: cells[8] || '',
-        employment: cells[9] || '',
-        gbvAffected: cells[10] || ''
-    };
-    const legacy = {
         username: cells[0] || '',
         name: cells[1] || '',
         phone: cells[2] || '',
         birth: cells[3] || '',
-        visited: cells[4] || '',
-        status: cells[5] || '',
-        health: cells[6] || '',
-        chatId: cells[7] || '',
-        childrenCount: cells[8] || '',
-        employment: cells[9] || '',
-        gbvAffected: cells[10] || ''
+        status: cells[4] || '',
+        health: cells[5] || '',
+        evacuationStatus: cells[6] || '',
+        shellingImpact: cells[7] || '',
+        employment: cells[8] || '',
+        beneficiaryCategory: cells[9] || '',
+        chatId: cells[10] || ''
+    };
+    const legacy = {
+        username: cells[7] || cells[0] || '',
+        name: cells[0] || cells[1] || '',
+        phone: cells[1] || cells[2] || '',
+        birth: cells[2] || cells[3] || '',
+        status: cells[5] || cells[4] || '',
+        health: cells[6] || cells[5] || '',
+        evacuationStatus: '',
+        shellingImpact: '',
+        employment: cells[9] || cells[8] || '',
+        beneficiaryCategory: '',
+        chatId: cells[10] || cells[7] || cells[6] || ''
     };
 
     return {
@@ -4043,21 +4558,23 @@ function parsePersonalDataRow(row) {
         name: current.name || legacy.name,
         phone: current.phone || legacy.phone,
         birth: current.birth || legacy.birth,
-        visited: current.visited || legacy.visited,
         status: current.status || legacy.status,
         health: current.health || legacy.health,
+        evacuationStatus: current.evacuationStatus || legacy.evacuationStatus,
+        shellingImpact: current.shellingImpact || legacy.shellingImpact,
         chatId: current.chatId || legacy.chatId,
-        childrenCount: current.childrenCount || legacy.childrenCount,
         employment: current.employment || legacy.employment,
-        gbvAffected: current.gbvAffected || legacy.gbvAffected
+        beneficiaryCategory: current.beneficiaryCategory || legacy.beneficiaryCategory
     };
 }
 
-async function loadKnownUserByChatId(chatId) {
+async function loadKnownUserByChatId(chatId, options = {}) {
     const chatIdStr = String(chatId || '').trim();
     if (!chatIdStr) return null;
 
-    if (knownUsers[chatId]) {
+    const forceRefresh = options && options.forceRefresh === true;
+
+    if (!forceRefresh && knownUsers[chatId]) {
         return knownUsers[chatId];
     }
 
@@ -4087,7 +4604,7 @@ async function loadKnownUserByPhone(phone) {
         return null;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:J`, 'A:J'];
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:K`, 'A:K'];
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -4124,7 +4641,7 @@ async function loadKnownUserByUsername(username) {
         return null;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:J`, 'A:J'];
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:K`, 'A:K'];
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -4168,41 +4685,60 @@ function showAfishaRegistrationForm(chatId, user) {
     let question = "<b>1. Прізвище Ім'я По-батькові</b>";
     if (step === 2) question = "<b>2. Телефон (380...)</b>";
     if (step === 3) question = "<b>3. Дата народження</b>";
-    if (step === 4) question = "<b>4. Чи відвідували Простір раніше?</b>";
-    if (step === 5) question = "<b>5. ВПО/МО</b>";
-    if (step === 6) question = "<b>6. Інвалідність/суттєві проблеми зі здоров'ям</b>";
-    if (step === 7) question = "<b>7. Кількість дітей до 18 років</b>";
+    if (step === 4) question = "<b>4. ВПО/МО</b>";
+    if (step === 5) question = "<b>5. Стан здоров'я</b>";
+    if (step === 6) question = "<b>6. Евакуаційний статус особи</b>";
+    if (step === 7) question = "<b>7. Вплив обстрілів</b>";
     if (step === 8) question = "<b>8. Зайнятість</b>";
-    if (step === 9) question = "<b>9. Чи траплялися у вашому житті ситуації насильства (у минулому або тепер)?</b>";
+    if (step === 9) question = "<b>9. До яких категорій належите?</b>";
 
     let keyboard = [[{ text: "❌ Скасувати реєстрацію" }]];
     if (step === 4) {
-        keyboard = [[{ text: "Так" }, { text: "Ні" }], [{ text: "❌ Скасувати реєстрацію" }]];
+        keyboard = [
+            [{ text: "ВПО" }],
+            [{ text: "Не ВПО, що постраждали від війни" }],
+            [{ text: "Не ВПО, що не постраждали від війни" }],
+            [{ text: "❌ Скасувати реєстрацію" }]
+        ];
     } else if (step === 5) {
-        keyboard = [[{ text: "ВПО" }, { text: "Місцева" }], [{ text: "❌ Скасувати реєстрацію" }]];
+        keyboard = [
+            [{ text: "Ні, немає істотних проблем зі здоров'ям" }],
+            [{ text: "Ні, але є істотні проблеми зі здоров'ям" }],
+            [{ text: "Інвалідність" }],
+            [{ text: "❌ Скасувати реєстрацію" }]
+        ];
     } else if (step === 6) {
         keyboard = [
-            [{ text: "Інвалідність" }],
-            [{ text: "Суттєві проблеми зі здоров'ям" }],
-            [{ text: "Немає проблем" }],
+            [{ text: "Евакуація з попереднього місця проживання за останні 6 місяців" }],
+            [{ text: "Перебування в транзитному центрі та/або в процесі евакуації" }],
+            [{ text: "Готуюсь до евакуації" }],
+            [{ text: "Нічого з зазначеного" }],
             [{ text: "❌ Скасувати реєстрацію" }]
         ];
     } else if (step === 7) {
         keyboard = [
-            [{ text: "0" }, { text: "1" }],
-            [{ text: "2" }, { text: "3 і більше" }],
+            [{ text: "Так, постраждала протягом останніх 72 годин" }],
+            [{ text: "Так, постраждала протягом останніх 3 місяців" }],
+            [{ text: "Ні, не постраждала" }],
             [{ text: "❌ Скасувати реєстрацію" }]
         ];
     } else if (step === 8) {
         keyboard = [
             [{ text: "Працюю" }, { text: "Не працюю" }],
-            [{ text: "У декреті" }, { text: "Пенсіонерка" }],
+            [{ text: "Пенсіонерка" }, { text: "Студентка" }],
+            [{ text: "Школярка" }, { text: "ФОП" }],
+            [{ text: "Волонтерка" }],
             [{ text: "❌ Скасувати реєстрацію" }]
         ];
     } else if (step === 9) {
         keyboard = [
-            [{ text: "Так" }, { text: "Ні" }],
-            [{ text: "Відмовляюсь сказати" }],
+            [{ text: "Вагітна" }, { text: "Одинока мати" }],
+            [{ text: "Багатодітна мати (3 і більше дітей)" }],
+            [{ text: "Ветеранка" }],
+            [{ text: "Представниця сім'ї загиблого воїна" }],
+            [{ text: "Представниця сім'ї ветерана" }],
+            [{ text: "Особа у складних життєвих обставинах" }],
+            [{ text: "Нічого із вищезазначеного" }],
             [{ text: "❌ Скасувати реєстрацію" }]
         ];
     }
@@ -4230,9 +4766,13 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
     }
 
     const skipReminders = options.skipReminders === true;
+    const reserveMode = options.reserveMode === true;
 
     const seatsLeft = await getSeatsLeft(eventId);
     if (seatsLeft <= 0) {
+        if (reserveMode) {
+            return await registerForSelectedEventReserve(chatId, user, providedName, providedPhone, options);
+        }
         return { status: 'no-seats' };
     }
 
@@ -4330,6 +4870,80 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
     return { status: 'ok' };
 }
 
+async function registerForSelectedEventReserve(chatId, user, providedName, providedPhone, options = {}) {
+    const eventId = user.selectedEventId;
+    const eventName = user.selectedEventName;
+    if (!eventId || !eventName) {
+        return { status: 'no-selection' };
+    }
+
+    const skipReminders = options.skipReminders === true;
+    const registrantProfile = await resolveRegistrantProfile(chatId, user, providedName || '', providedPhone || '');
+    registrantProfile.userId = String(chatId || '');
+
+    const event = events.find((item) => item.id === eventId);
+    if (!event) {
+        return { status: 'not-found' };
+    }
+
+    const duplicateInRegistrations = await isRegistrantAlreadyInEventNote(event, registrantProfile);
+    if (duplicateInRegistrations) {
+        return { status: 'already-registered' };
+    }
+
+    const duplicateInReserve = await isRegistrantAlreadyInEventReserveNote(event, registrantProfile);
+    if (duplicateInReserve) {
+        return { status: 'already-reserved' };
+    }
+
+    const added = await addRegistrantToReserve(event, registrantProfile);
+    if (!added) {
+        return { status: 'already-reserved' };
+    }
+
+    if (!skipReminders) {
+        if (!userEventReserveRegistrations[chatId]) {
+            userEventReserveRegistrations[chatId] = [];
+        }
+
+        const exists = userEventReserveRegistrations[chatId].some((entry) => entry.eventId === eventId);
+        if (!exists) {
+            userEventReserveRegistrations[chatId].push({
+                eventId,
+                eventName,
+                eventDate: event.date,
+                registrantName: registrantProfile.name,
+                registrantPhone: registrantProfile.phone
+            });
+        }
+    } else {
+        const friendRegistrationKey = buildFriendRegistrationKey(eventId, registrantProfile.name, registrantProfile.phone);
+        if (!friendEventReserveRegistrations[chatId]) {
+            friendEventReserveRegistrations[chatId] = [];
+        }
+
+        const exists = friendEventReserveRegistrations[chatId].some((entry) => entry.registrationKey === friendRegistrationKey);
+        if (!exists) {
+            friendEventReserveRegistrations[chatId].push({
+                registrationKey: friendRegistrationKey,
+                eventId,
+                eventName,
+                eventDate: event.date,
+                registrantName: registrantProfile.name,
+                registrantPhone: registrantProfile.phone
+            });
+        }
+    }
+
+    delete user.selectedEventName;
+    delete user.selectedEventId;
+    delete user.afishaFullRegistration;
+    delete user.afishaPendingEventId;
+    delete user.afishaPendingEventName;
+
+    return { status: 'reserved' };
+}
+
 // додаткові допоміжні функції для реєстрацій на заходи
 async function getSeatRegistrations(eventId) {
     const event = events.find(e => e.id === eventId);
@@ -4376,6 +4990,7 @@ async function unregisterFromEvent(chatId, eventId) {
             registration.registrantPhone
         );
         await decrementSheetRegistration(event, registrantProfile);
+        await promoteFirstReserveRegistrantToRegistration(event);
         console.log(`📝 Користувач ${chatId} відписаний від "${registration.eventName}" (місць +1)`);
     }
 
@@ -4410,6 +5025,7 @@ async function unregisterFriendFromEvent(chatId, registrationKey) {
             name: String(registration.registrantName || '').trim(),
             phone: String(registration.registrantPhone || '').trim()
         });
+        await promoteFirstReserveRegistrantToRegistration(event);
         console.log(`👭 Подругу відписано від "${registration.eventName}" (chatId=${chatId})`);
     }
 
@@ -4467,10 +5083,10 @@ async function appendEventToSheet(date, time, title, capacity) {
         try {
             await sheetsClient.spreadsheets.values.append({
                 spreadsheetId: SPREADSHEET_ID,
-                range: `${scheduleSheet}!A:D`,
+                range: `${scheduleSheet}!A:F`,
                 valueInputOption: "USER_ENTERED",
                 requestBody: {
-                    values: [[date, time, title, capacity]]
+                    values: [[date, time, title, capacity, 0, 0]]
                 }
             });
             console.log(`   ✅ Захід записано у Sheets (${scheduleSheet})`);
@@ -4513,7 +5129,8 @@ async function processParsedEvents(parsedEvents) {
                 name: evt.title,
                 date: eventDate,
                 seats: evt.capacity,
-                registrations: 0
+                registrations: 0,
+                reserveCount: 0
             });
 
             await appendEventToSheet(evt.date, evt.time, evt.title, evt.capacity);
@@ -4529,6 +5146,7 @@ async function processParsedEvents(parsedEvents) {
             [{ text: MAIN_MENU_BUTTONS.afisha }],
             [{ text: MAIN_MENU_BUTTONS.unsubscribe }],
             [{ text: MAIN_MENU_BUTTONS.friend }],
+            [{ text: MAIN_MENU_BUTTONS.editProfile }],
             [{ text: MAIN_MENU_BUTTONS.consultations }],
             [{ text: MAIN_MENU_BUTTONS.violenceHelp }],
             [{ text: MAIN_MENU_BUTTONS.reminders }],
@@ -4536,18 +5154,32 @@ async function processParsedEvents(parsedEvents) {
         ];
     }
 
-    function buildViolenceHelpKeyboard() {
-        return [
+    function isAdminChatId(chatId) {
+        const normalizedChatId = Number(String(chatId || '').trim());
+        if (!Number.isFinite(normalizedChatId)) {
+            return false;
+        }
+
+        return ADMIN_CHAT_IDS.includes(normalizedChatId);
+    }
+
+    function buildViolenceHelpKeyboard(chatId) {
+        const keyboard = [
             [{ text: VIOLENCE_HELP_BUTTONS.urgentNow }],
             [{ text: VIOLENCE_HELP_BUTTONS.hotlines }, { text: VIOLENCE_HELP_BUTTONS.police }],
             [{ text: VIOLENCE_HELP_BUTTONS.specializedServices }],
             [{ text: VIOLENCE_HELP_BUTTONS.socialPsychologicalHelp }],
-            [{ text: VIOLENCE_HELP_BUTTONS.coordinationAdministrativeHelp }],
             [{ text: VIOLENCE_HELP_BUTTONS.legalHelp }],
             [{ text: VIOLENCE_HELP_BUTTONS.medicalHelp }],
             [{ text: NAVIGATION_BUTTONS.back }],
             [{ text: NAVIGATION_BUTTONS.menu }]
         ];
+
+        if (isAdminChatId(chatId)) {
+            keyboard.splice(4, 0, [{ text: VIOLENCE_HELP_BUTTONS.coordinationAdministrativeHelp }]);
+        }
+
+        return keyboard;
     }
 
     function buildViolenceHelpDistrictKeyboard() {
@@ -5055,7 +5687,7 @@ async function processParsedEvents(parsedEvents) {
             return;
         }
 
-        const sheetProfile = await loadKnownUserByChatId(chatId);
+        const sheetProfile = await loadKnownUserByChatId(chatId, { forceRefresh: true });
         if (sheetProfile) {
             Object.assign(user, sheetProfile);
         } else if (user.phone) {
@@ -5074,10 +5706,11 @@ async function processParsedEvents(parsedEvents) {
 
         const registrantData = await resolveRegistrantFormData(chatId, user);
         const hasAllData = registrantData.name && registrantData.phone && registrantData.birth &&
-            registrantData.visited && registrantData.status && registrantData.health &&
-            registrantData.childrenCount && registrantData.employment && registrantData.gbvAffected;
+            registrantData.status && registrantData.health && registrantData.evacuationStatus &&
+            registrantData.shellingImpact && registrantData.employment && registrantData.beneficiaryCategory;
+        const hasExistingProfile = Boolean(sheetProfile || user.name || user.phone);
 
-        if (!hasAllData) {
+        if (!hasAllData && !hasExistingProfile) {
             user.step = 1;
             user.registrationMode = true;
             await bot.sendMessage(chatId, "Спочатку заповніть дані.\n\n📝 <b>Крок 1/9:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
@@ -5995,6 +6628,30 @@ bot.on('message', async (msg) => {
     if (msg.chat.type === 'private' && await tryHandleOwnerBroadcast(chatId, text)) {
         return;
     }
+
+    const isAddEventCommand = /^\/add_event(?:@\w+)?$/i.test(String(text || '').trim());
+    if (msg.chat.type === 'private' && isAddEventCommand) {
+        if (!isAdminChatId(chatId)) {
+            await bot.sendMessage(chatId, 'Ця команда доступна лише адміністратору.');
+            return;
+        }
+
+        if (!users[chatId]) {
+            users[chatId] = { step: 0 };
+        }
+
+        users[chatId].context = 'admin-add-event-date';
+        users[chatId].adminAddEventDraft = {};
+        await bot.sendMessage(chatId,
+            '🛠 <b>Додавання заходу</b>\n\nКрок 1/4: Вкажіть дату у форматі ДД.ММ.РРРР.', {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [[{ text: NAVIGATION_BUTTONS.menu }]],
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
     
     // ДІАГНОСТИКА: логуємо всі групові повідомлення
     if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
@@ -6087,9 +6744,12 @@ bot.on('message', async (msg) => {
                 name: 'ТЕСТ Запис',
                 phone: '380000000000',
                 birth: '01.01.2000',
-                visited: 'Ні',
                 status: 'ВПО',
-                health: 'Немає'
+                health: "Ні, немає істотних проблем зі здоров'ям",
+                evacuationStatus: 'Нічого з зазначеного',
+                shellingImpact: 'Ні, не постраждала',
+                employment: 'Працюю',
+                beneficiaryCategory: 'Нічого із вищезазначеного'
             };
             
             await appendRegistrationRow(chatId, testUser);
@@ -6210,7 +6870,7 @@ bot.on('message', async (msg) => {
         }
         
         // Шукаємо профіль по chatId, а якщо не знайдено — по username
-        let foundProfile = await loadKnownUserByChatId(chatId);
+        let foundProfile = await loadKnownUserByChatId(chatId, { forceRefresh: true });
         if (!foundProfile && msg.from && msg.from.username) {
             foundProfile = await loadKnownUserByUsername(msg.from.username);
         }
@@ -6240,7 +6900,7 @@ bot.on('message', async (msg) => {
             await bot.sendMessage(chatId, greeting, {
                 parse_mode: 'HTML',
                 reply_markup: {
-                    keyboard: getMainMenuKeyboard(),
+                    keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -6462,7 +7122,7 @@ bot.on('message', async (msg) => {
     // (Старий код waitingForLogin видалено - тепер /start автоматично обробляє профіль)
 
     if (!user.profileHydrated) {
-        let restoredProfile = await loadKnownUserByChatId(chatId);
+        let restoredProfile = await loadKnownUserByChatId(chatId, { forceRefresh: true });
         if (!restoredProfile && msg.from && msg.from.username) {
             restoredProfile = await loadKnownUserByUsername(msg.from.username);
         }
@@ -6522,7 +7182,7 @@ bot.on('message', async (msg) => {
 
         await bot.sendMessage(chatId, "Реєстрацію скасовано. Оберіть дію в меню.", {
             reply_markup: {
-                keyboard: getMainMenuKeyboard(),
+                keyboard: getMainMenuKeyboard(chatId),
                 resize_keyboard: true
             }
         });
@@ -6536,7 +7196,7 @@ bot.on('message', async (msg) => {
         user.step = 0;
         await bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
             reply_markup: {
-                keyboard: getMainMenuKeyboard(),
+                keyboard: getMainMenuKeyboard(chatId),
                 resize_keyboard: true
             }
         });
@@ -6644,6 +7304,19 @@ bot.on('message', async (msg) => {
         const registrationDraft = getActiveRegistrationDraft(user);
 
         if (user.step === 1) {
+            if (isLikelyInvalidRegistrantName(text)) {
+                await bot.sendMessage(chatId,
+                    "❌ Введіть, будь ласка, коректне ПІБ (мінімум ім'я та прізвище), а не назву кнопки меню.", {
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "❌ Скасувати реєстрацію" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
             registrationDraft.name = text;
             user.step = 2;
             const phonePrompt = isFriendRegistrationMode(user)
@@ -6714,15 +7387,17 @@ bot.on('message', async (msg) => {
 
             registrationDraft.birth = normalizedBirth;
             user.step = 4;
-            const visitedPrompt = isFriendRegistrationMode(user)
-                ? "📝 <b>Крок 4/9:</b> Чи відвідувала подруга Простір раніше?"
-                : "📝 <b>Крок 4/9:</b> Чи відвідували ви Простір раніше?";
+            const statusPrompt = isFriendRegistrationMode(user)
+                ? "📝 <b>Крок 4/9:</b> ВПО/МО статус подруги:\n\n<b>Не ВПО, що постраждали від війни:</b> Громадяни, які живуть у рідних містах, але їхнє житло було зруйноване/пошкоджене, або вони отримали фізичні чи психологічні травми, втратили майно або джерело доходу внаслідок бойових дій.\n\n<b>Не ВПО, що не постраждали від війни:</b> Люди, які проживають у відносно безпечних регіонах, чиє майно, здоров'я та фінансовий стан не зазнали прямого впливу бойових дій."
+                : "📝 <b>Крок 4/9:</b> Ваш ВПО/МО статус:\n\n<b>Не ВПО, що постраждали від війни:</b> Громадяни, які живуть у рідних містах, але їхнє житло було зруйноване/пошкоджене, або вони отримали фізичні чи психологічні травми, втратили майно або джерело доходу внаслідок бойових дій.\n\n<b>Не ВПО, що не постраждали від війни:</b> Люди, які проживають у відносно безпечних регіонах, чиє майно, здоров'я та фінансовий стан не зазнали прямого впливу бойових дій.";
 
-            await bot.sendMessage(chatId, visitedPrompt, {
+            await bot.sendMessage(chatId, statusPrompt, {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
-                        [{ text: "Так" }, { text: "Ні" }],
+                        [{ text: "ВПО" }],
+                        [{ text: "Не ВПО, що постраждали від війни" }],
+                        [{ text: "Не ВПО, що не постраждали від війни" }],
                         [{ text: "❌ Скасувати реєстрацію" }]
                     ],
                     resize_keyboard: true
@@ -6732,46 +7407,15 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 4) {
-            if (text !== 'Так' && text !== 'Ні') {
-                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть один із варіантів кнопками: <b>Так</b> або <b>Ні</b>.", {
+            const statusOptions = ['ВПО', 'Не ВПО, що постраждали від війни', 'Не ВПО, що не постраждали від війни'];
+            if (!statusOptions.includes(text)) {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть варіант кнопками зі списку ВПО/МО.", {
                     parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [
-                            [{ text: "Так" }, { text: "Ні" }],
-                            [{ text: "❌ Скасувати реєстрацію" }]
-                        ],
-                        resize_keyboard: true
-                    }
-                });
-                return;
-            }
-
-            registrationDraft.visited = text;
-            user.step = 5;
-            const statusPrompt = isFriendRegistrationMode(user)
-                ? "📝 <b>Крок 5/9:</b> Статус подруги:"
-                : "📝 <b>Крок 5/9:</b> Ваш статус:";
-
-            await bot.sendMessage(chatId, statusPrompt, {
-                parse_mode: 'HTML',
-                reply_markup: {
-                    keyboard: [
-                        [{ text: "ВПО" }, { text: "Місцева" }],
-                        [{ text: "❌ Скасувати реєстрацію" }]
-                    ],
-                    resize_keyboard: true
-                }
-            });
-            return;
-        }
-
-        if (user.step === 5) {
-            if (text !== 'ВПО' && text !== 'Місцева') {
-                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть статус кнопками: <b>ВПО</b> або <b>Місцева</b>.", {
-                    parse_mode: 'HTML',
-                    reply_markup: {
-                        keyboard: [
-                            [{ text: "ВПО" }, { text: "Місцева" }],
+                            [{ text: "ВПО" }],
+                            [{ text: "Не ВПО, що постраждали від війни" }],
+                            [{ text: "Не ВПО, що не постраждали від війни" }],
                             [{ text: "❌ Скасувати реєстрацію" }]
                         ],
                         resize_keyboard: true
@@ -6781,18 +7425,18 @@ bot.on('message', async (msg) => {
             }
 
             registrationDraft.status = text;
-            user.step = 6;
+            user.step = 5;
             const healthPrompt = isFriendRegistrationMode(user)
-                ? "📝 <b>Крок 6/9:</b> Інвалідність/суттєві проблеми зі здоров'ям у подруги:"
-                : "📝 <b>Крок 6/9:</b> Інвалідність/суттєві проблеми зі здоров'ям:";
+                ? "📝 <b>Крок 5/9:</b> Стан здоров'я подруги:"
+                : "📝 <b>Крок 5/9:</b> Стан здоров'я:";
 
             await bot.sendMessage(chatId, healthPrompt, {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
+                        [{ text: "Ні, немає істотних проблем зі здоров'ям" }],
+                        [{ text: "Ні, але є істотні проблеми зі здоров'ям" }],
                         [{ text: "Інвалідність" }],
-                        [{ text: "Суттєві проблеми зі здоров'ям" }],
-                        [{ text: "Немає проблем" }],
                         [{ text: "❌ Скасувати реєстрацію" }]
                     ],
                     resize_keyboard: true
@@ -6801,16 +7445,20 @@ bot.on('message', async (msg) => {
             return;
         }
 
-        if (user.step === 6) {
-            const healthOptions = ['Інвалідність', "Суттєві проблеми зі здоров'ям", 'Немає проблем'];
+        if (user.step === 5) {
+            const healthOptions = [
+                "Ні, немає істотних проблем зі здоров'ям",
+                "Ні, але є істотні проблеми зі здоров'ям",
+                'Інвалідність'
+            ];
             if (!healthOptions.includes(text)) {
-                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть варіант кнопками: <b>Інвалідність</b>, <b>Суттєві проблеми зі здоров'ям</b> або <b>Немає проблем</b>.", {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть варіант стану здоров'я кнопками.", {
                     parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [
+                            [{ text: "Ні, немає істотних проблем зі здоров'ям" }],
+                            [{ text: "Ні, але є істотні проблеми зі здоров'ям" }],
                             [{ text: "Інвалідність" }],
-                            [{ text: "Суттєві проблеми зі здоров'ям" }],
-                            [{ text: "Немає проблем" }],
                             [{ text: "❌ Скасувати реєстрацію" }]
                         ],
                         resize_keyboard: true
@@ -6820,14 +7468,61 @@ bot.on('message', async (msg) => {
             }
 
             registrationDraft.health = text;
-            user.step = 7;
+            user.step = 6;
+            const evacuationPrompt = isFriendRegistrationMode(user)
+                ? "📝 <b>Крок 6/9:</b> Евакуаційний статус подруги:"
+                : "📝 <b>Крок 6/9:</b> Евакуаційний статус особи:";
 
-            await bot.sendMessage(chatId, "📝 <b>Крок 7/9:</b> Кількість дітей до 18 років:", {
+            await bot.sendMessage(chatId, evacuationPrompt, {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
-                        [{ text: "0" }, { text: "1" }],
-                        [{ text: "2" }, { text: "3 і більше" }],
+                        [{ text: "Евакуація з попереднього місця проживання за останні 6 місяців" }],
+                        [{ text: "Перебування в транзитному центрі та/або в процесі евакуації" }],
+                        [{ text: "Готуюсь до евакуації" }],
+                        [{ text: "Нічого з зазначеного" }],
+                        [{ text: "❌ Скасувати реєстрацію" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (user.step === 6) {
+            const evacuationOptions = [
+                'Евакуація з попереднього місця проживання за останні 6 місяців',
+                'Перебування в транзитному центрі та/або в процесі евакуації',
+                'Готуюсь до евакуації',
+                'Нічого з зазначеного'
+            ];
+            if (!evacuationOptions.includes(text)) {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть евакуаційний статус кнопками.", {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "Евакуація з попереднього місця проживання за останні 6 місяців" }],
+                            [{ text: "Перебування в транзитному центрі та/або в процесі евакуації" }],
+                            [{ text: "Готуюсь до евакуації" }],
+                            [{ text: "Нічого з зазначеного" }],
+                            [{ text: "❌ Скасувати реєстрацію" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
+            registrationDraft.evacuationStatus = text;
+            user.step = 7;
+
+            await bot.sendMessage(chatId, "📝 <b>Крок 7/9:</b> Чи вважаєте себе такою, що прямо або опосередковано постраждала від обстрілів протягом останніх 72 годин або останніх 3 місяців?\n\nПриклади опосередкованого впливу: перебої в електропостачанні, втрата роботи, зміна звичного способу життя та інше.", {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "Так, постраждала протягом останніх 72 годин" }],
+                        [{ text: "Так, постраждала протягом останніх 3 місяців" }],
+                        [{ text: "Ні, не постраждала" }],
                         [{ text: "❌ Скасувати реєстрацію" }]
                     ],
                     resize_keyboard: true
@@ -6837,14 +7532,19 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 7) {
-            const childrenOptions = ['0', '1', '2', '3 і більше'];
-            if (!childrenOptions.includes(text)) {
-                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть кількість дітей кнопками: <b>0</b>, <b>1</b>, <b>2</b> або <b>3 і більше</b>.", {
+            const shellingImpactOptions = [
+                'Так, постраждала протягом останніх 72 годин',
+                'Так, постраждала протягом останніх 3 місяців',
+                'Ні, не постраждала'
+            ];
+            if (!shellingImpactOptions.includes(text)) {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть варіант впливу обстрілів кнопками.", {
                     parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [
-                            [{ text: "0" }, { text: "1" }],
-                            [{ text: "2" }, { text: "3 і більше" }],
+                            [{ text: "Так, постраждала протягом останніх 72 годин" }],
+                            [{ text: "Так, постраждала протягом останніх 3 місяців" }],
+                            [{ text: "Ні, не постраждала" }],
                             [{ text: "❌ Скасувати реєстрацію" }]
                         ],
                         resize_keyboard: true
@@ -6853,7 +7553,7 @@ bot.on('message', async (msg) => {
                 return;
             }
 
-            registrationDraft.childrenCount = text;
+            registrationDraft.shellingImpact = text;
             user.step = 8;
 
             await bot.sendMessage(chatId, "📝 <b>Крок 8/9:</b> Зайнятість:", {
@@ -6861,7 +7561,9 @@ bot.on('message', async (msg) => {
                 reply_markup: {
                     keyboard: [
                         [{ text: "Працюю" }, { text: "Не працюю" }],
-                        [{ text: "У декреті" }, { text: "Пенсіонерка" }],
+                        [{ text: "Пенсіонерка" }, { text: "Студентка" }],
+                        [{ text: "Школярка" }, { text: "ФОП" }],
+                        [{ text: "Волонтерка" }],
                         [{ text: "❌ Скасувати реєстрацію" }]
                     ],
                     resize_keyboard: true
@@ -6871,14 +7573,16 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 8) {
-            const employmentOptions = ['Працюю', 'Не працюю', 'У декреті', 'Пенсіонерка'];
+            const employmentOptions = ['Працюю', 'Не працюю', 'Пенсіонерка', 'Студентка', 'Школярка', 'ФОП', 'Волонтерка'];
             if (!employmentOptions.includes(text)) {
-                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть зайнятість кнопками: <b>Працюю</b>, <b>Не працюю</b>, <b>У декреті</b> або <b>Пенсіонерка</b>.", {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть зайнятість кнопками: <b>Працюю</b>, <b>Не працюю</b>, <b>Пенсіонерка</b>, <b>Студентка</b>, <b>Школярка</b>, <b>ФОП</b> або <b>Волонтерка</b>.", {
                     parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [
                             [{ text: "Працюю" }, { text: "Не працюю" }],
-                            [{ text: "У декреті" }, { text: "Пенсіонерка" }],
+                            [{ text: "Пенсіонерка" }, { text: "Студентка" }],
+                            [{ text: "Школярка" }, { text: "ФОП" }],
+                            [{ text: "Волонтерка" }],
                             [{ text: "❌ Скасувати реєстрацію" }]
                         ],
                         resize_keyboard: true
@@ -6890,12 +7594,17 @@ bot.on('message', async (msg) => {
             registrationDraft.employment = text;
             user.step = 9;
 
-            await bot.sendMessage(chatId, "📝 <b>Крок 9/9:</b> Чи траплялися у вашому житті ситуації насильства (у минулому або тепер)?", {
+            await bot.sendMessage(chatId, "📝 <b>Крок 9/9:</b> До яких категорій належите?", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
-                        [{ text: "Так" }, { text: "Ні" }],
-                        [{ text: "Відмовляюсь сказати" }],
+                        [{ text: "Вагітна" }, { text: "Одинока мати" }],
+                        [{ text: "Багатодітна мати (3 і більше дітей)" }],
+                        [{ text: "Ветеранка" }],
+                        [{ text: "Представниця сім'ї загиблого воїна" }],
+                        [{ text: "Представниця сім'ї ветерана" }],
+                        [{ text: "Особа у складних життєвих обставинах" }],
+                        [{ text: "Нічого із вищезазначеного" }],
                         [{ text: "❌ Скасувати реєстрацію" }]
                     ],
                     resize_keyboard: true
@@ -6905,14 +7614,28 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 9) {
-            const gbvOptions = ['Так', 'Ні', 'Відмовляюсь сказати'];
-            if (!gbvOptions.includes(text)) {
-                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть варіант кнопками: <b>Так</b>, <b>Ні</b> або <b>Відмовляюсь сказати</b>.", {
+            const beneficiaryCategoryOptions = [
+                'Вагітна',
+                'Одинока мати',
+                'Багатодітна мати (3 і більше дітей)',
+                'Ветеранка',
+                "Представниця сім'ї загиблого воїна",
+                "Представниця сім'ї ветерана",
+                'Особа у складних життєвих обставинах',
+                'Нічого із вищезазначеного'
+            ];
+            if (!beneficiaryCategoryOptions.includes(text)) {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть категорію кнопками.", {
                     parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [
-                            [{ text: "Так" }, { text: "Ні" }],
-                            [{ text: "Відмовляюсь сказати" }],
+                            [{ text: "Вагітна" }, { text: "Одинока мати" }],
+                            [{ text: "Багатодітна мати (3 і більше дітей)" }],
+                            [{ text: "Ветеранка" }],
+                            [{ text: "Представниця сім'ї загиблого воїна" }],
+                            [{ text: "Представниця сім'ї ветерана" }],
+                            [{ text: "Особа у складних життєвих обставинах" }],
+                            [{ text: "Нічого із вищезазначеного" }],
                             [{ text: "❌ Скасувати реєстрацію" }]
                         ],
                         resize_keyboard: true
@@ -6921,7 +7644,7 @@ bot.on('message', async (msg) => {
                 return;
             }
 
-            registrationDraft.gbvAffected = text;
+            registrationDraft.beneficiaryCategory = text;
 
             try {
                 console.log(`\n📝 === ЗБЕРЕЖЕННЯ РЕЄСТРАЦІЇ ===`);
@@ -6930,12 +7653,12 @@ bot.on('message', async (msg) => {
                     name: registrationDraft.name,
                     phone: registrationDraft.phone,
                     birth: registrationDraft.birth,
-                    visited: registrationDraft.visited,
                     status: registrationDraft.status,
                     health: registrationDraft.health,
-                    childrenCount: registrationDraft.childrenCount,
+                    evacuationStatus: registrationDraft.evacuationStatus,
+                    shellingImpact: registrationDraft.shellingImpact,
                     employment: registrationDraft.employment,
-                    gbvAffected: registrationDraft.gbvAffected,
+                    beneficiaryCategory: registrationDraft.beneficiaryCategory,
                     friendMode: isFriendRegistrationMode(user)
                 });
                 
@@ -6951,23 +7674,26 @@ bot.on('message', async (msg) => {
                         name: registrationDraft.name,
                         phone: registrationDraft.phone,
                         birth: registrationDraft.birth,
-                        visited: registrationDraft.visited,
                         status: registrationDraft.status,
                         health: registrationDraft.health,
-                        childrenCount: registrationDraft.childrenCount,
+                        evacuationStatus: registrationDraft.evacuationStatus,
+                        shellingImpact: registrationDraft.shellingImpact,
                         employment: registrationDraft.employment,
-                        gbvAffected: registrationDraft.gbvAffected,
+                        beneficiaryCategory: registrationDraft.beneficiaryCategory,
                         username: user.username || ""
                     };
                 }
 
                 if (user.afishaMultiRegistration && user.selectedEventsList && user.selectedEventsList.length > 0) {
-                    const { successEvents, alreadyRegisteredEvents, failedEvents } = await completeSelectedEventsRegistration(
+                    const { successEvents, alreadyRegisteredEvents, reserveEvents, failedEvents } = await completeSelectedEventsRegistration(
                         chatId,
                         user,
                         registrationDraft.name,
                         registrationDraft.phone,
-                        { skipReminders: isFriendRegistrationMode(user) }
+                        {
+                            skipReminders: isFriendRegistrationMode(user),
+                            reserveMode: user.afishaReserveMode === true
+                        }
                     );
 
                     const instantAfisha = user.afishaInstantMode === true;
@@ -6976,7 +7702,8 @@ bot.on('message', async (msg) => {
                         delete user.lastAfishaRegisteredEventName;
 
                         const lastEvent = successEvents[successEvents.length - 1]
-                            || alreadyRegisteredEvents[alreadyRegisteredEvents.length - 1];
+                            || alreadyRegisteredEvents[alreadyRegisteredEvents.length - 1]
+                            || reserveEvents[reserveEvents.length - 1];
                         if (lastEvent) {
                             user.lastAfishaRegisteredEventId = lastEvent.id;
                             user.lastAfishaRegisteredEventName = lastEvent.name;
@@ -6985,6 +7712,7 @@ bot.on('message', async (msg) => {
 
                     await bot.sendMessage(chatId, buildRegistrationResultsMessage(
                         successEvents,
+                        reserveEvents,
                         failedEvents,
                         isFriendRegistrationMode(user) ? 'Подругу успішно зареєстровано на' : 'Ви успішно зареєстровані на'
                     ), {
@@ -7029,7 +7757,7 @@ bot.on('message', async (msg) => {
                 await bot.sendMessage(chatId, "✅ <b>Реєстрація завершена!</b>\n\n👤 " + registrationDraft.name + "\n📱 " + registrationDraft.phone + "\n\nТепер вибери, що далі:", {
                     parse_mode: 'HTML',
                     reply_markup: {
-                        keyboard: getMainMenuKeyboard(),
+                        keyboard: getMainMenuKeyboard(chatId),
                         resize_keyboard: true
                     }
                 });
@@ -7044,12 +7772,12 @@ bot.on('message', async (msg) => {
                     name: registrationDraft.name,
                     phone: registrationDraft.phone,
                     birth: registrationDraft.birth,
-                    visited: registrationDraft.visited,
                     status: registrationDraft.status,
                     health: registrationDraft.health,
-                    childrenCount: registrationDraft.childrenCount,
+                    evacuationStatus: registrationDraft.evacuationStatus,
+                    shellingImpact: registrationDraft.shellingImpact,
                     employment: registrationDraft.employment,
-                    gbvAffected: registrationDraft.gbvAffected
+                    beneficiaryCategory: registrationDraft.beneficiaryCategory
                 });
                 console.error(`Помилка:`, error);
                 console.error(`Stack:`, error.stack);
@@ -7093,8 +7821,306 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    if (String(user.context || '').startsWith('admin-add-event-')) {
+        if (matchesCommand(text, NAVIGATION_BUTTONS.menu, 'Повернутися в меню', 'Назад в меню') || matchesCommand(text, NAVIGATION_BUTTONS.back, 'Назад') || text === '❌ Скасувати') {
+            user.context = null;
+            delete user.adminAddEventDraft;
+            await bot.sendMessage(chatId, 'Додавання заходу скасовано.', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(chatId),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (!isAdminChatId(chatId)) {
+            user.context = null;
+            delete user.adminAddEventDraft;
+            await bot.sendMessage(chatId, 'Ця дія доступна лише адміністратору.');
+            return;
+        }
+
+        if (!user.adminAddEventDraft) {
+            user.adminAddEventDraft = {};
+        }
+
+        if (user.context === 'admin-add-event-date') {
+            const parsedDate = parseDateValue(text, new Date().getFullYear());
+            if (!parsedDate || Number.isNaN(parsedDate.getTime())) {
+                await bot.sendMessage(chatId, '❌ Введіть дату у форматі ДД.ММ.РРРР (наприклад, 15.07.2026).');
+                return;
+            }
+
+            user.adminAddEventDraft.date = formatSheetDate(parsedDate);
+            user.context = 'admin-add-event-time';
+            await bot.sendMessage(chatId, '🕐 Крок 2/4: Вкажіть час заходу у форматі ГГ:ХХ (наприклад, 16:15).');
+            return;
+        }
+
+        if (user.context === 'admin-add-event-time') {
+            const normalizedTime = normalizeTimeValue(text);
+            if (!normalizedTime) {
+                await bot.sendMessage(chatId, '❌ Некоректний час. Введіть у форматі ГГ:ХХ (наприклад, 16:15).');
+                return;
+            }
+
+            user.adminAddEventDraft.time = normalizedTime.text;
+            user.context = 'admin-add-event-name';
+            await bot.sendMessage(chatId, '📝 Крок 3/4: Вкажіть назву заходу.');
+            return;
+        }
+
+        if (user.context === 'admin-add-event-name') {
+            const name = String(text || '').trim();
+            if (!name) {
+                await bot.sendMessage(chatId, '❌ Назва не може бути порожньою.');
+                return;
+            }
+
+            user.adminAddEventDraft.name = name;
+            user.context = 'admin-add-event-seats';
+            await bot.sendMessage(chatId, '💺 Крок 4/4: Вкажіть кількість місць (ціле число).');
+            return;
+        }
+
+        if (user.context === 'admin-add-event-seats') {
+            const seats = parseInt(String(text || '').trim(), 10);
+            if (!Number.isInteger(seats) || seats <= 0) {
+                await bot.sendMessage(chatId, '❌ Кількість місць має бути додатним цілим числом.');
+                return;
+            }
+
+            const draft = user.adminAddEventDraft;
+            const eventId = `${draft.name.replace(/\s+/g, '_')}_${draft.date}_${draft.time}`;
+            const exists = events.some((event) => event && event.id === eventId);
+
+            if (exists) {
+                user.context = null;
+                delete user.adminAddEventDraft;
+                await bot.sendMessage(chatId, 'ℹ️ Такий захід уже існує в розкладі.', {
+                    reply_markup: {
+                        keyboard: getMainMenuKeyboard(chatId),
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
+            const dateParts = String(draft.date || '').split('.');
+            const timeParts = String(draft.time || '').split(':');
+            const eventDate = new Date(
+                parseInt(dateParts[2], 10),
+                parseInt(dateParts[1], 10) - 1,
+                parseInt(dateParts[0], 10),
+                parseInt(timeParts[0], 10),
+                parseInt(timeParts[1], 10),
+                0,
+                0
+            );
+
+            events.push({
+                id: eventId,
+                name: draft.name,
+                date: eventDate,
+                seats,
+                registrations: 0,
+                reserveCount: 0
+            });
+
+            await appendEventToSheet(draft.date, draft.time, draft.name, seats);
+
+            user.context = null;
+            delete user.adminAddEventDraft;
+
+            await bot.sendMessage(chatId,
+                `✅ Захід додано:\n\n📅 ${draft.date}\n🕐 ${draft.time}\n📝 ${draft.name}\n💺 ${formatSeatsCount(seats)}`,
+                {
+                    reply_markup: {
+                        keyboard: getMainMenuKeyboard(chatId),
+                        resize_keyboard: true
+                    }
+                }
+            );
+            return;
+        }
+    }
+
     if (matchesCommand(text, MAIN_MENU_BUTTONS.afisha, 'Афіша заходів')) {
         await handleShowAffishaIntent(chatId, user);
+        return;
+    }
+
+    if (matchesCommand(text, MAIN_MENU_BUTTONS.editProfile, 'Редагувати профіль')) {
+        user.context = 'profile-edit-menu';
+        await bot.sendMessage(chatId, 'Оберіть, що хочете змінити:', {
+            reply_markup: {
+                keyboard: [
+                    [{ text: PROFILE_EDIT_BUTTONS.changeName }],
+                    [{ text: PROFILE_EDIT_BUTTONS.changePhone }],
+                    [{ text: NAVIGATION_BUTTONS.menu }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
+    if (user.context === 'profile-edit-menu') {
+        if (matchesCommand(text, NAVIGATION_BUTTONS.menu, 'Повернутися в меню')) {
+            user.context = null;
+            await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(chatId),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (text === PROFILE_EDIT_BUTTONS.changeName) {
+            user.context = 'profile-edit-name';
+            await bot.sendMessage(chatId, 'Введіть нове ПІБ (Прізвище Ім\'я По батькові):', {
+                reply_markup: {
+                    keyboard: [[{ text: NAVIGATION_BUTTONS.back }], [{ text: NAVIGATION_BUTTONS.menu }]],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (text === PROFILE_EDIT_BUTTONS.changePhone) {
+            user.context = 'profile-edit-phone';
+            await bot.sendMessage(chatId, 'Введіть новий номер телефону (380... або 0...):', {
+                reply_markup: {
+                    keyboard: [[{ text: NAVIGATION_BUTTONS.back }], [{ text: NAVIGATION_BUTTONS.menu }]],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        await bot.sendMessage(chatId, 'Будь ласка, оберіть дію кнопками нижче.', {
+            reply_markup: {
+                keyboard: [
+                    [{ text: PROFILE_EDIT_BUTTONS.changeName }],
+                    [{ text: PROFILE_EDIT_BUTTONS.changePhone }],
+                    [{ text: NAVIGATION_BUTTONS.menu }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
+    if (user.context === 'profile-edit-name') {
+        if (matchesCommand(text, NAVIGATION_BUTTONS.menu, 'Повернутися в меню')) {
+            user.context = null;
+            await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(chatId),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (matchesCommand(text, NAVIGATION_BUTTONS.back, 'Назад')) {
+            user.context = 'profile-edit-menu';
+            await bot.sendMessage(chatId, 'Оберіть, що хочете змінити:', {
+                reply_markup: {
+                    keyboard: [
+                        [{ text: PROFILE_EDIT_BUTTONS.changeName }],
+                        [{ text: PROFILE_EDIT_BUTTONS.changePhone }],
+                        [{ text: NAVIGATION_BUTTONS.menu }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (isLikelyInvalidRegistrantName(text)) {
+            await bot.sendMessage(chatId, '❌ Некоректне ПІБ. Введіть, будь ласка, мінімум ім\'я та прізвище.');
+            return;
+        }
+
+        const profileData = await resolveRegistrantFormData(chatId, user);
+        profileData.name = String(text || '').trim();
+        profileData.chatId = String(chatId || '');
+        profileData.username = String((user && user.username) || profileData.username || '').trim();
+
+        try {
+            await appendRegistrationRow(chatId, profileData);
+            Object.assign(user, profileData);
+            knownUsers[chatId] = Object.assign({}, knownUsers[chatId] || {}, profileData);
+            user.context = null;
+
+            await bot.sendMessage(chatId, `✅ ПІБ оновлено: ${profileData.name}`, {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(chatId),
+                    resize_keyboard: true
+                }
+            });
+        } catch (error) {
+            await bot.sendMessage(chatId, `❌ Не вдалося оновити ПІБ: ${error && error.message ? error.message : 'невідома помилка'}`);
+        }
+        return;
+    }
+
+    if (user.context === 'profile-edit-phone') {
+        if (matchesCommand(text, NAVIGATION_BUTTONS.menu, 'Повернутися в меню')) {
+            user.context = null;
+            await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(chatId),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (matchesCommand(text, NAVIGATION_BUTTONS.back, 'Назад')) {
+            user.context = 'profile-edit-menu';
+            await bot.sendMessage(chatId, 'Оберіть, що хочете змінити:', {
+                reply_markup: {
+                    keyboard: [
+                        [{ text: PROFILE_EDIT_BUTTONS.changeName }],
+                        [{ text: PROFILE_EDIT_BUTTONS.changePhone }],
+                        [{ text: NAVIGATION_BUTTONS.menu }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        const normalizedPhone = normalizeUaPhoneForRegistration(text);
+        if (!normalizedPhone) {
+            await bot.sendMessage(chatId, '❌ Некоректний номер. Введіть у форматі 380XXXXXXXXX або 0XXXXXXXXX.');
+            return;
+        }
+
+        const profileData = await resolveRegistrantFormData(chatId, user);
+        profileData.phone = normalizedPhone;
+        profileData.chatId = String(chatId || '');
+        profileData.username = String((user && user.username) || profileData.username || '').trim();
+
+        try {
+            await appendRegistrationRow(chatId, profileData);
+            Object.assign(user, profileData);
+            knownUsers[chatId] = Object.assign({}, knownUsers[chatId] || {}, profileData);
+            user.context = null;
+
+            await bot.sendMessage(chatId, `✅ Телефон оновлено: ${profileData.phone}`, {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(chatId),
+                    resize_keyboard: true
+                }
+            });
+        } catch (error) {
+            await bot.sendMessage(chatId, `❌ Не вдалося оновити телефон: ${error && error.message ? error.message : 'невідома помилка'}`);
+        }
         return;
     }
 
@@ -7123,7 +8149,7 @@ bot.on('message', async (msg) => {
             '🚨 <b>Допомога при насильстві</b>\n\nОберіть, що вам потрібно зараз:\n\n⚡ Негайна допомога і безпека\n☎️ Гарячі лінії\n🛑 Локальні служби у вашому районі\n⚖️ Правова та 🏥 медична допомога\n\nЯкщо є пряма загроза життю - телефонуйте 102.', {
             parse_mode: 'HTML',
             reply_markup: {
-                keyboard: buildViolenceHelpKeyboard(),
+                keyboard: buildViolenceHelpKeyboard(chatId),
                 resize_keyboard: true
             }
         });
@@ -7222,11 +8248,21 @@ bot.on('message', async (msg) => {
             return;
         }
 
+        if (matchesCommand(text, VIOLENCE_HELP_BUTTONS.coordinationAdministrativeHelp, 'Координація та адміністративна допомога') && !isAdminChatId(chatId)) {
+            await bot.sendMessage(chatId, 'Цей розділ доступний лише адміністратору.', {
+                reply_markup: {
+                    keyboard: buildViolenceHelpKeyboard(chatId),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
         if (violenceHelpMessages[text]) {
             await bot.sendMessage(chatId, violenceHelpMessages[text], {
                 parse_mode: 'HTML',
                 reply_markup: {
-                    keyboard: buildViolenceHelpKeyboard(),
+                    keyboard: buildViolenceHelpKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -7240,7 +8276,7 @@ bot.on('message', async (msg) => {
             delete user.selectedViolenceHelpDistrict;
             await bot.sendMessage(chatId, '🚨 Допомога при насильстві: оберіть потрібний розділ.', {
                 reply_markup: {
-                    keyboard: buildViolenceHelpKeyboard(),
+                    keyboard: buildViolenceHelpKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -7252,7 +8288,7 @@ bot.on('message', async (msg) => {
             delete user.selectedViolenceHelpDistrict;
             await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
                 reply_markup: {
-                    keyboard: getMainMenuKeyboard(),
+                    keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -7303,7 +8339,7 @@ bot.on('message', async (msg) => {
             user.context = null;
             await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
                 reply_markup: {
-                    keyboard: getMainMenuKeyboard(),
+                    keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -7496,7 +8532,7 @@ bot.on('message', async (msg) => {
             delete user.selectedViolenceHelpDistrict;
             await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
                 reply_markup: {
-                    keyboard: getMainMenuKeyboard(),
+                    keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -8379,7 +9415,7 @@ bot.on('message', async (msg) => {
             clearConsultationState(user);
             await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
                 reply_markup: {
-                    keyboard: getMainMenuKeyboard(),
+                    keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -8390,7 +9426,7 @@ bot.on('message', async (msg) => {
             clearConsultationState(user);
             await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
                 reply_markup: {
-                    keyboard: getMainMenuKeyboard(),
+                    keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -8561,7 +9597,7 @@ bot.on('message', async (msg) => {
             await bot.sendMessage(chatId,
                 '❌ Для запису на консультацію потрібно, щоб у профілі були заповнені ПІБ і номер телефону.\n\nОберіть «Афіша заходів», щоб завершити анкету.', {
                 reply_markup: {
-                    keyboard: getMainMenuKeyboard(),
+                    keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -8601,7 +9637,7 @@ bot.on('message', async (msg) => {
                 {
                 parse_mode: 'HTML',
                 reply_markup: {
-                    keyboard: getMainMenuKeyboard(),
+                    keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -8652,7 +9688,7 @@ bot.on('message', async (msg) => {
                 `❌ Не вдалося завершити запис на консультацію.\nСпробуйте ще раз пізніше.\n\nДеталі: ${error && error.message ? error.message : 'невідома помилка'}`,
                 {
                     reply_markup: {
-                        keyboard: getMainMenuKeyboard(),
+                        keyboard: getMainMenuKeyboard(chatId),
                         resize_keyboard: true
                     }
                 }
@@ -8707,9 +9743,15 @@ bot.on('message', async (msg) => {
         const seatsLeft = await getSeatsLeft(selectedEvent.id);
 
         if (seatsLeft <= 0) {
-            await bot.sendMessage(chatId, `На жаль, на захід "${selectedEvent.name}" місць уже немає.`, {
+            user.pendingReserveEventId = selectedEvent.id;
+            user.pendingReserveEventName = selectedEvent.name;
+            await bot.sendMessage(chatId, `На жаль, на захід "${selectedEvent.name}" місць уже немає.\n\nМожна записатись у резерв.`, {
                 reply_markup: {
-                    keyboard: getAfishaInstantRegistrationKeyboard(),
+                    keyboard: [
+                        [{ text: AFISHA_ACTION_BUTTONS.reserve }],
+                        [{ text: NAVIGATION_BUTTONS.backToDays }],
+                        [{ text: NAVIGATION_BUTTONS.menu }]
+                    ],
                     resize_keyboard: true
                 }
             });
@@ -8725,7 +9767,38 @@ bot.on('message', async (msg) => {
 
         user.currentSelectedEventName = selectedEvent.name;
         user.currentSelectedEventId = selectedEvent.id;
+        delete user.pendingReserveEventId;
+        delete user.pendingReserveEventName;
         await startSelectedEventsRegistration(chatId, user, { instantAfisha: true });
+        return;
+    }
+
+    if (text === AFISHA_ACTION_BUTTONS.reserve && user.pendingReserveEventId) {
+        const reserveEvent = getAllEvents().find((eventItem) => eventItem.id === user.pendingReserveEventId);
+        if (!reserveEvent) {
+            await bot.sendMessage(chatId, '❌ Захід для резерву не знайдено. Спробуйте обрати його з афіші ще раз.', {
+                reply_markup: {
+                    keyboard: getAfishaDaysKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            delete user.pendingReserveEventId;
+            delete user.pendingReserveEventName;
+            return;
+        }
+
+        user.afishaInstantMode = true;
+        user.selectedEventsList = [{
+            id: reserveEvent.id,
+            name: reserveEvent.name,
+            date: reserveEvent.date
+        }];
+        user.currentSelectedEventName = reserveEvent.name;
+        user.currentSelectedEventId = reserveEvent.id;
+        user.pendingReserveEventId = reserveEvent.id;
+        user.pendingReserveEventName = reserveEvent.name;
+
+        await startSelectedEventsRegistration(chatId, user, { instantAfisha: true, reserveMode: true });
         return;
     }
 
@@ -8943,7 +10016,7 @@ bot.on('message', async (msg) => {
             user.registrationMode = false;
             await bot.sendMessage(chatId, 'Запис на консультацію скасовано. Оберіть дію в меню.', {
                 reply_markup: {
-                    keyboard: getMainMenuKeyboard(),
+                    keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -8993,7 +10066,9 @@ bot.on('message', async (msg) => {
             return;
         }
         const eventButtons = avail.map(event => {
-            const buttonText = `${event.name} | ${formatEventDate(event.date)} | 💺 ${formatSeatsCount(event.seatsLeft)}`;
+            const registrationsLabel = `👥 ${formatPeopleCount(Math.max(0, Number(event.registrations) || 0))}`;
+            const reserveLabel = `🕓 ${formatPeopleCount(Math.max(0, Number(event.reserveCount) || 0))}`;
+            const buttonText = `${event.name} | ${formatEventDate(event.date)} | 💺 ${formatSeatsCount(event.seatsLeft)} | ${registrationsLabel} | ${reserveLabel}`;
             eventButtonMap[buttonText] = event.id;
             return [{ text: buttonText }];
         });
@@ -9011,6 +10086,8 @@ bot.on('message', async (msg) => {
     if (matchesCommand(text, NAVIGATION_BUTTONS.backToDays, 'Назад до вибору днів')) {
         delete user.selectedEventName;
         delete user.selectedEventId;
+        delete user.pendingReserveEventId;
+        delete user.pendingReserveEventName;
         delete user.eventButtonMap;
         user.context = 'afisha';
         await showAfishaDaysMenu(chatId);
@@ -9067,7 +10144,7 @@ bot.on('message', async (msg) => {
             clearConsultationState(user);
             await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
                 reply_markup: {
-                    keyboard: getMainMenuKeyboard(),
+                    keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -9090,7 +10167,7 @@ bot.on('message', async (msg) => {
             delete user.selectedViolenceHelpDistrict;
             await bot.sendMessage(chatId, '🚨 Допомога при насильстві: оберіть потрібний розділ.', {
                 reply_markup: {
-                    keyboard: buildViolenceHelpKeyboard(),
+                    keyboard: buildViolenceHelpKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -9101,7 +10178,7 @@ bot.on('message', async (msg) => {
             user.context = 'violence-help';
             await bot.sendMessage(chatId, '🚨 Допомога при насильстві: оберіть потрібний розділ.', {
                 reply_markup: {
-                    keyboard: buildViolenceHelpKeyboard(),
+                    keyboard: buildViolenceHelpKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -9141,7 +10218,7 @@ bot.on('message', async (msg) => {
         user.context = null;
         bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
             reply_markup: {
-                keyboard: getMainMenuKeyboard(),
+                keyboard: getMainMenuKeyboard(chatId),
                 resize_keyboard: true
             }
         });
@@ -9225,12 +10302,12 @@ bot.on('message', async (msg) => {
                 `📅 ${booking.dateText} о ${booking.timeText}\n\n` +
                 `Слот звільнено. Дякуємо, що попередили! 🩵`, {
                 parse_mode: 'HTML',
-                reply_markup: { keyboard: getMainMenuKeyboard(), resize_keyboard: true }
+                reply_markup: { keyboard: getMainMenuKeyboard(chatId), resize_keyboard: true }
             });
         } catch (err) {
             console.error('❌ Помилка скасування консультації:', err && err.message ? err.message : err);
             await bot.sendMessage(chatId, '❌ Не вдалося скасувати запис. Спробуйте пізніше.', {
-                reply_markup: { keyboard: getMainMenuKeyboard(), resize_keyboard: true }
+                reply_markup: { keyboard: getMainMenuKeyboard(chatId), resize_keyboard: true }
             });
         }
         return;
@@ -9240,7 +10317,7 @@ bot.on('message', async (msg) => {
         delete user.pendingCancelBooking;
         user.context = null;
         await bot.sendMessage(chatId, '👍 Запис залишено без змін.', {
-            reply_markup: { keyboard: getMainMenuKeyboard(), resize_keyboard: true }
+            reply_markup: { keyboard: getMainMenuKeyboard(chatId), resize_keyboard: true }
         });
         return;
     }
@@ -9329,7 +10406,7 @@ bot.on('message', async (msg) => {
         
         bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
             reply_markup: {
-                keyboard: getMainMenuKeyboard(),
+                keyboard: getMainMenuKeyboard(chatId),
                 resize_keyboard: true
             }
         });
@@ -9445,7 +10522,7 @@ bot.on('message', async (msg) => {
         }
         bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
             reply_markup: {
-                keyboard: getMainMenuKeyboard(),
+                keyboard: getMainMenuKeyboard(chatId),
                 resize_keyboard: true
             }
         });
@@ -9560,7 +10637,7 @@ bot.on('message', async (msg) => {
             user.registrationStarted = false;
             bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
                 reply_markup: {
-                    keyboard: getMainMenuKeyboard(),
+                    keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -9596,7 +10673,7 @@ bot.on('message', async (msg) => {
 
             await bot.sendMessage(chatId, 'Не зовсім зрозумілий запит. Будь ласка, оберіть потрібний розділ:', {
                 reply_markup: {
-                    keyboard: getMainMenuKeyboard(),
+                    keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -9614,7 +10691,7 @@ bot.on('message', async (msg) => {
 
             await bot.sendMessage(chatId, 'Не зовсім зрозумілий запит. Будь ласка, оберіть потрібний розділ:', {
                 reply_markup: {
-                    keyboard: getMainMenuKeyboard(),
+                    keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
                 }
             });
@@ -9629,7 +10706,7 @@ bot.on('message', async (msg) => {
 
             await bot.sendMessage(chatId, 'Не зовсім зрозумілий запит. Будь ласка, оберіть потрібний розділ:', {
                 reply_markup: {
-                    keyboard: getMainMenuKeyboard(),
+                    keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
                 }
             });

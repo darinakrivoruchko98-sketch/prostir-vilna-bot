@@ -12,24 +12,24 @@ async function appendRegistrationRow(chatId, user) {
     // B: Прізвище Ім'я По-батькові
     // C: Телефон
     // D: Дата народження
-    // E: Відвідування
-    // F: ВПО/МО
-    // G: Інвалідність/Суттєві проблеми
-    // H: Діти
+    // E: ВПО/МО
+    // F: Стан здоров'я
+    // G: Евакуаційний статус
+    // H: Вплив обстрілів
     // I: Зайнятість
-    // J: ГНЗ
+    // J: Категорія
     // K: Чат ID
     const values = [
         user.username || "",       // Колонка A: Ім'я акаунта
         user.name || "",           // Колонка B: ПІБ
         user.phone || "",          // Колонка C: Телефон
         user.birth || "",          // Колонка D: Дата народження
-        user.visited || "",        // Колонка E: Відвідування
-        user.status || "",         // Колонка F: ВПО/МО
-        user.health || "",         // Колонка G: Інвалідність/Суттєві проблеми
-        user.childrenCount || "",  // Колонка H: Діти
+        user.status || "",         // Колонка E: ВПО/МО
+        user.health || "",         // Колонка F: Стан здоров'я
+        user.evacuationStatus || "",  // Колонка G: Евакуаційний статус
+        user.shellingImpact || "",    // Колонка H: Вплив обстрілів
         user.employment || "",     // Колонка I: Зайнятість
-        user.gbvAffected || "",    // Колонка J: ГНЗ
+        user.beneficiaryCategory || "", // Колонка J: Категорія
         String(chatId)             // Колонка K: Чат ID
     ];
 
@@ -155,12 +155,12 @@ function parsePersonalDataRow(row) {
         name: cells[1] || '',
         phone: cells[2] || '',
         birth: cells[3] || '',
-        visited: cells[4] || '',
-        status: cells[5] || '',
-        health: cells[6] || '',
-        childrenCount: cells[7] || '',
+        status: cells[4] || '',
+        health: cells[5] || '',
+        evacuationStatus: cells[6] || '',
+        shellingImpact: cells[7] || '',
         employment: cells[8] || '',
-        gbvAffected: cells[9] || '',
+        beneficiaryCategory: cells[9] || '',
         chatId: cells[10] || ''
     };
     const legacy = {
@@ -168,13 +168,13 @@ function parsePersonalDataRow(row) {
         name: cells[0] || '',
         phone: cells[1] || '',
         birth: cells[2] || '',
-        visited: cells[3] || '',
         status: cells[4] || '',
         health: cells[5] || '',
+        evacuationStatus: '',
+        shellingImpact: '',
         chatId: cells[6] || '',
-        childrenCount: cells[8] || '',
         employment: cells[9] || '',
-        gbvAffected: cells[10] || ''
+        beneficiaryCategory: ''
     };
 
     return {
@@ -182,12 +182,12 @@ function parsePersonalDataRow(row) {
         name: current.name || legacy.name,
         phone: current.phone || legacy.phone,
         birth: current.birth || legacy.birth,
-        visited: current.visited || legacy.visited,
         status: current.status || legacy.status,
         health: current.health || legacy.health,
-        childrenCount: current.childrenCount || legacy.childrenCount,
+        evacuationStatus: current.evacuationStatus || legacy.evacuationStatus,
+        shellingImpact: current.shellingImpact || legacy.shellingImpact,
         employment: current.employment || legacy.employment,
-        gbvAffected: current.gbvAffected || legacy.gbvAffected,
+        beneficiaryCategory: current.beneficiaryCategory || legacy.beneficiaryCategory,
         chatId: current.chatId || legacy.chatId
     };
 }
