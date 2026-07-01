@@ -25,7 +25,7 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
     if (user.step === 3) {
         user.birth = text;
         user.step = 4;
-        bot.sendMessage(chatId, "📝 <b>Крок 4/9:</b> Ваш ВПО/МО статус:
+        bot.sendMessage(chatId, "📝 <b>Крок 4/11:</b> Ваш ВПО/МО статус:
 
 <b>Не ВПО, що постраждали від війни:</b> Громадяни, які живуть у рідних містах, але їхнє житло було зруйноване/пошкоджене, або вони отримали фізичні чи психологічні травми, втратили майно або джерело доходу внаслідок бойових дій.
 
@@ -46,7 +46,23 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
     if (user.step === 4) {
         user.status = text;
         user.step = 5;
-        bot.sendMessage(chatId, "📝 <b>Крок 5/9:</b> Стан здоров'я:", {
+        bot.sendMessage(chatId, "📝 <b>Крок 5/11:</b> Кількість дітей до 18 років:", {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: "0" }, { text: "1" }],
+                    [{ text: "2" }, { text: "3 і більше" }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return true;
+    }
+
+    if (user.step === 5) {
+        user.childrenCount = text;
+        user.step = 6;
+        bot.sendMessage(chatId, "📝 <b>Крок 6/11:</b> Стан здоров'я:", {
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: [
@@ -60,10 +76,10 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
         return true;
     }
 
-    if (user.step === 5) {
+    if (user.step === 6) {
         user.health = text;
-        user.step = 6;
-        bot.sendMessage(chatId, "📝 <b>Крок 6/9:</b> Евакуаційний статус особи:", {
+        user.step = 7;
+        bot.sendMessage(chatId, "📝 <b>Крок 7/11:</b> Евакуаційний статус особи:", {
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: [
@@ -78,10 +94,10 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
         return true;
     }
 
-    if (user.step === 6) {
+    if (user.step === 7) {
         user.evacuationStatus = text;
-        user.step = 7;
-        bot.sendMessage(chatId, "📝 <b>Крок 7/9:</b> Вплив обстрілів:", {
+        user.step = 8;
+        bot.sendMessage(chatId, "📝 <b>Крок 8/11:</b> Вплив обстрілів:", {
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: [
@@ -95,10 +111,10 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
         return true;
     }
 
-    if (user.step === 7) {
+    if (user.step === 8) {
         user.shellingImpact = text;
-        user.step = 8;
-        bot.sendMessage(chatId, "📝 <b>Крок 8/9:</b> Зайнятість:", {
+        user.step = 9;
+        bot.sendMessage(chatId, "📝 <b>Крок 9/11:</b> Зайнятість:", {
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: [
@@ -113,26 +129,10 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
         return true;
     }
 
-    if (user.step === 8) {
-        user.employment = text;
-        user.step = 9;
-        bot.sendMessage(chatId, "📝 <b>Крок 9/10:</b> Чи маєте ви досвід або потребу, пов'язану з ГЗН?", {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [
-                    [{ text: "Так" }, { text: "Ні" }],
-                    [{ text: "Поки не хочу відповідати" }]
-                ],
-                resize_keyboard: true
-            }
-        });
-        return true;
-    }
-
     if (user.step === 9) {
-        user.gzn = text;
+        user.employment = text;
         user.step = 10;
-        bot.sendMessage(chatId, "📝 <b>Крок 10/10:</b> До яких категорій належите?", {
+        bot.sendMessage(chatId, "📝 <b>Крок 10/11:</b> До яких категорій належите?", {
             parse_mode: 'HTML',
             reply_markup: {
                 keyboard: [
@@ -152,6 +152,22 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
 
     if (user.step === 10) {
         user.beneficiaryCategory = text;
+        user.step = 11;
+        bot.sendMessage(chatId, "📝 <b>Крок 11/11:</b> Чи маєте ви досвід або потребу, пов'язану з ГЗН?", {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: [
+                    [{ text: "Так" }, { text: "Ні" }],
+                    [{ text: "Поки не хочу відповідати" }]
+                ],
+                resize_keyboard: true
+            }
+        });
+        return true;
+    }
+
+    if (user.step === 11) {
+        user.gzn = text;
         try {
             await appendRegistrationRow(chatId, user);
             state.knownUsers[chatId] = {
@@ -159,6 +175,7 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
                 phone: user.phone,
                 birth: user.birth,
                 status: user.status,
+                childrenCount: user.childrenCount,
                 health: user.health,
                 evacuationStatus: user.evacuationStatus,
                 shellingImpact: user.shellingImpact,
@@ -201,7 +218,7 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
                 return true;
             }
 
-            user.step = 11;
+            user.step = 12;
             user.selectedEvents = [];
 
             bot.sendMessage(chatId, "✅ Ваші дані збережено! Натисніть «Далі», щоб обрати заходи.", {

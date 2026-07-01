@@ -3348,10 +3348,12 @@ function createEmptyFriendRegistrationDraft() {
         phone: '',
         birth: '',
         status: '',
+        childrenCount: '',
         health: '',
         evacuationStatus: '',
         shellingImpact: '',
         employment: '',
+        gzn: '',
         beneficiaryCategory: ''
     };
 }
@@ -3399,7 +3401,7 @@ async function startFriendRegistrationFlow(chatId, user) {
     user.context = null;
 
     await bot.sendMessage(chatId,
-        "👭 <b>Реєстрація подруги</b>\n\nСпочатку внесіть її дані, а потім оберемо заходи.\n\n📝 <b>Крок 1/10:</b> Введіть ПІБ подруги (Прізвище Ім'я По батькові):", {
+        "👭 <b>Реєстрація подруги</b>\n\nСпочатку внесіть її дані, а потім оберемо заходи.\n\n📝 <b>Крок 1/11:</b> Введіть ПІБ подруги (Прізвище Ім'я По батькові):", {
         parse_mode: 'HTML',
         reply_markup: {
             keyboard: [[{ text: "❌ Скасувати реєстрацію" }]],
@@ -3424,12 +3426,13 @@ function getMissingRegistrantStep(registrantData) {
         : !registrantData.phone ? 2
         : !registrantData.birth ? 3
         : !registrantData.status ? 4
-        : !registrantData.health ? 5
-    : !registrantData.evacuationStatus ? 6
-    : !registrantData.shellingImpact ? 7
-    : !registrantData.employment ? 8
-    : !registrantData.beneficiaryCategory ? 9
-    : !registrantData.gzn ? 10
+        : !registrantData.childrenCount ? 5
+        : !registrantData.health ? 6
+    : !registrantData.evacuationStatus ? 7
+    : !registrantData.shellingImpact ? 8
+    : !registrantData.employment ? 9
+    : !registrantData.beneficiaryCategory ? 10
+    : !registrantData.gzn ? 11
         : 0;
 }
 
@@ -3607,10 +3610,12 @@ async function startSelectedEventsRegistration(chatId, user, options = {}) {
         user.phone = registrantData.phone;
         user.birth = registrantData.birth;
         user.status = registrantData.status;
+        user.childrenCount = registrantData.childrenCount;
         user.health = registrantData.health;
         user.evacuationStatus = registrantData.evacuationStatus;
         user.shellingImpact = registrantData.shellingImpact;
         user.employment = registrantData.employment;
+        user.gzn = registrantData.gzn;
         user.beneficiaryCategory = registrantData.beneficiaryCategory;
     }
 
@@ -4104,12 +4109,13 @@ async function appendRegistrationRow(chatId, user) {
         user.phone || "",
         user.birth || "",
         user.status || "",
+        user.childrenCount || "",
         user.health || "",
         user.evacuationStatus || "",
         user.shellingImpact || "",
         user.employment || "",
-        user.gzn || "",
         user.beneficiaryCategory || "",
+        user.gzn || "",
         String(chatId || '')
     ];
 
@@ -4212,11 +4218,11 @@ async function appendRegistrationRow(chatId, user) {
             console.log(`\n📝 Спроба ${attempt}/${maxTries} запису в таблицю`);
             console.log(`Spreadsheet ID: ${PERSONAL_DATA_SPREADSHEET_ID}`);
             console.log(`Sheet Name: ${PERSONAL_DATA_SHEET_NAME}`);
-            console.log(`Range: ${PERSONAL_DATA_SHEET_NAME}!A:L`);
+            console.log(`Range: ${PERSONAL_DATA_SHEET_NAME}!A:M`);
             
             const existingResp = await sheetsClient.spreadsheets.values.get({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${PERSONAL_DATA_SHEET_NAME}!A:L`,
+                range: `${PERSONAL_DATA_SHEET_NAME}!A:M`,
             });
             const rows = existingResp.data.values || [];
             const existingRowNumber = findExistingRowByIdentity(rows);
@@ -4229,7 +4235,7 @@ async function appendRegistrationRow(chatId, user) {
 
             await sheetsClient.spreadsheets.values.update({
                 spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${PERSONAL_DATA_SHEET_NAME}!A${targetRow}:L${targetRow}`,
+                range: `${PERSONAL_DATA_SHEET_NAME}!A${targetRow}:M${targetRow}`,
                 valueInputOption: "RAW",
                 requestBody: { values: [valuesToWrite] }
             });
@@ -4249,11 +4255,11 @@ async function appendRegistrationRow(chatId, user) {
             const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
             if ((msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('sheet') ) && attempt === 1) {
                 try {
-                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:L (перший аркуш)');
+                    console.warn('appendRegistrationRow: попробую fallback-діапазон A:M (перший аркуш)');
 
                     const existingResp = await sheetsClient.spreadsheets.values.get({
                         spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                        range: "A:L",
+                        range: "A:M",
                     });
                     const rows = existingResp.data.values || [];
                     const existingRowNumber = findExistingRowByIdentity(rows);
@@ -4263,11 +4269,11 @@ async function appendRegistrationRow(chatId, user) {
 
                     await sheetsClient.spreadsheets.values.update({
                         spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                        range: `A${targetRow}:L${targetRow}`,
+                        range: `A${targetRow}:M${targetRow}`,
                         valueInputOption: "RAW",
                         requestBody: { values: [valuesToWrite] }
                     });
-                    console.log(`Записано в таблицю (fallback A:L, рядок ${targetRow}) ✅`);
+                    console.log(`Записано в таблицю (fallback A:M, рядок ${targetRow}) ✅`);
                     return;
                 } catch (e2) {
                     lastErr = e2;
@@ -4445,15 +4451,17 @@ async function resolveRegistrantFormData(chatId, user) {
         phone: String((user && user.phone) || '').trim(),
         birth: String((user && user.birth) || '').trim(),
         status: String((user && user.status) || '').trim(),
+        childrenCount: String((user && user.childrenCount) || '').trim(),
         health: String((user && user.health) || '').trim(),
         evacuationStatus: String((user && user.evacuationStatus) || '').trim(),
         shellingImpact: String((user && user.shellingImpact) || '').trim(),
         employment: String((user && user.employment) || '').trim(),
+        gzn: String((user && user.gzn) || '').trim(),
         beneficiaryCategory: String((user && user.beneficiaryCategory) || '').trim()
     };
 
     const hasAll = resolved.name && resolved.phone && resolved.birth && resolved.status && resolved.health &&
-        resolved.evacuationStatus && resolved.shellingImpact && resolved.employment && resolved.gzn && resolved.beneficiaryCategory;
+        resolved.childrenCount && resolved.evacuationStatus && resolved.shellingImpact && resolved.employment && resolved.gzn && resolved.beneficiaryCategory;
     if (hasAll || !sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID) {
         return resolved;
     }
@@ -4474,7 +4482,7 @@ async function resolveRegistrantFormData(chatId, user) {
     }
 
     const hasAllAfterSheet = resolved.name && resolved.phone && resolved.birth && resolved.status && resolved.health &&
-        resolved.evacuationStatus && resolved.shellingImpact && resolved.employment && resolved.gzn && resolved.beneficiaryCategory;
+        resolved.childrenCount && resolved.evacuationStatus && resolved.shellingImpact && resolved.employment && resolved.gzn && resolved.beneficiaryCategory;
     if (hasAllAfterSheet) {
         return resolved;
     }
@@ -4483,7 +4491,7 @@ async function resolveRegistrantFormData(chatId, user) {
     const inputPhone = normalizePhone(resolved.phone);
     const inputName = String(resolved.name || '').trim().toLowerCase();
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:L`, 'A:L'];
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:M`, 'A:M'];
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -4506,12 +4514,13 @@ async function resolveRegistrantFormData(chatId, user) {
                 if (!resolved.phone) resolved.phone = String(row[2] || '').trim();
                 if (!resolved.birth) resolved.birth = String(row[3] || '').trim();
                 if (!resolved.status) resolved.status = String(row[4] || '').trim();
-                if (!resolved.health) resolved.health = String(row[5] || '').trim();
-                if (!resolved.evacuationStatus) resolved.evacuationStatus = String(row[6] || '').trim();
-                if (!resolved.shellingImpact) resolved.shellingImpact = String(row[7] || '').trim();
-                if (!resolved.employment) resolved.employment = String(row[8] || '').trim();
-                if (!resolved.gzn) resolved.gzn = String(row[9] || '').trim();
+                if (!resolved.childrenCount) resolved.childrenCount = String(row[5] || '').trim();
+                if (!resolved.health) resolved.health = String(row[6] || '').trim();
+                if (!resolved.evacuationStatus) resolved.evacuationStatus = String(row[7] || '').trim();
+                if (!resolved.shellingImpact) resolved.shellingImpact = String(row[8] || '').trim();
+                if (!resolved.employment) resolved.employment = String(row[9] || '').trim();
                 if (!resolved.beneficiaryCategory) resolved.beneficiaryCategory = String(row[10] || '').trim();
+                if (!resolved.gzn) resolved.gzn = String(row[11] || '').trim();
 
                 return resolved;
             }
@@ -4535,13 +4544,14 @@ function parsePersonalDataRow(row) {
         phone: cells[2] || '',
         birth: cells[3] || '',
         status: cells[4] || '',
-        health: cells[5] || '',
-        evacuationStatus: cells[6] || '',
-        shellingImpact: cells[7] || '',
-        employment: cells[8] || '',
-        gzn: cells[9] || '',
+        childrenCount: cells[5] || '',
+        health: cells[6] || '',
+        evacuationStatus: cells[7] || '',
+        shellingImpact: cells[8] || '',
+        employment: cells[9] || '',
         beneficiaryCategory: cells[10] || '',
-        chatId: cells[11] || ''
+        gzn: cells[11] || '',
+        chatId: cells[12] || ''
     };
     const legacy = {
         username: cells[7] || cells[0] || '',
@@ -4549,13 +4559,14 @@ function parsePersonalDataRow(row) {
         phone: cells[1] || cells[2] || '',
         birth: cells[2] || cells[3] || '',
         status: cells[5] || cells[4] || '',
+        childrenCount: '',
         health: cells[6] || cells[5] || '',
         evacuationStatus: '',
         shellingImpact: '',
         employment: cells[9] || cells[8] || '',
         gzn: '',
         beneficiaryCategory: '',
-        chatId: cells[11] || cells[10] || cells[7] || cells[6] || ''
+        chatId: cells[12] || cells[11] || cells[10] || cells[7] || cells[6] || ''
     };
 
     return {
@@ -4564,6 +4575,7 @@ function parsePersonalDataRow(row) {
         phone: current.phone || legacy.phone,
         birth: current.birth || legacy.birth,
         status: current.status || legacy.status,
+        childrenCount: current.childrenCount || legacy.childrenCount,
         health: current.health || legacy.health,
         evacuationStatus: current.evacuationStatus || legacy.evacuationStatus,
         shellingImpact: current.shellingImpact || legacy.shellingImpact,
@@ -4692,12 +4704,13 @@ function showAfishaRegistrationForm(chatId, user) {
     if (step === 2) question = "<b>2. Телефон (380...)</b>";
     if (step === 3) question = "<b>3. Дата народження</b>";
     if (step === 4) question = "<b>4. ВПО/МО</b>";
-    if (step === 5) question = "<b>5. Стан здоров'я</b>";
-    if (step === 6) question = "<b>6. Евакуаційний статус</b>";
-    if (step === 7) question = "<b>7. Вплив обстрілів</b>";
-    if (step === 8) question = "<b>8. Зайнятість</b>";
-    if (step === 9) question = "<b>9. Категорія</b>";
-    if (step === 10) question = "<b>10. Чи маєте ви досвід або потребу, пов'язану з ГЗН?</b>";
+    if (step === 5) question = "<b>5. Кількість дітей до 18 років</b>";
+    if (step === 6) question = "<b>6. Стан здоров'я</b>";
+    if (step === 7) question = "<b>7. Евакуаційний статус</b>";
+    if (step === 8) question = "<b>8. Вплив обстрілів</b>";
+    if (step === 9) question = "<b>9. Зайнятість</b>";
+    if (step === 10) question = "<b>10. Категорія</b>";
+    if (step === 11) question = "<b>11. Чи маєте ви досвід або потребу, пов'язану з ГЗН?</b>";
 
     let keyboard = [[{ text: "❌ Скасувати реєстрацію" }]];
     if (step === 4) {
@@ -4709,12 +4722,18 @@ function showAfishaRegistrationForm(chatId, user) {
         ];
     } else if (step === 5) {
         keyboard = [
+            [{ text: "0" }, { text: "1" }],
+            [{ text: "2" }, { text: "3 і більше" }],
+            [{ text: "❌ Скасувати реєстрацію" }]
+        ];
+    } else if (step === 6) {
+        keyboard = [
             [{ text: "Ні, немає істотних проблем зі здоров'ям" }],
             [{ text: "Ні, але є істотні проблеми зі здоров'ям" }],
             [{ text: "Інвалідність" }],
             [{ text: "❌ Скасувати реєстрацію" }]
         ];
-    } else if (step === 6) {
+    } else if (step === 7) {
         keyboard = [
             [{ text: "Евакуація з попереднього місця проживання за останні 6 місяців" }],
             [{ text: "Перебування в транзитному центрі та/або в процесі евакуації" }],
@@ -4722,14 +4741,14 @@ function showAfishaRegistrationForm(chatId, user) {
             [{ text: "Нічого з зазначеного" }],
             [{ text: "❌ Скасувати реєстрацію" }]
         ];
-    } else if (step === 7) {
+    } else if (step === 8) {
         keyboard = [
             [{ text: "Так, постраждала протягом останніх 72 годин" }],
             [{ text: "Так, постраждала протягом останніх 3 місяців" }],
             [{ text: "Ні, не постраждала" }],
             [{ text: "❌ Скасувати реєстрацію" }]
         ];
-    } else if (step === 8) {
+    } else if (step === 9) {
         keyboard = [
             [{ text: "Працюю" }, { text: "Не працюю" }],
             [{ text: "Пенсіонерка" }, { text: "Студентка" }],
@@ -4737,18 +4756,18 @@ function showAfishaRegistrationForm(chatId, user) {
             [{ text: "Волонтерка" }],
             [{ text: "❌ Скасувати реєстрацію" }]
         ];
-    } else if (step === 9) {
+    } else if (step === 10) {
         keyboard = [
             [{ text: "Вагітна" }, { text: "Одинока мати" }],
             [{ text: "Багатодітна мати (3 і більше дітей)" }],
             [{ text: "Ветеранка" }],
             [{ text: "Представниця сім'ї загиблого воїна" }],
             [{ text: "Представниця сім'ї ветерана" }],
-            [{ text: "Особа у складних життєвих обставинах" }],
+            [{ text: "Особа у складних життєвих обставинах (юридичне підтвердження статусу не потрібно)" }],
             [{ text: "Нічого із вищезазначеного" }],
             [{ text: "❌ Скасувати реєстрацію" }]
         ];
-    } else if (step === 10) {
+    } else if (step === 11) {
         keyboard = [
             [{ text: "Так" }, { text: "Ні" }],
             [{ text: "Поки не хочу відповідати" }],
@@ -6189,7 +6208,7 @@ async function processParsedEvents(parsedEvents) {
                     const name = row[1];
                     const phone = row[2];
 
-                    const directChatId = parsePositiveChatId(row[11]) || parsePositiveChatId(row[10]) || parsePositiveChatId(row[6]);
+                    const directChatId = parsePositiveChatId(row[12]) || parsePositiveChatId(row[11]) || parsePositiveChatId(row[10]) || parsePositiveChatId(row[6]);
                     const usernameKey = normalizeUsernameForBroadcast(username);
                     const phoneKey = normalizePhoneForBroadcast(phone);
                     const nameKey = normalizeNameForBroadcast(name);
@@ -6442,7 +6461,7 @@ async function processParsedEvents(parsedEvents) {
             return false;
         }
 
-        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:L`, 'A:L'];
+        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:M`, 'A:M'];
 
         for (const range of rangesToTry) {
             try {
@@ -6459,7 +6478,7 @@ async function processParsedEvents(parsedEvents) {
 
                 for (let i = 1; i < rows.length; i++) {
                     const row = rows[i] || [];
-                    const rowChatId = parsePositiveChatId(row[11]) || parsePositiveChatId(row[10]) || parsePositiveChatId(row[6]);
+                    const rowChatId = parsePositiveChatId(row[12]) || parsePositiveChatId(row[11]) || parsePositiveChatId(row[10]) || parsePositiveChatId(row[6]);
                     if (rowChatId === targetChatId) {
                         return false;
                     }
@@ -6500,7 +6519,7 @@ async function processParsedEvents(parsedEvents) {
 
                 await sheetsClient.spreadsheets.values.update({
                     spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                    range: `${PERSONAL_DATA_SHEET_NAME}!K${bestRowNumber}:K${bestRowNumber}`,
+                    range: `${PERSONAL_DATA_SHEET_NAME}!M${bestRowNumber}:M${bestRowNumber}`,
                     valueInputOption: 'RAW',
                     requestBody: {
                         values: [[String(targetChatId)]]
@@ -6925,7 +6944,7 @@ bot.on('message', async (msg) => {
                 chatId: String(chatId)
             };
             
-            await bot.sendMessage(chatId, "Профіль не знайдено. 😔\n\nРозпочинаємо реєстрацію...\n\n📝 <b>Крок 1/9:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
+            await bot.sendMessage(chatId, "Профіль не знайдено. 😔\n\nРозпочинаємо реєстрацію...\n\n📝 <b>Крок 1/11:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -7310,7 +7329,7 @@ bot.on('message', async (msg) => {
     // === ОБРОБКА РЕЄСТРАЦІЙНОЇ ФОРМИ (КРОКИ 1-6) ===
     // ВАЖЛИВО: цей блок повинен бути ПЕРЕД всіма іншими обробниками меню!
     const registrationStep = Number(user.step);
-    if (user.registrationMode || (Number.isInteger(registrationStep) && registrationStep >= 1 && registrationStep <= 9)) {
+    if (user.registrationMode || (Number.isInteger(registrationStep) && registrationStep >= 1 && registrationStep <= 11)) {
         // Відновлюємо режим форми, якщо прапорець загубився, але крок лишився
         user.registrationMode = true;
         user.step = registrationStep;
@@ -7334,8 +7353,8 @@ bot.on('message', async (msg) => {
             registrationDraft.name = text;
             user.step = 2;
             const phonePrompt = isFriendRegistrationMode(user)
-                ? "📝 <b>Крок 2/9:</b> Введіть <b>номер телефону подруги</b> (формат: 380...)"
-                : "📝 <b>Крок 2/9:</b> Введіть ваш <b>номер телефону</b> (формат: 380...)";
+                ? "📝 <b>Крок 2/11:</b> Введіть <b>номер телефону подруги</b> (формат: 380...)"
+                : "📝 <b>Крок 2/11:</b> Введіть ваш <b>номер телефону</b> (формат: 380...)";
 
             await bot.sendMessage(chatId, phonePrompt, {
                 parse_mode: 'HTML',
@@ -7368,8 +7387,8 @@ bot.on('message', async (msg) => {
             registrationDraft.phone = normalizedPhone;
             user.step = 3;
             const birthPrompt = isFriendRegistrationMode(user)
-                ? "📝 <b>Крок 3/9:</b> Введіть <b>дату народження подруги</b> (формат: ДД.ММ.РРРР)"
-                : "📝 <b>Крок 3/9:</b> Введіть вашу <b>дату народження</b> (формат: ДД.ММ.РРРР)";
+                ? "📝 <b>Крок 3/11:</b> Введіть <b>дату народження подруги</b> (формат: ДД.ММ.РРРР)"
+                : "📝 <b>Крок 3/11:</b> Введіть вашу <b>дату народження</b> (формат: ДД.ММ.РРРР)";
 
             await bot.sendMessage(chatId, birthPrompt, {
                 parse_mode: 'HTML',
@@ -7402,8 +7421,8 @@ bot.on('message', async (msg) => {
             registrationDraft.birth = normalizedBirth;
             user.step = 4;
             const statusPrompt = isFriendRegistrationMode(user)
-                ? "📝 <b>Крок 4/9:</b> ВПО/МО статус подруги:\n\n<b>Не ВПО, що постраждали від війни:</b> Громадяни, які живуть у рідних містах, але їхнє житло було зруйноване/пошкоджене, або вони отримали фізичні чи психологічні травми, втратили майно або джерело доходу внаслідок бойових дій.\n\n<b>Не ВПО, що не постраждали від війни:</b> Люди, які проживають у відносно безпечних регіонах, чиє майно, здоров'я та фінансовий стан не зазнали прямого впливу бойових дій."
-                : "📝 <b>Крок 4/9:</b> Ваш ВПО/МО статус:\n\n<b>Не ВПО, що постраждали від війни:</b> Громадяни, які живуть у рідних містах, але їхнє житло було зруйноване/пошкоджене, або вони отримали фізичні чи психологічні травми, втратили майно або джерело доходу внаслідок бойових дій.\n\n<b>Не ВПО, що не постраждали від війни:</b> Люди, які проживають у відносно безпечних регіонах, чиє майно, здоров'я та фінансовий стан не зазнали прямого впливу бойових дій.";
+                ? "📝 <b>Крок 4/11:</b> ВПО/МО статус подруги:\n\n<b>Не ВПО, що постраждали від війни:</b> Громадяни, які живуть у рідних містах, але їхнє житло було зруйноване/пошкоджене, або вони отримали фізичні чи психологічні травми, втратили майно або джерело доходу внаслідок бойових дій.\n\n<b>Не ВПО, що не постраждали від війни:</b> Люди, які проживають у відносно безпечних регіонах, чиє майно, здоров'я та фінансовий стан не зазнали прямого впливу бойових дій."
+                : "📝 <b>Крок 4/11:</b> Ваш ВПО/МО статус:\n\n<b>Не ВПО, що постраждали від війни:</b> Громадяни, які живуть у рідних містах, але їхнє житло було зруйноване/пошкоджене, або вони отримали фізичні чи психологічні травми, втратили майно або джерело доходу внаслідок бойових дій.\n\n<b>Не ВПО, що не постраждали від війни:</b> Люди, які проживають у відносно безпечних регіонах, чиє майно, здоров'я та фінансовий стан не зазнали прямого впливу бойових дій.";
 
             await bot.sendMessage(chatId, statusPrompt, {
                 parse_mode: 'HTML',
@@ -7440,17 +7459,16 @@ bot.on('message', async (msg) => {
 
             registrationDraft.status = text;
             user.step = 5;
-            const healthPrompt = isFriendRegistrationMode(user)
-                ? "📝 <b>Крок 5/9:</b> Стан здоров'я подруги:"
-                : "📝 <b>Крок 5/9:</b> Стан здоров'я:";
+            const childrenPrompt = isFriendRegistrationMode(user)
+                ? "📝 <b>Крок 5/11:</b> Кількість дітей подруги до 18 років:"
+                : "📝 <b>Крок 5/11:</b> Кількість дітей до 18 років:";
 
-            await bot.sendMessage(chatId, healthPrompt, {
+            await bot.sendMessage(chatId, childrenPrompt, {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
-                        [{ text: "Ні, немає істотних проблем зі здоров'ям" }],
-                        [{ text: "Ні, але є істотні проблеми зі здоров'ям" }],
-                        [{ text: "Інвалідність" }],
+                        [{ text: "0" }, { text: "1" }],
+                        [{ text: "2" }, { text: "3 і більше" }],
                         [{ text: "❌ Скасувати реєстрацію" }]
                     ],
                     resize_keyboard: true
@@ -7460,19 +7478,14 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 5) {
-            const healthOptions = [
-                "Ні, немає істотних проблем зі здоров'ям",
-                "Ні, але є істотні проблеми зі здоров'ям",
-                'Інвалідність'
-            ];
-            if (!healthOptions.includes(text)) {
-                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть варіант стану здоров'я кнопками.", {
+            const childrenOptions = ['0', '1', '2', '3 і більше'];
+            if (!childrenOptions.includes(text)) {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть кількість дітей кнопками.", {
                     parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [
-                            [{ text: "Ні, немає істотних проблем зі здоров'ям" }],
-                            [{ text: "Ні, але є істотні проблеми зі здоров'ям" }],
-                            [{ text: "Інвалідність" }],
+                            [{ text: "0" }, { text: "1" }],
+                            [{ text: "2" }, { text: "3 і більше" }],
                             [{ text: "❌ Скасувати реєстрацію" }]
                         ],
                         resize_keyboard: true
@@ -7481,20 +7494,19 @@ bot.on('message', async (msg) => {
                 return;
             }
 
-            registrationDraft.health = text;
+            registrationDraft.childrenCount = text;
             user.step = 6;
-            const evacuationPrompt = isFriendRegistrationMode(user)
-                ? "📝 <b>Крок 6/9:</b> Евакуаційний статус подруги:"
-                : "📝 <b>Крок 6/9:</b> Евакуаційний статус особи:";
+            const healthPrompt = isFriendRegistrationMode(user)
+                ? "📝 <b>Крок 6/11:</b> Стан здоров'я подруги:"
+                : "📝 <b>Крок 6/11:</b> Стан здоров'я:";
 
-            await bot.sendMessage(chatId, evacuationPrompt, {
+            await bot.sendMessage(chatId, healthPrompt, {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
-                        [{ text: "Евакуація з попереднього місця проживання за останні 6 місяців" }],
-                        [{ text: "Перебування в транзитному центрі та/або в процесі евакуації" }],
-                        [{ text: "Готуюсь до евакуації" }],
-                        [{ text: "Нічого з зазначеного" }],
+                        [{ text: "Ні, немає істотних проблем зі здоров'ям" }],
+                        [{ text: "Ні, але є істотні проблеми зі здоров'ям" }],
+                        [{ text: "Інвалідність" }],
                         [{ text: "❌ Скасувати реєстрацію" }]
                     ],
                     resize_keyboard: true
@@ -7527,16 +7539,17 @@ bot.on('message', async (msg) => {
                 return;
             }
 
-            registrationDraft.evacuationStatus = text;
+            registrationDraft.health = text;
             user.step = 7;
 
-            await bot.sendMessage(chatId, "📝 <b>Крок 7/9:</b> Чи вважаєте себе такою, що прямо або опосередковано постраждала від обстрілів протягом останніх 72 годин або останніх 3 місяців?\n\nПриклади опосередкованого впливу: перебої в електропостачанні, втрата роботи, зміна звичного способу життя та інше.", {
+            await bot.sendMessage(chatId, "📝 <b>Крок 7/11:</b> Евакуаційний статус особи:", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
-                        [{ text: "Так, постраждала протягом останніх 72 годин" }],
-                        [{ text: "Так, постраждала протягом останніх 3 місяців" }],
-                        [{ text: "Ні, не постраждала" }],
+                        [{ text: "Евакуація з попереднього місця проживання за останні 6 місяців" }],
+                        [{ text: "Перебування в транзитному центрі та/або в процесі евакуації" }],
+                        [{ text: "Готуюсь до евакуації" }],
+                        [{ text: "Нічого з зазначеного" }],
                         [{ text: "❌ Скасувати реєстрацію" }]
                     ],
                     resize_keyboard: true
@@ -7567,17 +7580,16 @@ bot.on('message', async (msg) => {
                 return;
             }
 
-            registrationDraft.shellingImpact = text;
+            registrationDraft.evacuationStatus = text;
             user.step = 8;
 
-            await bot.sendMessage(chatId, "📝 <b>Крок 8/9:</b> Зайнятість:", {
+            await bot.sendMessage(chatId, "📝 <b>Крок 8/11:</b> Чи вважаєте себе такою, що прямо або опосередковано постраждала від обстрілів протягом останніх 72 годин або останніх 3 місяців?\n\nПриклади опосередкованого впливу: перебої в електропостачанні, втрата роботи, зміна звичного способу життя та інше.", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
-                        [{ text: "Працюю" }, { text: "Не працюю" }],
-                        [{ text: "Пенсіонерка" }, { text: "Студентка" }],
-                        [{ text: "Школярка" }, { text: "ФОП" }],
-                        [{ text: "Волонтерка" }],
+                        [{ text: "Так, постраждала протягом останніх 72 годин" }],
+                        [{ text: "Так, постраждала протягом останніх 3 місяців" }],
+                        [{ text: "Ні, не постраждала" }],
                         [{ text: "❌ Скасувати реєстрацію" }]
                     ],
                     resize_keyboard: true
@@ -7605,15 +7617,17 @@ bot.on('message', async (msg) => {
                 return;
             }
 
-            registrationDraft.employment = text;
+            registrationDraft.shellingImpact = text;
             user.step = 9;
 
-            await bot.sendMessage(chatId, "📝 <b>Крок 9/10:</b> Чи маєте ви досвід або потребу, пов'язану з ГЗН?", {
+            await bot.sendMessage(chatId, "📝 <b>Крок 9/11:</b> Зайнятість:", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
-                        [{ text: "Так" }, { text: "Ні" }],
-                        [{ text: "Поки не хочу відповідати" }],
+                        [{ text: "Працюю" }, { text: "Не працюю" }],
+                        [{ text: "Пенсіонерка" }, { text: "Студентка" }],
+                        [{ text: "Школярка" }, { text: "ФОП" }],
+                        [{ text: "Волонтерка" }],
                         [{ text: "❌ Скасувати реєстрацію" }]
                     ],
                     resize_keyboard: true
@@ -7623,14 +7637,16 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 9) {
-            const gznOptions = ['Так', 'Ні', 'Поки не хочу відповідати'];
-            if (!gznOptions.includes(text)) {
-                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть варіант кнопками.", {
+            const employmentOptions = ['Працюю', 'Не працюю', 'Пенсіонерка', 'Студентка', 'Школярка', 'ФОП', 'Волонтерка'];
+            if (!employmentOptions.includes(text)) {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть зайнятість кнопками.", {
                     parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [
-                            [{ text: "Так" }, { text: "Ні" }],
-                            [{ text: "Поки не хочу відповідати" }],
+                            [{ text: "Працюю" }, { text: "Не працюю" }],
+                            [{ text: "Пенсіонерка" }, { text: "Студентка" }],
+                            [{ text: "Школярка" }, { text: "ФОП" }],
+                            [{ text: "Волонтерка" }],
                             [{ text: "❌ Скасувати реєстрацію" }]
                         ],
                         resize_keyboard: true
@@ -7639,10 +7655,34 @@ bot.on('message', async (msg) => {
                 return;
             }
 
-            registrationDraft.beneficiaryCategory = text;
+            registrationDraft.employment = text;
             user.step = 10;
 
-            await bot.sendMessage(chatId, "📝 <b>Крок 10/10:</b> Чи маєте ви досвід або потребу, пов'язану з ГЗН?", {
+            await bot.sendMessage(chatId, "📝 <b>Крок 10/11:</b> До яких категорій належить бенефіціарка?", {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: "Вагітна" }],
+                        [{ text: "Одинока мати" }],
+                        [{ text: "Багатодітна мати (3 і більше дітей)" }],
+                        [{ text: "Ветеранка" }],
+                        [{ text: "Представниця сім'ї загиблого воїна" }],
+                        [{ text: "Представниця сім'ї ветерана" }],
+                        [{ text: "Особа у складних життєвих обставинах (юридичне підтвердження статусу не потрібно)" }],
+                        [{ text: "Нічого із вищезазначеного" }],
+                        [{ text: "❌ Скасувати реєстрацію" }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        if (user.step === 10) {
+            registrationDraft.beneficiaryCategory = text;
+            user.step = 11;
+
+            await bot.sendMessage(chatId, "📝 <b>Крок 11/11:</b> Чи маєте ви досвід або потребу, пов'язану з ГЗН?", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -7656,7 +7696,7 @@ bot.on('message', async (msg) => {
             return;
         }
 
-        if (user.step === 10) {
+        if (user.step === 11) {
             registrationDraft.gzn = text;
 
             try {
@@ -7667,6 +7707,7 @@ bot.on('message', async (msg) => {
                     phone: registrationDraft.phone,
                     birth: registrationDraft.birth,
                     status: registrationDraft.status,
+                    childrenCount: registrationDraft.childrenCount,
                     health: registrationDraft.health,
                     evacuationStatus: registrationDraft.evacuationStatus,
                     shellingImpact: registrationDraft.shellingImpact,
@@ -7689,6 +7730,7 @@ bot.on('message', async (msg) => {
                         phone: registrationDraft.phone,
                         birth: registrationDraft.birth,
                         status: registrationDraft.status,
+                        childrenCount: registrationDraft.childrenCount,
                         health: registrationDraft.health,
                         evacuationStatus: registrationDraft.evacuationStatus,
                         shellingImpact: registrationDraft.shellingImpact,
@@ -7788,6 +7830,7 @@ bot.on('message', async (msg) => {
                     phone: registrationDraft.phone,
                     birth: registrationDraft.birth,
                     status: registrationDraft.status,
+                    childrenCount: registrationDraft.childrenCount,
                     health: registrationDraft.health,
                     evacuationStatus: registrationDraft.evacuationStatus,
                     shellingImpact: registrationDraft.shellingImpact,

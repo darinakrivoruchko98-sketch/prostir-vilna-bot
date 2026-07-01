@@ -105,7 +105,7 @@ function registerHandlers(bot, GROUP_ID) {
             return;
         }
 
-        if (text === "Обрати ще захід" && user.step === 11) {
+        if (text === "Обрати ще захід" && user.step === 12) {
             await handleChooseMore(bot, chatId, user);
             return;
         }
@@ -121,18 +121,18 @@ function registerHandlers(bot, GROUP_ID) {
         }
 
         // Personal data steps 1-9
-        if (user.step >= 1 && user.step <= 10) {
+        if (user.step >= 1 && user.step <= 11) {
             const handled = await handlePersonalDataStep(bot, chatId, text, user);
             if (handled) return;
         }
 
         // Коли натиснули "Далі" після вводу особистих даних
-        if (user.step === 11 && text === "Далі") {
+        if (user.step === 12 && text === "Далі") {
             await handleDali(bot, chatId, user);
             return;
         }
 
-        if (user.step === 11) {
+        if (user.step === 12) {
             // Завершить реєстрацію
             if (text === "✅ Завершити") {
                 await handleFinish(bot, chatId, user);

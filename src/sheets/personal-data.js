@@ -12,25 +12,27 @@ async function appendRegistrationRow(chatId, user) {
     // C: Телефон
     // D: Дата народження
     // E: ВПО/МО
-    // F: Стан здоров'я
-    // G: Евакуаційний статус
-    // H: Вплив обстрілів
-    // I: Зайнятість
-    // J: ГЗН
+    // F: Кількість дітей до 18 років
+    // G: Стан здоров'я
+    // H: Евакуаційний статус
+    // I: Вплив обстрілів
+    // J: Зайнятість
     // K: Категорія
-    // L: Чат ID
+    // L: ГЗН
+    // M: Чат ID
     const values = [
         user.username || '',
         user.name || '',
         user.phone || '',
         user.birth || '',
         user.status || '',
+        user.childrenCount || '',
         user.health || '',
         user.evacuationStatus || '',
         user.shellingImpact || '',
         user.employment || '',
-        user.gzn || '',
         user.beneficiaryCategory || '',
+        user.gzn || '',
         String(chatId)
     ];
 
@@ -66,7 +68,7 @@ async function appendRegistrationRow(chatId, user) {
             console.log(`\n📝 Спроба ${attempt}/${maxTries}: Читання листа "${config.PERSONAL_DATA_SHEET_NAME}"...`);
             const existingResp = await state.sheetsClient.spreadsheets.values.get({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${config.PERSONAL_DATA_SHEET_NAME}!A:L`
+                range: `${config.PERSONAL_DATA_SHEET_NAME}!A:M`
             });
             const rows = existingResp.data.values || [];
             console.log(`✅ Лист прочитаний. Рядків: ${rows.length}`);
@@ -76,7 +78,7 @@ async function appendRegistrationRow(chatId, user) {
 
             await state.sheetsClient.spreadsheets.values.update({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${config.PERSONAL_DATA_SHEET_NAME}!A${targetRow}:L${targetRow}`,
+                range: `${config.PERSONAL_DATA_SHEET_NAME}!A${targetRow}:M${targetRow}`,
                 valueInputOption: 'RAW',
                 requestBody: { values: [values] }
             });
@@ -102,26 +104,26 @@ async function appendRegistrationRow(chatId, user) {
             const msg = errorMsg.toLowerCase();
             if ((msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('sheet')) && attempt === 1) {
                 try {
-                    console.warn('⚠️  Спроба fallback-діапазону A:L (перший аркуш)...');
+                    console.warn('⚠️  Спроба fallback-діапазону A:M (перший аркуш)...');
 
                     const existingResp = await state.sheetsClient.spreadsheets.values.get({
                         spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                        range: 'A:L'
+                        range: 'A:M'
                     });
                     const rows = existingResp.data.values || [];
                     const targetRow = findFirstFreeRow(rows);
 
                     await state.sheetsClient.spreadsheets.values.update({
                         spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                        range: `A${targetRow}:L${targetRow}`,
+                        range: `A${targetRow}:M${targetRow}`,
                         valueInputOption: 'RAW',
                         requestBody: { values: [values] }
                     });
-                    console.log(`✅ Записано в таблицю (fallback A:L, рядок ${targetRow}) ✅\n`);
+                    console.log(`✅ Записано в таблицю (fallback A:M, рядок ${targetRow}) ✅\n`);
                     return;
                 } catch (e2) {
                     lastErr = e2;
-                    console.error('❌ Fallback append to A:L failed:', e2 && e2.message ? e2.message : e2);
+                    console.error('❌ Fallback append to A:M failed:', e2 && e2.message ? e2.message : e2);
                 }
             }
 
@@ -146,20 +148,21 @@ async function appendRegistrationRow(chatId, user) {
 
 function parsePersonalDataRow(row) {
     const cells = (row || []).map((cell) => String(cell || '').trim());
-    const hasLColumns = cells.length > 11;
+    const hasMColumns = cells.length > 12;
     const current = {
         username: cells[0] || '',
         name: cells[1] || '',
         phone: cells[2] || '',
         birth: cells[3] || '',
         status: cells[4] || '',
-        health: cells[5] || '',
-        evacuationStatus: cells[6] || '',
-        shellingImpact: cells[7] || '',
-        employment: cells[8] || '',
-        gzn: cells[9] || '',
-        beneficiaryCategory: hasLColumns ? (cells[10] || '') : (cells[9] || ''),
-        chatId: hasLColumns ? (cells[11] || '') : (cells[10] || '')
+        childrenCount: hasMColumns ? (cells[5] || '') : '',
+        health: hasMColumns ? (cells[6] || '') : (cells[5] || ''),
+        evacuationStatus: hasMColumns ? (cells[7] || '') : (cells[6] || ''),
+        shellingImpact: hasMColumns ? (cells[8] || '') : (cells[7] || ''),
+        employment: hasMColumns ? (cells[9] || '') : (cells[8] || ''),
+        beneficiaryCategory: hasMColumns ? (cells[10] || '') : (cells[10] || cells[9] || ''),
+        gzn: hasMColumns ? (cells[11] || '') : (cells[9] || ''),
+        chatId: hasMColumns ? (cells[12] || '') : (cells[11] || cells[10] || '')
     };
     const legacy = {
         username: cells[7] || '',
@@ -167,6 +170,7 @@ function parsePersonalDataRow(row) {
         phone: cells[1] || '',
         birth: cells[2] || '',
         status: cells[4] || '',
+        childrenCount: '',
         health: cells[5] || '',
         evacuationStatus: '',
         shellingStatus: '',
@@ -182,6 +186,7 @@ function parsePersonalDataRow(row) {
         phone: current.phone || legacy.phone,
         birth: current.birth || legacy.birth,
         status: current.status || legacy.status,
+        childrenCount: current.childrenCount || legacy.childrenCount,
         health: current.health || legacy.health,
         evacuationStatus: current.evacuationStatus || legacy.evacuationStatus,
         shellingImpact: current.shellingImpact || legacy.shellingImpact,
@@ -197,12 +202,12 @@ async function findUserByChatId(chatId) {
 
     const ranges = [];
     if (config.PERSONAL_DATA_SHEET_NAME) {
-        ranges.push(`${config.PERSONAL_DATA_SHEET_NAME}!A:L`);
-        ranges.push(`'${config.PERSONAL_DATA_SHEET_NAME}'!A:L`);
+        ranges.push(`${config.PERSONAL_DATA_SHEET_NAME}!A:M`);
+        ranges.push(`'${config.PERSONAL_DATA_SHEET_NAME}'!A:M`);
     }
-    ranges.push('Зареєстровані!A:L');
-    ranges.push("'Зареєстровані'!A:L");
-    ranges.push('A:L');
+    ranges.push('Зареєстровані!A:M');
+    ranges.push("'Зареєстровані'!A:M");
+    ranges.push('A:M');
 
     const chatIdStr = String(chatId).trim();
 
@@ -215,7 +220,7 @@ async function findUserByChatId(chatId) {
             const rows = resp.data.values || [];
             for (let i = rows.length - 1; i >= 0; i--) {
                 const row = rows[i] || [];
-                const rowChatId = String(row[11] || row[10] || '').trim();
+                const rowChatId = String(row[12] || row[11] || row[10] || '').trim();
                 const rowLegacyChatId = String(row[6] || '').trim();
                 const rowLegacyUsernameAsChatId = String(row[7] || '').trim();
                 if (rowChatId === chatIdStr || rowLegacyChatId === chatIdStr || rowLegacyUsernameAsChatId === chatIdStr) {
