@@ -3135,6 +3135,19 @@ async function promoteFirstReserveRegistrantToRegistration(event) {
     return true;
 }
 
+async function promoteReserveRegistrantsForAvailableSeats(event) {
+    if (!event) {
+        return false;
+    }
+
+    let promotedAny = false;
+    while (await promoteFirstReserveRegistrantToRegistration(event)) {
+        promotedAny = true;
+    }
+
+    return promotedAny;
+}
+
 async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, existingNote) {
     const registrants = parseRegistrantsFromNote(existingNote);
 
@@ -4080,6 +4093,10 @@ async function loadEventsFromSheet() {
 
         if (cancelledEvents.length > 0) {
             await notifyUsersAboutCancelledEvents(cancelledEvents);
+        }
+
+        for (const event of events) {
+            await promoteReserveRegistrantsForAvailableSeats(event);
         }
 
         console.log(`✅ Розклад завантажено з Sheets (${events.length} заходів)`);
