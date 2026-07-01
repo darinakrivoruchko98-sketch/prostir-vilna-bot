@@ -4700,17 +4700,29 @@ function showAfishaRegistrationForm(chatId, user) {
     const step = user.step && user.step > 0 ? user.step : 1;
     user.step = step;
 
-    let question = "<b>1. Прізвище Ім'я По-батькові</b>";
-    if (step === 2) question = "<b>2. Телефон (380...)</b>";
-    if (step === 3) question = "<b>3. Дата народження</b>";
-    if (step === 4) question = "<b>4. ВПО/МО</b>";
-    if (step === 5) question = "<b>5. Кількість дітей до 18 років</b>";
-    if (step === 6) question = "<b>6. Стан здоров'я</b>";
-    if (step === 7) question = "<b>7. Евакуаційний статус</b>";
-    if (step === 8) question = "<b>8. Вплив обстрілів</b>";
-    if (step === 9) question = "<b>9. Зайнятість</b>";
-    if (step === 10) question = "<b>10. Категорія</b>";
-    if (step === 11) question = "<b>11. Чи маєте ви досвід або потребу, пов'язану з ГЗН?</b>";
+    let question = isFriendRegistrationMode(user)
+        ? "📝 <b>Крок 1/11:</b> Введіть ПІБ подруги (Прізвище Ім'я По батькові):"
+        : "📝 <b>Крок 1/11:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):";
+    if (step === 2) question = isFriendRegistrationMode(user)
+        ? "📝 <b>Крок 2/11:</b> Введіть <b>номер телефону подруги</b> (формат: 380...)"
+        : "📝 <b>Крок 2/11:</b> Введіть ваш <b>номер телефону</b> (формат: 380...)";
+    if (step === 3) question = isFriendRegistrationMode(user)
+        ? "📝 <b>Крок 3/11:</b> Введіть <b>дату народження подруги</b> (формат: ДД.ММ.РРРР)"
+        : "📝 <b>Крок 3/11:</b> Введіть вашу <b>дату народження</b> (формат: ДД.ММ.РРРР)";
+    if (step === 4) question = isFriendRegistrationMode(user)
+        ? "📝 <b>Крок 4/11:</b> ВПО/МО статус подруги:\n\n<b>Не ВПО, що постраждали від війни:</b> Громадяни, які живуть у рідних містах, але їхнє житло було зруйноване/пошкоджене, або вони отримали фізичні чи психологічні травми, втратили майно або джерело доходу внаслідок бойових дій.\n\n<b>Не ВПО, що не постраждали від війни:</b> Люди, які проживають у відносно безпечних регіонах, чиє майно, здоров'я та фінансовий стан не зазнали прямого впливу бойових дій."
+        : "📝 <b>Крок 4/11:</b> Ваш ВПО/МО статус:\n\n<b>Не ВПО, що постраждали від війни:</b> Громадяни, які живуть у рідних містах, але їхнє житло було зруйноване/пошкоджене, або вони отримали фізичні чи психологічні травми, втратили майно або джерело доходу внаслідок бойових дій.\n\n<b>Не ВПО, що не постраждали від війни:</b> Люди, які проживають у відносно безпечних регіонах, чиє майно, здоров'я та фінансовий стан не зазнали прямого впливу бойових дій.";
+    if (step === 5) question = isFriendRegistrationMode(user)
+        ? "📝 <b>Крок 5/11:</b> Кількість дітей подруги до 18 років:"
+        : "📝 <b>Крок 5/11:</b> Кількість дітей до 18 років:";
+    if (step === 6) question = isFriendRegistrationMode(user)
+        ? "📝 <b>Крок 6/11:</b> Стан здоров'я подруги:"
+        : "📝 <b>Крок 6/11:</b> Стан здоров'я:";
+    if (step === 7) question = "📝 <b>Крок 7/11:</b> Евакуаційний статус особи:";
+    if (step === 8) question = "📝 <b>Крок 8/11:</b> Чи вважаєте себе такою, що прямо або опосередковано постраждала від обстрілів протягом останніх 72 годин або останніх 3 місяців?\n\nПриклади опосередкованого впливу: перебої в електропостачанні, втрата роботи, зміна звичного способу життя та інше.";
+    if (step === 9) question = "📝 <b>Крок 9/11:</b> Зайнятість:";
+    if (step === 10) question = "📝 <b>Крок 10/11:</b> До яких категорій належите?";
+    if (step === 11) question = "📝 <b>Крок 11/11:</b> Чи маєте ви досвід або потребу, пов'язану з ГЗН?";
 
     let keyboard = [[{ text: "❌ Скасувати реєстрацію" }]];
     if (step === 4) {
@@ -5738,14 +5750,14 @@ async function processParsedEvents(parsedEvents) {
 
         const registrantData = await resolveRegistrantFormData(chatId, user);
         const hasAllData = registrantData.name && registrantData.phone && registrantData.birth &&
-            registrantData.status && registrantData.health && registrantData.evacuationStatus &&
-            registrantData.shellingImpact && registrantData.employment && registrantData.beneficiaryCategory;
+            registrantData.status && registrantData.childrenCount && registrantData.health && registrantData.evacuationStatus &&
+            registrantData.shellingImpact && registrantData.employment && registrantData.beneficiaryCategory && registrantData.gzn;
         const hasExistingProfile = Boolean(sheetProfile || user.name || user.phone);
 
         if (!hasAllData && !hasExistingProfile) {
             user.step = 1;
             user.registrationMode = true;
-            await bot.sendMessage(chatId, "Спочатку заповніть дані.\n\n📝 <b>Крок 1/9:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
+            await bot.sendMessage(chatId, "Спочатку заповніть дані.\n\n📝 <b>Крок 1/11:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -7516,21 +7528,19 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 6) {
-            const evacuationOptions = [
-                'Евакуація з попереднього місця проживання за останні 6 місяців',
-                'Перебування в транзитному центрі та/або в процесі евакуації',
-                'Готуюсь до евакуації',
-                'Нічого з зазначеного'
+            const healthOptions = [
+                "Ні, немає істотних проблем зі здоров'ям",
+                "Ні, але є істотні проблеми зі здоров'ям",
+                'Інвалідність'
             ];
-            if (!evacuationOptions.includes(text)) {
-                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть евакуаційний статус кнопками.", {
+            if (!healthOptions.includes(text)) {
+                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть стан здоров'я кнопками.", {
                     parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [
-                            [{ text: "Евакуація з попереднього місця проживання за останні 6 місяців" }],
-                            [{ text: "Перебування в транзитному центрі та/або в процесі евакуації" }],
-                            [{ text: "Готуюсь до евакуації" }],
-                            [{ text: "Нічого з зазначеного" }],
+                            [{ text: "Ні, немає істотних проблем зі здоров'ям" }],
+                            [{ text: "Ні, але є істотні проблеми зі здоров'ям" }],
+                            [{ text: "Інвалідність" }],
                             [{ text: "❌ Скасувати реєстрацію" }]
                         ],
                         resize_keyboard: true
@@ -7559,19 +7569,21 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 7) {
-            const shellingImpactOptions = [
-                'Так, постраждала протягом останніх 72 годин',
-                'Так, постраждала протягом останніх 3 місяців',
-                'Ні, не постраждала'
+            const evacuationOptions = [
+                'Евакуація з попереднього місця проживання за останні 6 місяців',
+                'Перебування в транзитному центрі та/або в процесі евакуації',
+                'Готуюсь до евакуації',
+                'Нічого з зазначеного'
             ];
-            if (!shellingImpactOptions.includes(text)) {
-                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть варіант впливу обстрілів кнопками.", {
+            if (!evacuationOptions.includes(text)) {
+                await bot.sendMessage(chatId, "📝 <b>Крок 7/11:</b> Евакуаційний статус особи:", {
                     parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [
-                            [{ text: "Так, постраждала протягом останніх 72 годин" }],
-                            [{ text: "Так, постраждала протягом останніх 3 місяців" }],
-                            [{ text: "Ні, не постраждала" }],
+                            [{ text: "Евакуація з попереднього місця проживання за останні 6 місяців" }],
+                            [{ text: "Перебування в транзитному центрі та/або в процесі евакуації" }],
+                            [{ text: "Готуюсь до евакуації" }],
+                            [{ text: "Нічого з зазначеного" }],
                             [{ text: "❌ Скасувати реєстрацію" }]
                         ],
                         resize_keyboard: true
@@ -7599,16 +7611,19 @@ bot.on('message', async (msg) => {
         }
 
         if (user.step === 8) {
-            const employmentOptions = ['Працюю', 'Не працюю', 'Пенсіонерка', 'Студентка', 'Школярка', 'ФОП', 'Волонтерка'];
-            if (!employmentOptions.includes(text)) {
-                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть зайнятість кнопками: <b>Працюю</b>, <b>Не працюю</b>, <b>Пенсіонерка</b>, <b>Студентка</b>, <b>Школярка</b>, <b>ФОП</b> або <b>Волонтерка</b>.", {
+            const shellingImpactOptions = [
+                'Так, постраждала протягом останніх 72 годин',
+                'Так, постраждала протягом останніх 3 місяців',
+                'Ні, не постраждала'
+            ];
+            if (!shellingImpactOptions.includes(text)) {
+                await bot.sendMessage(chatId, "📝 <b>Крок 8/11:</b> Чи вважаєте себе такою, що прямо або опосередковано постраждала від обстрілів протягом останніх 72 годин або останніх 3 місяців?\n\nПриклади опосередкованого впливу: перебої в електропостачанні, втрата роботи, зміна звичного способу життя та інше.", {
                     parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [
-                            [{ text: "Працюю" }, { text: "Не працюю" }],
-                            [{ text: "Пенсіонерка" }, { text: "Студентка" }],
-                            [{ text: "Школярка" }, { text: "ФОП" }],
-                            [{ text: "Волонтерка" }],
+                            [{ text: "Так, постраждала протягом останніх 72 годин" }],
+                            [{ text: "Так, постраждала протягом останніх 3 місяців" }],
+                            [{ text: "Ні, не постраждала" }],
                             [{ text: "❌ Скасувати реєстрацію" }]
                         ],
                         resize_keyboard: true
@@ -7639,7 +7654,7 @@ bot.on('message', async (msg) => {
         if (user.step === 9) {
             const employmentOptions = ['Працюю', 'Не працюю', 'Пенсіонерка', 'Студентка', 'Школярка', 'ФОП', 'Волонтерка'];
             if (!employmentOptions.includes(text)) {
-                await bot.sendMessage(chatId, "❌ Будь ласка, оберіть зайнятість кнопками.", {
+                await bot.sendMessage(chatId, "📝 <b>Крок 9/11:</b> Зайнятість:", {
                     parse_mode: 'HTML',
                     reply_markup: {
                         keyboard: [
@@ -7658,7 +7673,7 @@ bot.on('message', async (msg) => {
             registrationDraft.employment = text;
             user.step = 10;
 
-            await bot.sendMessage(chatId, "📝 <b>Крок 10/11:</b> До яких категорій належить бенефіціарка?", {
+            await bot.sendMessage(chatId, "📝 <b>Крок 10/11:</b> До яких категорій належите?", {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: [
@@ -10715,7 +10730,7 @@ bot.on('message', async (msg) => {
     // Це захищає сценарій анкети від випадкового "Не зовсім зрозумілий запит".
     const activeRegistrationStep = Number(user.step);
     const isRegistrationInProgress = user.registrationMode === true ||
-        (Number.isInteger(activeRegistrationStep) && activeRegistrationStep >= 1 && activeRegistrationStep <= 9);
+        (Number.isInteger(activeRegistrationStep) && activeRegistrationStep >= 1 && activeRegistrationStep <= 11);
 
     if (isRegistrationInProgress) {
         return;
