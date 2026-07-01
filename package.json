@@ -1,0 +1,14 @@
+{
+  "name": "vilna-bot",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "googleapis": "^171.4.0",
+    "node-telegram-bot-api": "^0.63.0"
+  }
+}

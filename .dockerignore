@@ -1,0 +1,4 @@
+node_modules
+.env
+vilna-bot-*.json
+certs.json
