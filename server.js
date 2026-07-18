@@ -1746,6 +1746,48 @@ async function resolveReminderRecipientChatId(defaultChatId, registration, cache
     return finalChatId;
 }
 
+async function notifyRegistrantAboutRegistration(registrarChatId, event, registrantProfile, options = {}) {
+    const reserveMode = options.reserveMode === true;
+    const fallbackChatId = String(registrarChatId || '').trim();
+    const recipientChatId = await resolveReminderRecipientChatId(fallbackChatId, {
+        registrantPhone: registrantProfile && registrantProfile.phone
+    });
+
+    const recipientChatIdStr = String(recipientChatId || '').trim();
+    if (!recipientChatIdStr || recipientChatIdStr === fallbackChatId) {
+        return;
+    }
+
+    const eventName = String((event && event.name) || '').trim() || 'обраний захід';
+    const eventDate = event && event.date instanceof Date ? event.date : null;
+
+    let details = `📌 ${eventName}`;
+    if (eventDate) {
+        const dateStr = eventDate.toLocaleDateString('uk-UA', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            timeZone: APP_TIME_ZONE
+        });
+        const timeStr = eventDate.toLocaleTimeString('uk-UA', {
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZone: APP_TIME_ZONE
+        });
+        details += `\n🕐 ${dateStr} о ${timeStr}`;
+    }
+
+    const prefix = reserveMode
+        ? '🕓 <b>Вас додано в резерв на захід</b>'
+        : '✅ <b>Вас зареєстровано на захід</b>';
+
+    try {
+        await bot.sendMessage(recipientChatIdStr, `${prefix}\n\n${details}`, { parse_mode: 'HTML' });
+    } catch (error) {
+        logger.warn('Failed to notify registrant about registration', error && error.message ? error.message : error);
+    }
+}
+
 async function notifyUsersAboutEditedEvents(editedEvents) {
     const changes = Array.isArray(editedEvents)
         ? editedEvents.filter((item) => item && item.previous && item.current)
@@ -5426,6 +5468,10 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
         }
     }
 
+    if (evObj) {
+        await notifyRegistrantAboutRegistration(chatId, evObj, registrantProfile, { reserveMode: false });
+    }
+
     delete user.selectedEventName;
     delete user.selectedEventId;
     delete user.afishaFullRegistration;
@@ -5500,6 +5546,8 @@ async function registerForSelectedEventReserve(chatId, user, providedName, provi
             });
         }
     }
+
+    await notifyRegistrantAboutRegistration(chatId, event, registrantProfile, { reserveMode: true });
 
     delete user.selectedEventName;
     delete user.selectedEventId;
