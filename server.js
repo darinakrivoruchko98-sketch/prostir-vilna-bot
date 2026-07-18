@@ -500,6 +500,64 @@ function shouldSendReminder(minutesUntilEvent, targetMinutes, deliveryWindowMinu
         minutesUntilEvent <= targetMinutes + deliveryWindowMinutes;
 }
 
+// Deduplicate reminder registrations by event/person identity.
+function mergeReminderDuplicates(registrations, isFriend = false) {
+    if (!Array.isArray(registrations) || registrations.length === 0) {
+        return [];
+    }
+
+    const merged = new Map();
+
+    for (const raw of registrations) {
+        if (!raw) continue;
+
+        const eventId = String(raw.eventId || '').trim();
+        const registrantName = String(raw.registrantName || '').trim();
+        const registrantPhone = String(raw.registrantPhone || '').trim();
+        const key = `${eventId}|${normalizeRegistrantName(registrantName)}|${normalizeRegistrantPhone(registrantPhone)}`;
+        if (!eventId || !key) continue;
+
+        const eventDate = raw.eventDate instanceof Date ? raw.eventDate : new Date(raw.eventDate);
+        const current = merged.get(key);
+
+        if (!current) {
+            const next = {
+                ...raw,
+                eventId,
+                registrantName,
+                registrantPhone,
+                eventDate: Number.isNaN(eventDate.getTime()) ? raw.eventDate : eventDate
+            };
+            if (isFriend) {
+                next.registrationKey = String(raw.registrationKey || buildFriendRegistrationKey(eventId, registrantName, registrantPhone));
+            } else {
+                next.reminded24h = raw.reminded24h === true;
+                next.reminded1h = raw.reminded1h === true;
+            }
+            merged.set(key, next);
+            continue;
+        }
+
+        const currentDate = current.eventDate instanceof Date ? current.eventDate : new Date(current.eventDate);
+        const nextDate = Number.isNaN(eventDate.getTime()) ? null : eventDate;
+        const hasBetterDate = nextDate && (Number.isNaN(currentDate.getTime()) || nextDate.getTime() > currentDate.getTime());
+        if (hasBetterDate) {
+            current.eventDate = nextDate;
+        }
+
+        if (!String(current.eventName || '').trim() && String(raw.eventName || '').trim()) {
+            current.eventName = String(raw.eventName || '').trim();
+        }
+
+        if (!isFriend) {
+            current.reminded24h = current.reminded24h === true || raw.reminded24h === true;
+            current.reminded1h = current.reminded1h === true || raw.reminded1h === true;
+        }
+    }
+
+    return Array.from(merged.values());
+}
+
 function resolveCurrentEventForReminderRegistration(registration, eventsById, fallbackEvents) {
     if (!registration) {
         return null;
@@ -1185,15 +1243,86 @@ function cleanupPastEvents() {
         console.log(`🧹 Видалено ${initialCount - events.length} минулих заходів`);
     }
     
-    // Також видаляємо минулі реєстрації
+    // Також видаляємо минулі реєстрації, попередньо намагаючись
+    // переприв'язати їх до актуальних подій після редагувань таблиці.
+    const currentEvents = getAllEvents();
+    const currentEventsById = new Map(currentEvents.map((event) => [event.id, event]));
+
     for (const chatId in userEventRegistrations) {
         const before = userEventRegistrations[chatId].length;
-        userEventRegistrations[chatId] = userEventRegistrations[chatId].filter(reg => reg.eventDate > now);
+        const normalized = [];
+        for (const reg of userEventRegistrations[chatId]) {
+            if (!reg) continue;
+            const resolvedEvent = resolveCurrentEventForReminderRegistration(reg, currentEventsById, currentEvents);
+            if (resolvedEvent && resolvedEvent.date) {
+                const prevTime = reg.eventDate instanceof Date ? reg.eventDate.getTime() : new Date(reg.eventDate).getTime();
+                const nextTime = resolvedEvent.date.getTime();
+                if (!Number.isFinite(prevTime) || prevTime !== nextTime) {
+                    reg.eventDate = resolvedEvent.date;
+                    reg.reminded24h = false;
+                    reg.reminded1h = false;
+                    hasReminderChanges = true;
+                }
+                if (reg.eventId !== resolvedEvent.id) {
+                    reg.eventId = resolvedEvent.id;
+                    hasReminderChanges = true;
+                }
+                if (String(reg.eventName || '').trim() !== String(resolvedEvent.name || '').trim()) {
+                    reg.eventName = resolvedEvent.name;
+                    hasReminderChanges = true;
+                }
+            }
+            normalized.push(reg);
+        }
+
+        userEventRegistrations[chatId] = mergeReminderDuplicates(normalized, false).filter((reg) => {
+            const dt = reg && reg.eventDate instanceof Date ? reg.eventDate : new Date(reg && reg.eventDate);
+            return dt instanceof Date && !Number.isNaN(dt.getTime()) && dt > now;
+        });
         if (userEventRegistrations[chatId].length !== before) {
             hasReminderChanges = true;
         }
         if (userEventRegistrations[chatId].length === 0) {
             delete userEventRegistrations[chatId];
+            hasReminderChanges = true;
+        }
+    }
+
+    for (const chatId in friendEventRegistrations) {
+        const before = friendEventRegistrations[chatId].length;
+        const normalized = [];
+        for (const reg of friendEventRegistrations[chatId]) {
+            if (!reg) continue;
+            const resolvedEvent = resolveCurrentEventForReminderRegistration(reg, currentEventsById, currentEvents);
+            if (resolvedEvent && resolvedEvent.date) {
+                const prevTime = reg.eventDate instanceof Date ? reg.eventDate.getTime() : new Date(reg.eventDate).getTime();
+                const nextTime = resolvedEvent.date.getTime();
+                if (!Number.isFinite(prevTime) || prevTime !== nextTime) {
+                    reg.eventDate = resolvedEvent.date;
+                    hasReminderChanges = true;
+                }
+                if (reg.eventId !== resolvedEvent.id) {
+                    reg.eventId = resolvedEvent.id;
+                    hasReminderChanges = true;
+                }
+                if (String(reg.eventName || '').trim() !== String(resolvedEvent.name || '').trim()) {
+                    reg.eventName = resolvedEvent.name;
+                    hasReminderChanges = true;
+                }
+                reg.registrationKey = buildFriendRegistrationKey(reg.eventId, reg.registrantName, reg.registrantPhone);
+            }
+            normalized.push(reg);
+        }
+
+        friendEventRegistrations[chatId] = mergeReminderDuplicates(normalized, true).filter((reg) => {
+            const dt = reg && reg.eventDate instanceof Date ? reg.eventDate : new Date(reg && reg.eventDate);
+            return dt instanceof Date && !Number.isNaN(dt.getTime()) && dt > now;
+        });
+        if (friendEventRegistrations[chatId].length !== before) {
+            hasReminderChanges = true;
+        }
+        if (friendEventRegistrations[chatId].length === 0) {
+            delete friendEventRegistrations[chatId];
             hasReminderChanges = true;
         }
     }
@@ -1204,19 +1333,31 @@ function cleanupPastEvents() {
 }
 
 function syncReminderRegistrationsWithEvents() {
-    const eventsById = new Map(getAllEvents().map((event) => [event.id, event]));
+    const allEvents = getAllEvents();
+    const eventsById = new Map(allEvents.map((event) => [event.id, event]));
+    const now = new Date();
     let hasReminderChanges = false;
 
     for (const chatId in userEventRegistrations) {
-        const registrations = userEventRegistrations[chatId];
+        const registrations = Array.isArray(userEventRegistrations[chatId]) ? userEventRegistrations[chatId] : [];
         if (!Array.isArray(registrations) || registrations.length === 0) {
             continue;
         }
 
         for (const registration of registrations) {
-            const actualEvent = eventsById.get(registration.eventId);
+            const actualEvent = resolveCurrentEventForReminderRegistration(registration, eventsById, allEvents);
             if (!actualEvent || !actualEvent.date) {
                 continue;
+            }
+
+            if (registration.eventId !== actualEvent.id) {
+                registration.eventId = actualEvent.id;
+                hasReminderChanges = true;
+            }
+
+            if (String(registration.eventName || '').trim() !== String(actualEvent.name || '').trim()) {
+                registration.eventName = actualEvent.name;
+                hasReminderChanges = true;
             }
 
             const registrationTime = registration.eventDate instanceof Date
@@ -1224,10 +1365,82 @@ function syncReminderRegistrationsWithEvents() {
                 : new Date(registration.eventDate).getTime();
             const actualTime = actualEvent.date.getTime();
 
-            if (registrationTime !== actualTime) {
+            if (!Number.isFinite(registrationTime) || registrationTime !== actualTime) {
+                registration.eventDate = actualEvent.date;
+                registration.reminded24h = false;
+                registration.reminded1h = false;
+                hasReminderChanges = true;
+            }
+        }
+
+        const beforeLength = registrations.length;
+        const deduped = mergeReminderDuplicates(registrations, false).filter((item) => {
+            const dt = item && item.eventDate instanceof Date ? item.eventDate : new Date(item && item.eventDate);
+            return dt instanceof Date && !Number.isNaN(dt.getTime()) && dt > now;
+        });
+
+        if (deduped.length !== beforeLength) {
+            hasReminderChanges = true;
+        }
+
+        if (deduped.length > 0) {
+            userEventRegistrations[chatId] = deduped;
+        } else {
+            delete userEventRegistrations[chatId];
+            hasReminderChanges = true;
+        }
+    }
+
+    for (const chatId in friendEventRegistrations) {
+        const registrations = Array.isArray(friendEventRegistrations[chatId]) ? friendEventRegistrations[chatId] : [];
+        if (registrations.length === 0) {
+            continue;
+        }
+
+        for (const registration of registrations) {
+            const actualEvent = resolveCurrentEventForReminderRegistration(registration, eventsById, allEvents);
+            if (!actualEvent || !actualEvent.date) {
+                continue;
+            }
+
+            if (registration.eventId !== actualEvent.id) {
+                registration.eventId = actualEvent.id;
+                hasReminderChanges = true;
+            }
+
+            if (String(registration.eventName || '').trim() !== String(actualEvent.name || '').trim()) {
+                registration.eventName = actualEvent.name;
+                hasReminderChanges = true;
+            }
+
+            const registrationTime = registration.eventDate instanceof Date
+                ? registration.eventDate.getTime()
+                : new Date(registration.eventDate).getTime();
+            const actualTime = actualEvent.date.getTime();
+
+            if (!Number.isFinite(registrationTime) || registrationTime !== actualTime) {
                 registration.eventDate = actualEvent.date;
                 hasReminderChanges = true;
             }
+
+            registration.registrationKey = buildFriendRegistrationKey(registration.eventId, registration.registrantName, registration.registrantPhone);
+        }
+
+        const beforeLength = registrations.length;
+        const deduped = mergeReminderDuplicates(registrations, true).filter((item) => {
+            const dt = item && item.eventDate instanceof Date ? item.eventDate : new Date(item && item.eventDate);
+            return dt instanceof Date && !Number.isNaN(dt.getTime()) && dt > now;
+        });
+
+        if (deduped.length !== beforeLength) {
+            hasReminderChanges = true;
+        }
+
+        if (deduped.length > 0) {
+            friendEventRegistrations[chatId] = deduped;
+        } else {
+            delete friendEventRegistrations[chatId];
+            hasReminderChanges = true;
         }
     }
 
@@ -1338,6 +1551,43 @@ function buildLikelyEditedEventMap(previousEvents, currentEvents) {
             if (candidates.length === 0) {
                 titleBuckets.delete(titleKey);
             }
+            unmatchedCurrent.delete(matchedEvent.id);
+        }
+    }
+
+    // Останній fallback: якщо адмін одночасно змінив рядок, назву та час,
+    // пробуємо зіставити за найближчим часом у межах доби.
+    for (const prevEvent of previousEvents || []) {
+        if (!prevEvent || mapping.has(prevEvent.id) || !(prevEvent.date instanceof Date)) {
+            continue;
+        }
+
+        let bestCandidate = null;
+        let bestScore = Number.POSITIVE_INFINITY;
+        const prevTime = prevEvent.date.getTime();
+
+        for (const candidate of unmatchedCurrent.values()) {
+            if (!candidate || !(candidate.date instanceof Date)) {
+                continue;
+            }
+
+            const sameYear = candidate.date.getFullYear() === prevEvent.date.getFullYear();
+            const sameMonth = candidate.date.getMonth() === prevEvent.date.getMonth();
+            const sameDay = candidate.date.getDate() === prevEvent.date.getDate();
+            if (!(sameYear && sameMonth && sameDay)) {
+                continue;
+            }
+
+            const score = Math.abs(candidate.date.getTime() - prevTime);
+            if (score < bestScore) {
+                bestScore = score;
+                bestCandidate = candidate;
+            }
+        }
+
+        if (bestCandidate && bestScore <= 12 * 60 * 60 * 1000) {
+            mapping.set(prevEvent.id, bestCandidate);
+            unmatchedCurrent.delete(bestCandidate.id);
         }
     }
 
@@ -1371,6 +1621,11 @@ function remapReminderRegistrationsToUpdatedEvents(eventMap) {
                 hasReminderChanges = true;
             }
 
+            if (String(registration.eventName || '').trim() !== String(mappedEvent.name || '').trim()) {
+                registration.eventName = mappedEvent.name;
+                hasReminderChanges = true;
+            }
+
             const regDateTime = registration.eventDate instanceof Date
                 ? registration.eventDate.getTime()
                 : new Date(registration.eventDate).getTime();
@@ -1378,25 +1633,108 @@ function remapReminderRegistrationsToUpdatedEvents(eventMap) {
 
             if (regDateTime !== mappedTime) {
                 registration.eventDate = mappedEvent.date;
+                if (Object.prototype.hasOwnProperty.call(registration, 'reminded24h')) {
+                    registration.reminded24h = false;
+                }
+                if (Object.prototype.hasOwnProperty.call(registration, 'reminded1h')) {
+                    registration.reminded1h = false;
+                }
                 hasReminderChanges = true;
             }
-
-            // Не оновлюємо registration.eventName — людина реєструвалась під оригінальною назвою.
-            // Зміна назви в таблиці адміністратором не повинна змінювати ім'я заходу в нагадуваннях.
         }
     };
 
     for (const chatId in userEventRegistrations) {
         applyMapping(userEventRegistrations[chatId]);
+        userEventRegistrations[chatId] = mergeReminderDuplicates(userEventRegistrations[chatId], false);
     }
 
     for (const chatId in friendEventRegistrations) {
         applyMapping(friendEventRegistrations[chatId]);
+        for (const registration of friendEventRegistrations[chatId] || []) {
+            registration.registrationKey = buildFriendRegistrationKey(registration.eventId, registration.registrantName, registration.registrantPhone);
+        }
+        friendEventRegistrations[chatId] = mergeReminderDuplicates(friendEventRegistrations[chatId], true);
     }
 
     if (hasReminderChanges) {
         saveReminderStateToDisk();
         console.log('♻️ Синхронізовано реєстрації після редагування розкладу');
+    }
+}
+
+function formatEventTimeForUpdateNotice(eventDate) {
+    return eventDate.toLocaleTimeString('uk-UA', {
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: APP_TIME_ZONE
+    });
+}
+
+async function notifyUsersAboutEditedEvents(editedEvents) {
+    const changes = Array.isArray(editedEvents)
+        ? editedEvents.filter((item) => item && item.previous && item.current)
+        : [];
+
+    if (changes.length === 0) {
+        return;
+    }
+
+    const changesByCurrentId = new Map();
+    for (const change of changes) {
+        changesByCurrentId.set(change.current.id, change);
+    }
+
+    const notificationsByChatId = new Map();
+    const pushNotification = (chatId, change) => {
+        const normalizedChatId = String(chatId || '').trim();
+        if (!normalizedChatId || !change) return;
+        if (!notificationsByChatId.has(normalizedChatId)) {
+            notificationsByChatId.set(normalizedChatId, new Map());
+        }
+        notificationsByChatId.get(normalizedChatId).set(change.current.id, change);
+    };
+
+    for (const chatId in userEventRegistrations) {
+        for (const registration of userEventRegistrations[chatId] || []) {
+            const change = registration && changesByCurrentId.get(registration.eventId);
+            if (change) pushNotification(chatId, change);
+        }
+    }
+
+    for (const chatId in friendEventRegistrations) {
+        for (const registration of friendEventRegistrations[chatId] || []) {
+            const change = registration && changesByCurrentId.get(registration.eventId);
+            if (change) pushNotification(chatId, change);
+        }
+    }
+
+    for (const [chatId, eventChanges] of notificationsByChatId.entries()) {
+        for (const change of eventChanges.values()) {
+            const previous = change.previous;
+            const current = change.current;
+            const prevTime = formatEventTimeForUpdateNotice(previous.date);
+            const nextTime = formatEventTimeForUpdateNotice(current.date);
+            const timeChanged = prevTime !== nextTime;
+            const titleChanged = String(previous.name || '').trim() !== String(current.name || '').trim();
+
+            if (!timeChanged && !titleChanged) {
+                continue;
+            }
+
+            let message = 'ℹ️ Оновлення розкладу\n\n';
+            if (timeChanged) {
+                message += `Час заходу «${current.name}» змінено з ${prevTime} на ${nextTime}.`;
+            } else {
+                message += `Назву заходу оновлено: «${previous.name}» → «${current.name}».`;
+            }
+
+            try {
+                await bot.sendMessage(chatId, message);
+            } catch (error) {
+                console.error(`❌ Не вдалося надіслати повідомлення про зміну розкладу chatId=${chatId}:`, error && error.message ? error.message : error);
+            }
+        }
     }
 }
 
@@ -1553,6 +1891,11 @@ async function checkAndSendReminders() {
                 hasReminderChanges = true;
             }
 
+            if (String(reg.eventName || '').trim() !== String(resolvedEvent.name || '').trim()) {
+                reg.eventName = resolvedEvent.name;
+                hasReminderChanges = true;
+            }
+
             const resolvedTime = resolvedEvent.date.getTime();
             const registrationTime = reg.eventDate instanceof Date
                 ? reg.eventDate.getTime()
@@ -1560,6 +1903,8 @@ async function checkAndSendReminders() {
 
             if (!Number.isFinite(registrationTime) || registrationTime !== resolvedTime) {
                 reg.eventDate = resolvedEvent.date;
+                reg.reminded24h = false;
+                reg.reminded1h = false;
                 hasReminderChanges = true;
             }
 
@@ -2375,7 +2720,11 @@ function parseRegistrantsFromNote(noteText) {
         .filter(Boolean);
 
     for (const line of lines) {
-        if (/^зареєстровано\s*:/i.test(line)) {
+        if (/^зареєстровано\s*:/i.test(line)
+            || /^резерв\s*:/i.test(line)
+            || /^список\s+порожній$/i.test(line)
+            || /^EVENT_ID\s*:/i.test(line)
+            || /^\d+[.)-]?\s*EVENT_ID\s*:/i.test(line)) {
             continue;
         }
 
@@ -2385,14 +2734,15 @@ function parseRegistrantsFromNote(noteText) {
             .trim();
 
         if (!cleaned) continue;
+        if (/^EVENT_ID\s*:/i.test(cleaned)) continue;
 
         let name = '';
         let phone = '';
 
-        if (cleaned.includes('|')) {
-            const [left, right] = cleaned.split('|');
-            name = String(left || '').trim();
-            phone = String(right || '').trim();
+        const structuredMatch = cleaned.match(/^(.*?)\s*(?:\||[—-])\s*(.+)$/);
+        if (structuredMatch) {
+            name = String(structuredMatch[1] || '').trim();
+            phone = String(structuredMatch[2] || '').trim();
         } else {
             const phoneMatch = cleaned.match(/(\+?\d[\d\s()\-]{6,})$/);
             if (phoneMatch) {
@@ -2572,7 +2922,7 @@ function buildRegistrantsNoteFromList(registrationsCount, registrants, eventId =
     });
 
     const content = people.length === 0 ? header : `${header}\n\n${people.join('\n')}`;
-    return eventId ? `${content}\n\n${SCHEDULE_NOTE_EVENT_ID_TAG}${eventId}` : content;
+    return content;
 }
 
 function getEventIdentityKey(event) {
@@ -2831,7 +3181,11 @@ function parseReserveRegistrantsFromNote(noteText) {
         .filter(Boolean);
 
     for (const line of lines) {
-        if (/^резерв\s*:/i.test(line)) {
+        if (/^резерв\s*:/i.test(line)
+            || /^зареєстровано\s*:/i.test(line)
+            || /^список\s+порожній$/i.test(line)
+            || /^EVENT_ID\s*:/i.test(line)
+            || /^\d+[.)-]?\s*EVENT_ID\s*:/i.test(line)) {
             continue;
         }
 
@@ -2841,6 +3195,7 @@ function parseReserveRegistrantsFromNote(noteText) {
             .trim();
 
         if (!cleaned) continue;
+        if (/^EVENT_ID\s*:/i.test(cleaned)) continue;
 
         const parts = cleaned.split('|').map((part) => String(part || '').trim());
         const name = String(parts[0] || '').trim();
@@ -2874,7 +3229,7 @@ function buildReserveNoteFromList(reserveCount, reservists, eventId = '') {
     });
 
     const content = people.length === 0 ? header : `${header}\n\n${people.join('\n')}`;
-    return eventId ? `${content}\n\n${SCHEDULE_NOTE_EVENT_ID_TAG}${eventId}` : content;
+    return content;
 }
 
 async function updateSheetReserveCount(event) {
@@ -3177,21 +3532,18 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
     }
 
     const existingNote = await getScheduleCellNote(scheduleSheet, rowIndex);
-    let nextNote;
+    let registrants = parseRegistrantsFromNote(existingNote);
 
-    const existingEventId = extractScheduleNoteEventId(existingNote) || eventId;
     if (removeRegistrant) {
         // При відписці: парсимо, видаляємо, перебудовуємо
-        let registrants = parseRegistrantsFromNote(existingNote);
         const removeNameKey = normalizeRegistrantName(removeRegistrant.name);
         const removePhoneKey = normalizeRegistrantPhone(removeRegistrant.phone);
         if (removeNameKey || removePhoneKey) {
             registrants = registrants.filter((item) => !isSameRegistrant(item, removeNameKey, removePhoneKey));
         }
-        nextNote = buildRegistrantsNoteFromList(registrationsCount, registrants, existingEventId);
     } else if (fallbackRegistrant) {
-        // При реєстрації: ТІЛЬКИ ДОПИСУЄМО нового учасника в кінець нотатки.
-        // Не перебудовуємо повністю — інакше можна втратити записи що вже є.
+        // При реєстрації: додаємо у нормалізований список і перебудовуємо всю нотатку.
+        // Це прибирає зайві порожні рядки й службові фрагменти.
         const candidateName = String((fallbackRegistrant && fallbackRegistrant.name) || '').trim();
         const candidatePhone = String((fallbackRegistrant && fallbackRegistrant.phone) || '').trim();
         if (!candidateName && !candidatePhone) {
@@ -3199,31 +3551,18 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
         }
         const candidateNameKey = normalizeRegistrantName(candidateName);
         const candidatePhoneKey = normalizeRegistrantPhone(candidatePhone);
-        const registrants = parseRegistrantsFromNote(existingNote);
         const alreadyInNote = registrants.some((item) => isSameRegistrant(item, candidateNameKey, candidatePhoneKey));
-        if (alreadyInNote) {
-            // Вже є в нотатці — лише оновлюємо лічильник
-            const safeCount = Number.isFinite(registrationsCount) ? registrationsCount : registrants.length;
-            nextNote = existingNote.replace(/^Зареєстровано:\s*\d+/i, `Зареєстровано: ${safeCount}`);
-        } else {
-            // Дописуємо новий рядок в кінець існуючої нотатки
-            const newIndex = registrants.length + 1;
-            const newLine = `${newIndex}. ${candidateName || 'Без імені'}${candidatePhone ? ` | ${candidatePhone}` : ''}`;
-            const safeCount = Number.isFinite(registrationsCount) ? registrationsCount : newIndex;
-            const headerLine = `Зареєстровано: ${safeCount}`;
-            if (!existingNote.trim()) {
-                nextNote = `${headerLine}\n\n${newLine}`;
-            } else if (/^Зареєстровано:\s*\d+/i.test(existingNote.trim())) {
-                nextNote = existingNote.replace(/^Зареєстровано:\s*\d+/i, headerLine).trimEnd() + `\n${newLine}`;
-            } else {
-                nextNote = `${headerLine}\n\n${existingNote.trim()}\n${newLine}`;
-            }
+        if (!alreadyInNote) {
+            registrants.push({
+                name: candidateName,
+                phone: candidatePhone
+            });
         }
-
-        nextNote = ensureScheduleNoteEventIdTag(nextNote, existingEventId);
     } else {
         return; // Нічого робити
     }
+
+    const nextNote = buildRegistrantsNoteFromList(registrationsCount, registrants, eventId);
 
     await sheetsClient.spreadsheets.batchUpdate({
         spreadsheetId: SPREADSHEET_ID,
@@ -4069,7 +4408,29 @@ async function loadEventsFromSheet() {
 
         const previousEvents = Array.from(previousEventsById.values());
         const eventRemap = buildLikelyEditedEventMap(previousEvents, events);
+        const editedEvents = previousEvents
+            .map((previousEvent) => {
+                const currentEvent = eventRemap.get(previousEvent.id);
+                if (!currentEvent || !previousEvent || !previousEvent.date || !currentEvent.date) {
+                    return null;
+                }
+
+                const timeChanged = previousEvent.date.getTime() !== currentEvent.date.getTime();
+                const nameChanged = String(previousEvent.name || '').trim() !== String(currentEvent.name || '').trim();
+                if (!timeChanged && !nameChanged) {
+                    return null;
+                }
+
+                return {
+                    previous: previousEvent,
+                    current: currentEvent,
+                    timeChanged,
+                    nameChanged
+                };
+            })
+            .filter(Boolean);
         remapReminderRegistrationsToUpdatedEvents(eventRemap);
+        await notifyUsersAboutEditedEvents(editedEvents);
 
         // Збираємо source-keys всіх НОВИХ заходів
         const newSourceKeys = new Set();
@@ -5792,6 +6153,7 @@ async function processParsedEvents(parsedEvents) {
     }
 
     async function handleUnsubscribeIntent(chatId, user) {
+        await restoreUserRegistrationsFromSheet(chatId, user);
         const userRegistrations = userEventRegistrations[chatId] || [];
 
         if (userRegistrations.length === 0) {
