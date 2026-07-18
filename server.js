@@ -183,12 +183,11 @@ function recordRecentAction(chatId, action) {
     }
 }
 
-async function performUndoForChat(chatId) {
+async function performUndoForChat(chatId, fallbackEventId = '') {
     const entry = recentActions.get(String(chatId));
-    if (!entry || !entry.action) return { ok: false, reason: 'no-action' };
-    const a = entry.action;
+    const a = entry && entry.action ? entry.action : null;
     try {
-        if (a.type === 'register') {
+        if (a && a.type === 'register') {
             // attempt to unregister the user from the event
             const evId = a.eventId;
             const res = await unregisterFromEvent(chatId, evId);
@@ -197,6 +196,28 @@ async function performUndoForChat(chatId) {
                 return { ok: true };
             }
             return { ok: false, reason: 'unregister-failed' };
+        }
+        if (a && a.type === 'reserve') {
+            const evId = a.eventId;
+            const res = await unregisterFromReserve(chatId, evId);
+            if (res && res.status === 'ok') {
+                recentActions.delete(String(chatId));
+                return { ok: true };
+            }
+            return { ok: false, reason: 'unreserve-failed' };
+        }
+
+        // Fallback for callback button: try by explicit eventId even without recent action.
+        const explicitEventId = String(fallbackEventId || '').trim();
+        if (explicitEventId) {
+            let res = await unregisterFromEvent(chatId, explicitEventId);
+            if (!res || res.status !== 'ok') {
+                res = await unregisterFromReserve(chatId, explicitEventId);
+            }
+            if (res && res.status === 'ok') {
+                recentActions.delete(String(chatId));
+                return { ok: true };
+            }
         }
     } catch (err) {
         logger.error('Undo action failed', err && err.message ? err.message : err);
@@ -212,7 +233,7 @@ bot.on('callback_query', async (callbackQuery) => {
         if (data.startsWith('UNDO_REGISTER:')) {
             const eventId = data.split(':')[1];
             await bot.answerCallbackQuery(callbackQuery.id, { text: 'Виконується відміна...' });
-            const undoRes = await performUndoForChat(chatId);
+            const undoRes = await performUndoForChat(chatId, eventId);
             if (undoRes.ok) {
                 await bot.sendMessage(chatId, '✅ Реєстрацію скасовано.');
             } else {
@@ -3407,6 +3428,64 @@ async function addRegistrantToReserve(event, registrantProfile) {
     return true;
 }
 
+async function removeRegistrantFromReserve(event, registrantProfile) {
+    if (!event || !registrantProfile) {
+        return false;
+    }
+
+    const match = await findScheduleRowByEvent(event);
+    if (!match) {
+        return false;
+    }
+
+    const existingNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex, 'F');
+    const reservists = parseReserveRegistrantsFromNote(existingNote);
+
+    const targetName = normalizeRegistrantName(registrantProfile.name || '');
+    const targetPhone = normalizeRegistrantPhone(registrantProfile.phone || '');
+    const targetUserId = normalizeRegistrantUserId(registrantProfile.userId || registrantProfile.chatId || '');
+
+    const remaining = reservists.filter((item) => {
+        const sameName = normalizeRegistrantName(item.name) === targetName;
+        const samePhone = normalizeRegistrantPhone(item.phone) === targetPhone;
+        const sameUserId = normalizeRegistrantUserId(item.userId) === targetUserId;
+
+        if (targetName && targetPhone) {
+            return !(sameName && samePhone);
+        }
+        if (targetUserId) {
+            return !sameUserId;
+        }
+        if (targetName) {
+            return !sameName;
+        }
+        if (targetPhone) {
+            return !samePhone;
+        }
+        return true;
+    });
+
+    if (remaining.length === reservists.length) {
+        return false;
+    }
+
+    event.reserveCount = remaining.length;
+    await updateSheetReserveCount(event);
+    await updateScheduleReserveNote({
+        scheduleSheet: match.scheduleSheet,
+        rowIndex: match.rowIndex,
+        reserveCount: event.reserveCount,
+        removeRegistrant: {
+            name: registrantProfile.name,
+            phone: registrantProfile.phone,
+            userId: registrantProfile.userId || registrantProfile.chatId
+        },
+        eventId: event.id
+    });
+
+    return true;
+}
+
 async function promoteFirstReserveRegistrantToRegistration(event) {
     if (!event || !sheetsClient || !SPREADSHEET_ID) {
         return false;
@@ -5337,6 +5416,7 @@ async function registerForSelectedEventReserve(chatId, user, providedName, provi
                 registrantName: registrantProfile.name,
                 registrantPhone: registrantProfile.phone
             });
+            try { recordRecentAction(chatId, { type: 'reserve', eventId }); } catch (e) { logger.warn('recordRecentAction failed', e && e.message ? e.message : e); }
         }
     } else {
         const friendRegistrationKey = buildFriendRegistrationKey(eventId, registrantProfile.name, registrantProfile.phone);
@@ -5416,7 +5496,41 @@ async function unregisterFromEvent(chatId, eventId) {
         console.log(`📝 Користувач ${chatId} відписаний від "${registration.eventName}" (місць +1)`);
     }
 
-    return { status: 'ok', eventName: registration.eventName };
+    return { status: 'ok', eventName: registration.eventName, mode: 'registration' };
+}
+
+async function unregisterFromReserve(chatId, eventId) {
+    if (!userEventReserveRegistrations[chatId]) {
+        return { status: 'not-registered' };
+    }
+
+    const regIndex = userEventReserveRegistrations[chatId].findIndex((entry) => entry.eventId === eventId);
+    if (regIndex === -1) {
+        return { status: 'not-found' };
+    }
+
+    const registration = userEventReserveRegistrations[chatId][regIndex];
+    userEventReserveRegistrations[chatId].splice(regIndex, 1);
+
+    if (userEventReserveRegistrations[chatId].length === 0) {
+        delete userEventReserveRegistrations[chatId];
+    }
+    saveReminderStateToDisk();
+
+    const event = events.find((eventItem) => eventItem.id === eventId);
+    if (event) {
+        const removed = await removeRegistrantFromReserve(event, {
+            userId: String(chatId || ''),
+            name: String(registration.registrantName || '').trim(),
+            phone: String(registration.registrantPhone || '').trim()
+        });
+        if (!removed) {
+            return { status: 'not-found' };
+        }
+        console.log(`🕓 Користувач ${chatId} видалений з резерву "${registration.eventName}"`);
+    }
+
+    return { status: 'ok', eventName: registration.eventName, mode: 'reserve' };
 }
 
 async function unregisterFriendFromEvent(chatId, registrationKey) {
@@ -10438,10 +10552,16 @@ bot.on('message', async (msg) => {
             return;
         }
 
-        const result = await unregisterFromEvent(chatId, lastEventId);
+        let result = await unregisterFromEvent(chatId, lastEventId);
+        if (!result || result.status !== 'ok') {
+            result = await unregisterFromReserve(chatId, lastEventId);
+        }
         if (result.status === 'ok') {
+            const details = result.mode === 'reserve'
+                ? 'Запис у резерв скасовано.'
+                : 'Місце звільнено для інших учасників.';
             await bot.sendMessage(chatId,
-                `✅ <b>Реєстрацію скасовано.</b>\n\n📌 ${result.eventName}\n\nМісце звільнено для інших учасників.`, {
+                `✅ <b>Реєстрацію скасовано.</b>\n\n📌 ${result.eventName}\n\n${details}`, {
                 parse_mode: 'HTML',
                 reply_markup: {
                     keyboard: getAfishaInstantRegistrationKeyboard(),
