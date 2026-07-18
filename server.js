@@ -1692,6 +1692,60 @@ function formatEventTimeForUpdateNotice(eventDate) {
     });
 }
 
+async function resolveReminderRecipientChatId(defaultChatId, registration, cache = null) {
+    const fallbackChatId = String(defaultChatId || '').trim();
+    const normalizedPhone = normalizeRegistrantPhone(registration && registration.registrantPhone);
+    if (!normalizedPhone) {
+        return fallbackChatId;
+    }
+
+    if (cache && cache.has(normalizedPhone)) {
+        return cache.get(normalizedPhone) || fallbackChatId;
+    }
+
+    let resolvedChatId = null;
+
+    for (const [rawChatId, profile] of Object.entries(knownUsers || {})) {
+        if (normalizeRegistrantPhone(profile && profile.phone) === normalizedPhone) {
+            const parsed = parsePositiveChatId(rawChatId);
+            if (parsed) {
+                resolvedChatId = String(parsed);
+                break;
+            }
+        }
+    }
+
+    if (!resolvedChatId) {
+        for (const [rawChatId, profile] of Object.entries(users || {})) {
+            if (normalizeRegistrantPhone(profile && profile.phone) === normalizedPhone) {
+                const parsed = parsePositiveChatId(rawChatId);
+                if (parsed) {
+                    resolvedChatId = String(parsed);
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!resolvedChatId) {
+        try {
+            const knownByPhone = await loadKnownUserByPhone(normalizedPhone);
+            const parsed = parsePositiveChatId(knownByPhone && knownByPhone.chatId);
+            if (parsed) {
+                resolvedChatId = String(parsed);
+            }
+        } catch (e) {
+            logger.warn('resolveReminderRecipientChatId: loadKnownUserByPhone failed', e && e.message ? e.message : e);
+        }
+    }
+
+    const finalChatId = resolvedChatId || fallbackChatId;
+    if (cache) {
+        cache.set(normalizedPhone, finalChatId);
+    }
+    return finalChatId;
+}
+
 async function notifyUsersAboutEditedEvents(editedEvents) {
     const changes = Array.isArray(editedEvents)
         ? editedEvents.filter((item) => item && item.previous && item.current)
@@ -1707,6 +1761,7 @@ async function notifyUsersAboutEditedEvents(editedEvents) {
     }
 
     const notificationsByChatId = new Map();
+    const recipientCache = new Map();
     const pushNotification = (chatId, change) => {
         const normalizedChatId = String(chatId || '').trim();
         if (!normalizedChatId || !change) return;
@@ -1719,14 +1774,20 @@ async function notifyUsersAboutEditedEvents(editedEvents) {
     for (const chatId in userEventRegistrations) {
         for (const registration of userEventRegistrations[chatId] || []) {
             const change = registration && changesByCurrentId.get(registration.eventId);
-            if (change) pushNotification(chatId, change);
+            if (change) {
+                const recipientChatId = await resolveReminderRecipientChatId(chatId, registration, recipientCache);
+                pushNotification(recipientChatId, change);
+            }
         }
     }
 
     for (const chatId in friendEventRegistrations) {
         for (const registration of friendEventRegistrations[chatId] || []) {
             const change = registration && changesByCurrentId.get(registration.eventId);
-            if (change) pushNotification(chatId, change);
+            if (change) {
+                const recipientChatId = await resolveReminderRecipientChatId(chatId, registration, recipientCache);
+                pushNotification(recipientChatId, change);
+            }
         }
     }
 
@@ -1786,6 +1847,7 @@ async function notifyUsersAboutCancelledEvents(cancelledEvents) {
 
     const cancelledEventsById = new Map(upcomingCancelledEvents.map((event) => [event.id, event]));
     const notificationsByChatId = new Map();
+    const recipientCache = new Map();
 
     const queueNotification = (chatId, eventId) => {
         const cancelledEvent = cancelledEventsById.get(eventId);
@@ -1809,7 +1871,8 @@ async function notifyUsersAboutCancelledEvents(cancelledEvents) {
         const registrations = Array.isArray(userEventRegistrations[chatId]) ? userEventRegistrations[chatId] : [];
         for (const registration of registrations) {
             if (registration && cancelledEventsById.has(registration.eventId)) {
-                queueNotification(chatId, registration.eventId);
+                const recipientChatId = await resolveReminderRecipientChatId(chatId, registration, recipientCache);
+                queueNotification(recipientChatId, registration.eventId);
             }
         }
     }
@@ -1818,7 +1881,8 @@ async function notifyUsersAboutCancelledEvents(cancelledEvents) {
         const registrations = Array.isArray(friendEventRegistrations[chatId]) ? friendEventRegistrations[chatId] : [];
         for (const registration of registrations) {
             if (registration && cancelledEventsById.has(registration.eventId)) {
-                queueNotification(chatId, registration.eventId);
+                const recipientChatId = await resolveReminderRecipientChatId(chatId, registration, recipientCache);
+                queueNotification(recipientChatId, registration.eventId);
             }
         }
     }
@@ -1888,20 +1952,20 @@ async function checkAndSendReminders() {
     const now = new Date();
     const allEvents = getAllEvents();
     const eventsById = new Map(allEvents.map((event) => [event.id, event]));
+    const recipientCache = new Map();
     let hasReminderChanges = false;
     
     for (const chatId in userEventRegistrations) {
-        const reminderSettings = getReminderSettingsForChat(chatId);
-
-        // Перевіряємо чи користувач не вимкнув нагадування
-        if (reminderSettings.enabled === false) {
-            console.log(`ℹ️ Нагадування вимкнені для ${chatId}, пропускаємо`);
-            continue;
-        }
-        
         const registrations = userEventRegistrations[chatId];
         
         for (const reg of registrations) {
+            const recipientChatId = await resolveReminderRecipientChatId(chatId, reg, recipientCache);
+            const reminderSettings = getReminderSettingsForChat(recipientChatId);
+            if (reminderSettings.enabled === false) {
+                console.log(`ℹ️ Нагадування вимкнені для ${recipientChatId}, пропускаємо`);
+                continue;
+            }
+
             const resolvedEvent = resolveCurrentEventForReminderRegistration(reg, eventsById, allEvents);
             if (!resolvedEvent || !resolvedEvent.date || resolvedEvent.date <= now) {
                 continue;
@@ -1958,7 +2022,7 @@ async function checkAndSendReminders() {
                         timeZone: APP_TIME_ZONE
                     });
                     
-                    await bot.sendMessage(chatId, 
+                    await bot.sendMessage(recipientChatId, 
                         `⏰ <b>Нагадування про захід</b>\n\n` +
                         `Незабаром у вас захід:\n` +
                         `📅 ${reg.eventName}\n` +
@@ -1971,9 +2035,9 @@ async function checkAndSendReminders() {
                     
                     reg.reminded24h = true;
                     hasReminderChanges = true;
-                    console.log(`⏰ Відправлено нагадування (24 год) для ${chatId} про "${reg.eventName}"`);
+                    console.log(`⏰ Відправлено нагадування (24 год) для ${recipientChatId} про "${reg.eventName}"`);
                 } catch (error) {
-                    console.error(`❌ Помилка відправки нагадування (24 год) для ${chatId}:`, error);
+                    console.error(`❌ Помилка відправки нагадування (24 год) для ${recipientChatId}:`, error);
                 }
             }
             
@@ -2005,7 +2069,7 @@ async function checkAndSendReminders() {
                         timeLeftMsg = `залишилось ${roundedMinutesUntilEvent} хвилин`;
                     }
                     
-                    await bot.sendMessage(chatId, 
+                    await bot.sendMessage(recipientChatId, 
                         `⏰ <b>Нагадування про захід</b>\n\n` +
                         `Скоро починається захід:\n` +
                         `📅 ${reg.eventName}\n` +
@@ -2019,9 +2083,9 @@ async function checkAndSendReminders() {
                     
                     reg.reminded1h = true;
                     hasReminderChanges = true;
-                    console.log(`⏰ Відправлено нагадування (1 год) для ${chatId} про "${reg.eventName}"`);
+                    console.log(`⏰ Відправлено нагадування (1 год) для ${recipientChatId} про "${reg.eventName}"`);
                 } catch (error) {
-                    console.error(`❌ Помилка відправки нагадування (1 год) для ${chatId}:`, error);
+                    console.error(`❌ Помилка відправки нагадування (1 год) для ${recipientChatId}:`, error);
                 }
             }
         }
