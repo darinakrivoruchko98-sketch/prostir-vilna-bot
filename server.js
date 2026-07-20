@@ -348,8 +348,16 @@ const REMINDER_RESTORE_CACHE_MS = 60 * 1000;
 const reminderRestoreInFlight = new Map();
 const REMINDERS_STATE_PATH = process.env.REMINDERS_STATE_PATH || path.join(__dirname, 'data', 'reminders-state.json');
 const SEEN_USERS_PATH = process.env.SEEN_USERS_PATH || path.join(__dirname, 'data', 'seen-users.json');
+const REMINDERS_STATE_META_KEY = '_meta';
+const FEEDBACK_PROMPT_HOUR = 19;
+const FEEDBACK_PROMPT_MINUTE = 0;
+const FEEDBACK_HISTORY_DAYS_TO_KEEP = 30;
+const FEEDBACK_BUTTON_YES = '✅ Так, залишити відгук';
+const FEEDBACK_BUTTON_NO = '❌ Ні, дякую';
 
 let seenChatIds = new Set();
+let dailyFeedbackCandidatesByDate = {};
+let feedbackRequestStatusByDate = {};
 
 function createDefaultReminderSettings(enabled = true) {
     return {
@@ -708,6 +716,211 @@ function recordSeenChatId(chatId) {
     saveSeenUsersToDisk();
 }
 
+function formatDateKeyInAppTimeZone(dateInput) {
+    const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+    if (Number.isNaN(date.getTime())) {
+        return '';
+    }
+
+    return new Intl.DateTimeFormat('sv-SE', {
+        timeZone: APP_TIME_ZONE,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).format(date);
+}
+
+function formatFeedbackDateLabel(dateKey) {
+    const match = String(dateKey || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+        return '';
+    }
+    return `${match[3]}.${match[2]}.${match[1]}`;
+}
+
+function ensureFeedbackDateBucket(dateKey) {
+    if (!dateKey) return null;
+    if (!dailyFeedbackCandidatesByDate[dateKey]) {
+        dailyFeedbackCandidatesByDate[dateKey] = {};
+    }
+    return dailyFeedbackCandidatesByDate[dateKey];
+}
+
+function getFeedbackEventsForChatByDate(chatId, dateKey) {
+    const chatKey = String(chatId || '').trim();
+    if (!chatKey || !dateKey) return [];
+    const dayBucket = dailyFeedbackCandidatesByDate[dateKey] || {};
+    const events = dayBucket[chatKey];
+    return Array.isArray(events) ? events.filter(Boolean) : [];
+}
+
+function recordFeedbackCandidate(chatId, eventDate, eventName) {
+    const chatKey = String(chatId || '').trim();
+    const dateKey = formatDateKeyInAppTimeZone(eventDate);
+    const cleanName = String(eventName || '').trim();
+    if (!chatKey || !dateKey || !cleanName) return;
+
+    const dayBucket = ensureFeedbackDateBucket(dateKey);
+    if (!dayBucket[chatKey]) {
+        dayBucket[chatKey] = [];
+    }
+
+    if (!dayBucket[chatKey].includes(cleanName)) {
+        dayBucket[chatKey].push(cleanName);
+    }
+}
+
+function removeFeedbackCandidate(chatId, eventDate, eventName) {
+    const chatKey = String(chatId || '').trim();
+    const dateKey = formatDateKeyInAppTimeZone(eventDate);
+    const cleanName = String(eventName || '').trim();
+    if (!chatKey || !dateKey || !cleanName || !dailyFeedbackCandidatesByDate[dateKey]) {
+        return;
+    }
+
+    const currentEvents = Array.isArray(dailyFeedbackCandidatesByDate[dateKey][chatKey])
+        ? dailyFeedbackCandidatesByDate[dateKey][chatKey]
+        : [];
+    const nextEvents = currentEvents.filter((item) => item !== cleanName);
+
+    if (nextEvents.length > 0) {
+        dailyFeedbackCandidatesByDate[dateKey][chatKey] = nextEvents;
+    } else {
+        delete dailyFeedbackCandidatesByDate[dateKey][chatKey];
+    }
+
+    if (Object.keys(dailyFeedbackCandidatesByDate[dateKey]).length === 0) {
+        delete dailyFeedbackCandidatesByDate[dateKey];
+    }
+}
+
+function setFeedbackStatus(chatId, dateKey, status) {
+    const chatKey = String(chatId || '').trim();
+    if (!chatKey || !dateKey) return;
+    if (!feedbackRequestStatusByDate[dateKey]) {
+        feedbackRequestStatusByDate[dateKey] = {};
+    }
+    feedbackRequestStatusByDate[dateKey][chatKey] = status;
+}
+
+function getFeedbackStatus(chatId, dateKey) {
+    const chatKey = String(chatId || '').trim();
+    if (!chatKey || !dateKey) return '';
+    return String((feedbackRequestStatusByDate[dateKey] || {})[chatKey] || '');
+}
+
+function getPendingFeedbackDateForChat(chatId) {
+    const chatKey = String(chatId || '').trim();
+    if (!chatKey) return '';
+
+    const sortedDateKeys = Object.keys(feedbackRequestStatusByDate || {}).sort().reverse();
+    for (const dateKey of sortedDateKeys) {
+        if (feedbackRequestStatusByDate[dateKey] && feedbackRequestStatusByDate[dateKey][chatKey] === 'requested') {
+            return dateKey;
+        }
+    }
+
+    return '';
+}
+
+function normalizeFeedbackState() {
+    const normalizeEventsByDate = (input) => {
+        const result = {};
+        for (const [dateKey, byChat] of Object.entries(input || {})) {
+            const normalizedDateKey = String(dateKey || '').trim();
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDateKey)) continue;
+            if (!byChat || typeof byChat !== 'object') continue;
+
+            const bucket = {};
+            for (const [chatId, eventNames] of Object.entries(byChat)) {
+                const chatKey = String(chatId || '').trim();
+                if (!chatKey) continue;
+                const names = Array.isArray(eventNames)
+                    ? eventNames.map((item) => String(item || '').trim()).filter(Boolean)
+                    : [];
+                if (names.length > 0) {
+                    bucket[chatKey] = Array.from(new Set(names));
+                }
+            }
+
+            if (Object.keys(bucket).length > 0) {
+                result[normalizedDateKey] = bucket;
+            }
+        }
+        return result;
+    };
+
+    const normalizeStatusesByDate = (input) => {
+        const allowed = new Set(['requested', 'declined', 'submitted']);
+        const result = {};
+
+        for (const [dateKey, byChat] of Object.entries(input || {})) {
+            const normalizedDateKey = String(dateKey || '').trim();
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDateKey)) continue;
+            if (!byChat || typeof byChat !== 'object') continue;
+
+            const bucket = {};
+            for (const [chatId, status] of Object.entries(byChat)) {
+                const chatKey = String(chatId || '').trim();
+                const normalizedStatus = String(status || '').trim();
+                if (!chatKey || !allowed.has(normalizedStatus)) continue;
+                bucket[chatKey] = normalizedStatus;
+            }
+
+            if (Object.keys(bucket).length > 0) {
+                result[normalizedDateKey] = bucket;
+            }
+        }
+
+        return result;
+    };
+
+    dailyFeedbackCandidatesByDate = normalizeEventsByDate(dailyFeedbackCandidatesByDate);
+    feedbackRequestStatusByDate = normalizeStatusesByDate(feedbackRequestStatusByDate);
+}
+
+function pruneFeedbackState(referenceDate = new Date()) {
+    const startDate = new Date(referenceDate);
+    startDate.setDate(startDate.getDate() - FEEDBACK_HISTORY_DAYS_TO_KEEP);
+    const oldestAllowedKey = formatDateKeyInAppTimeZone(startDate);
+    if (!oldestAllowedKey) return;
+
+    for (const dateKey of Object.keys(dailyFeedbackCandidatesByDate || {})) {
+        if (dateKey < oldestAllowedKey) {
+            delete dailyFeedbackCandidatesByDate[dateKey];
+        }
+    }
+
+    for (const dateKey of Object.keys(feedbackRequestStatusByDate || {})) {
+        if (dateKey < oldestAllowedKey) {
+            delete feedbackRequestStatusByDate[dateKey];
+        }
+    }
+}
+
+function rebuildFeedbackCandidatesFromActiveRegistrations() {
+    for (const [chatId, registrations] of Object.entries(userEventRegistrations || {})) {
+        for (const registration of registrations || []) {
+            if (!registration || !registration.eventDate || !registration.eventName) continue;
+            recordFeedbackCandidate(chatId, registration.eventDate, registration.eventName);
+        }
+    }
+}
+
+function getCurrentTimePartsInAppTimeZone(dateInput = new Date()) {
+    const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+    const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: APP_TIME_ZONE,
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit'
+    }).formatToParts(date);
+
+    const hour = Number(parts.find((item) => item.type === 'hour')?.value || 0);
+    const minute = Number(parts.find((item) => item.type === 'minute')?.value || 0);
+    return { hour, minute };
+}
+
 function loadReminderStateFromDisk() {
     if (!fs.existsSync(REMINDERS_STATE_PATH)) {
         return;
@@ -716,11 +929,23 @@ function loadReminderStateFromDisk() {
     try {
         const raw = fs.readFileSync(REMINDERS_STATE_PATH, 'utf8');
         const parsed = JSON.parse(raw || '{}');
+        const meta = parsed && typeof parsed === 'object' ? parsed[REMINDERS_STATE_META_KEY] : null;
         const restored = {};
         const restoredFriendRegistrations = {};
         const now = new Date();
 
+        if (meta && typeof meta === 'object') {
+            dailyFeedbackCandidatesByDate = meta.dailyFeedbackCandidatesByDate || {};
+            feedbackRequestStatusByDate = meta.feedbackRequestStatusByDate || {};
+        }
+
+        normalizeFeedbackState();
+        pruneFeedbackState(now);
+
         for (const chatId of Object.keys(parsed || {})) {
+            if (chatId === REMINDERS_STATE_META_KEY) {
+                continue;
+            }
             const entry = parsed[chatId];
             const rawRegistrations = Array.isArray(entry)
                 ? entry
@@ -760,6 +985,7 @@ function loadReminderStateFromDisk() {
 
         userEventRegistrations = restored;
         friendEventRegistrations = restoredFriendRegistrations;
+        rebuildFeedbackCandidatesFromActiveRegistrations();
         const restoredCount = Object.values(userEventRegistrations).reduce((sum, items) => sum + items.length, 0);
         const restoredFriendCount = Object.values(friendEventRegistrations).reduce((sum, items) => sum + items.length, 0);
         console.log(`♻️ Відновлено ${restoredCount} реєстрацій нагадувань та ${restoredFriendCount} реєстрацій подруг з ${REMINDERS_STATE_PATH}`);
@@ -925,6 +1151,9 @@ function getReminderSlotConfig(slotKey) {
 
 function saveReminderStateToDisk() {
     try {
+        normalizeFeedbackState();
+        pruneFeedbackState(new Date());
+
         const payload = {};
         const chatIds = new Set([
             ...Object.keys(userEventRegistrations || {}),
@@ -1010,6 +1239,15 @@ function saveReminderStateToDisk() {
                 registrations: serializedRegistrations,
                 friendRegistrations: serializedFriendRegistrations,
                 settings: serializeReminderSettings(userSettings)
+            };
+        }
+
+        const hasFeedbackCandidates = Object.keys(dailyFeedbackCandidatesByDate || {}).length > 0;
+        const hasFeedbackStatuses = Object.keys(feedbackRequestStatusByDate || {}).length > 0;
+        if (hasFeedbackCandidates || hasFeedbackStatuses) {
+            payload[REMINDERS_STATE_META_KEY] = {
+                dailyFeedbackCandidatesByDate,
+                feedbackRequestStatusByDate
             };
         }
 
@@ -2135,6 +2373,86 @@ async function checkAndSendReminders() {
 
     if (hasReminderChanges) {
         saveReminderStateToDisk();
+    }
+}
+
+function resolveFeedbackUserName(chatId, msgFrom = null) {
+    const userProfile = users[chatId] || {};
+    const knownProfile = knownUsers[chatId] || {};
+    const fullName = String(userProfile.name || knownProfile.name || '').trim();
+    if (fullName) {
+        return fullName;
+    }
+
+    const firstName = String((msgFrom && msgFrom.first_name) || '').trim();
+    const lastName = String((msgFrom && msgFrom.last_name) || '').trim();
+    const username = String((msgFrom && msgFrom.username) || '').trim();
+
+    const fallbackName = `${firstName} ${lastName}`.trim();
+    if (fallbackName) {
+        return fallbackName;
+    }
+    if (username) {
+        return `@${username.replace(/^@+/, '')}`;
+    }
+    return String(chatId || 'Невідомо');
+}
+
+async function sendDailyFeedbackPrompt(chatId, dateKey) {
+    await bot.sendMessage(chatId,
+        'Дякуємо, що сьогодні були з нами 💛\nНам дуже важлива ваша думка. Бажаєте залишити відгук про сьогоднішні заходи?', {
+        reply_markup: {
+            keyboard: [
+                [{ text: FEEDBACK_BUTTON_YES }],
+                [{ text: FEEDBACK_BUTTON_NO }]
+            ],
+            resize_keyboard: true
+        }
+    });
+
+    setFeedbackStatus(chatId, dateKey, 'requested');
+}
+
+async function checkAndSendDailyFeedbackRequests() {
+    const now = new Date();
+    const { hour, minute } = getCurrentTimePartsInAppTimeZone(now);
+    if (hour < FEEDBACK_PROMPT_HOUR || (hour === FEEDBACK_PROMPT_HOUR && minute < FEEDBACK_PROMPT_MINUTE)) {
+        return;
+    }
+
+    const dateKey = formatDateKeyInAppTimeZone(now);
+    const todayCandidates = dailyFeedbackCandidatesByDate[dateKey] || {};
+    const chatIds = Object.keys(todayCandidates);
+    if (chatIds.length === 0) {
+        return;
+    }
+
+    let sentCount = 0;
+    let hasStateChanges = false;
+
+    for (const chatId of chatIds) {
+        const events = getFeedbackEventsForChatByDate(chatId, dateKey);
+        if (events.length === 0) {
+            continue;
+        }
+
+        const currentStatus = getFeedbackStatus(chatId, dateKey);
+        if (currentStatus) {
+            continue;
+        }
+
+        try {
+            await sendDailyFeedbackPrompt(chatId, dateKey);
+            sentCount += 1;
+            hasStateChanges = true;
+        } catch (error) {
+            console.error(`❌ Не вдалося надіслати запит відгуку chatId=${chatId}:`, error && error.message ? error.message : error);
+        }
+    }
+
+    if (hasStateChanges) {
+        saveReminderStateToDisk();
+        console.log(`📝 Надіслано ${sentCount} запитів на відгук за ${dateKey}`);
     }
 }
 
@@ -4330,10 +4648,17 @@ async function initSheets() {
             console.error('❌ Помилка першої перевірки нагадувань:', error);
         });
 
+        checkAndSendDailyFeedbackRequests().catch((error) => {
+            console.error('❌ Помилка першої перевірки запитів на відгук:', error);
+        });
+
         // Запускаємо перевірку нагадувань щохвилини
         setInterval(() => {
             checkAndSendReminders().catch((error) => {
                 console.error('❌ Помилка перевірки нагадувань:', error);
+            });
+            checkAndSendDailyFeedbackRequests().catch((error) => {
+                console.error('❌ Помилка перевірки запитів на відгук:', error);
             });
         }, 60 * 1000); // 1 хвилина
         
@@ -5441,6 +5766,7 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
                 reminded24h: false,
                 reminded1h: false
             });
+            recordFeedbackCandidate(chatId, evObj.date, eventName);
             saveReminderStateToDisk();
             logger.info(`Saved reminder registration: ${chatId} → ${eventName}`);
             // record undo action for this chat
@@ -5585,6 +5911,7 @@ async function unregisterFromEvent(chatId, eventId) {
     // Видаляємо з пам'яті користувача
     const registration = userEventRegistrations[chatId][regIndex];
     userEventRegistrations[chatId].splice(regIndex, 1);
+    removeFeedbackCandidate(chatId, registration.eventDate, registration.eventName);
 
     // Очищаємо пустий масив
     if (userEventRegistrations[chatId].length === 0) {
@@ -7766,6 +8093,83 @@ bot.on('message', async (msg) => {
     let user = users[chatId];
     if (msg.from && msg.from.username) {
         user.username = String(msg.from.username).trim();
+    }
+
+    if (user.context === 'daily-feedback-write' && user.pendingFeedbackDateKey) {
+        const dateKey = String(user.pendingFeedbackDateKey || '');
+        const feedbackText = String(text || '').trim();
+        if (!feedbackText) {
+            await bot.sendMessage(chatId, 'Будь ласка, напишіть текст відгуку повідомленням.');
+            return;
+        }
+
+        const dateLabel = formatFeedbackDateLabel(dateKey) || dateKey;
+        const eventNames = getFeedbackEventsForChatByDate(chatId, dateKey);
+        const eventsBlock = eventNames.length > 0
+            ? eventNames.map((eventName) => `- ${eventName}`).join('\n')
+            : '- (події не знайдено)';
+        const userName = resolveFeedbackUserName(chatId, msg.from || null);
+
+        const adminMessage =
+            '📝 Новий відгук\n' +
+            `👤 Користувач: ${userName}\n` +
+            `📅 Дата: ${dateLabel}\n` +
+            '📌 Заходи:\n' +
+            `${eventsBlock}\n\n` +
+            '💬 Відгук:\n' +
+            `"${feedbackText}"`;
+
+        try {
+            if (APPEALS_GROUP_ID) {
+                await bot.sendMessage(APPEALS_GROUP_ID, adminMessage);
+            } else {
+                console.warn('⚠️ APPEALS_GROUP_ID не встановлено, відгук не переслано в адмін-групу');
+            }
+
+            setFeedbackStatus(chatId, dateKey, 'submitted');
+            delete user.pendingFeedbackDateKey;
+            user.context = null;
+            saveReminderStateToDisk();
+
+            await bot.sendMessage(chatId,
+                'Дякуємо за ваш відгук 💛\nМи раді були вас почути 😊', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(chatId),
+                    resize_keyboard: true
+                }
+            });
+        } catch (error) {
+            console.error('❌ Помилка обробки відгуку:', error && error.message ? error.message : error);
+            await bot.sendMessage(chatId, '❌ Не вдалося надіслати відгук. Спробуйте ще раз трохи пізніше.');
+        }
+        return;
+    }
+
+    const pendingFeedbackDateKey = getPendingFeedbackDateForChat(chatId);
+    if (text === FEEDBACK_BUTTON_YES && pendingFeedbackDateKey) {
+        user.context = 'daily-feedback-write';
+        user.pendingFeedbackDateKey = pendingFeedbackDateKey;
+        await bot.sendMessage(chatId,
+            'Напишіть, будь ласка, ваш відгук одним повідомленням. Ми передамо його команді 💛', {
+            reply_markup: {
+                keyboard: [[{ text: NAVIGATION_BUTTONS.menu }]],
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
+    if (text === FEEDBACK_BUTTON_NO && pendingFeedbackDateKey) {
+        setFeedbackStatus(chatId, pendingFeedbackDateKey, 'declined');
+        saveReminderStateToDisk();
+        await bot.sendMessage(chatId,
+            'Дякуємо, що були з нами 💛\nМожливо, наступного разу ви захочете поділитися своїми враженнями 😔', {
+            reply_markup: {
+                keyboard: getMainMenuKeyboard(chatId),
+                resize_keyboard: true
+            }
+        });
+        return;
     }
 
     // (Старий код waitingForLogin видалено - тепер /start автоматично обробляє профіль)
@@ -11199,6 +11603,7 @@ bot.on('message', async (msg) => {
             delete users[chatId].pendingFriendUnregKey;
             delete users[chatId].pendingFriendUnregEventName;
             delete users[chatId].pendingFriendRegistrantName;
+            delete users[chatId].pendingFeedbackDateKey;
             clearFriendRegistrationState(users[chatId]);
             clearConsultationState(users[chatId]);
             users[chatId].step = 0;
