@@ -5,4 +5,4 @@ nixPkgs = ["nodejs_20"]
 cmds = ["npm ci"]
 
 [start]
-cmd = "node server.js"
+cmd = "node bootstrap.js"

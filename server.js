@@ -14,6 +14,8 @@ const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKE
 const PORT = process.env.PORT || 8080;
 const GROUP_ID = process.env.GROUP_ID || config.GROUP_ID;
 const CHAT_ID = process.env.CHAT_ID || config.CHAT_ID;
+const APPEALS_GROUP_ID = Number(process.env.APPEALS_GROUP_ID || config.APPEALS_GROUP_ID || '-1003802751255'); // Група "Відгуки чат-бот Вільна"
+globalThis.APPEALS_GROUP_ID = APPEALS_GROUP_ID;
 const AI_API_KEY = process.env.AI_API_KEY || process.env.OPENAI_API_KEY || '';
 const AI_API_URL = process.env.AI_API_URL || 'https://api.openai.com/v1/chat/completions';
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
@@ -75,6 +77,7 @@ console.log("🗂️ Аркуш консультацій (Соц):", SOCIAL_CONS
 console.log("🗂️ Аркуш консультацій (Псих):", PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME);
 console.log("🕐 Часова зона бота:", APP_TIME_ZONE);
 console.log(`🧠 AI режим: ${AI_ENABLED ? `увімкнено (${AI_MODEL})` : 'вимкнено (не задано AI_API_KEY)'}`);
+console.log(`[BOOTCHECK] APPEALS_GROUP_ID=${APPEALS_GROUP_ID}`);
 
 if (!TOKEN) {
     console.error("TOKEN не встановлено");

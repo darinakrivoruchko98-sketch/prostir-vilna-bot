@@ -1,9 +1,9 @@
 {
   "name": "vilna-bot",
   "version": "1.0.0",
-  "main": "server.js",
+  "main": "bootstrap.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node bootstrap.js"
   },
   "dependencies": {
     "dotenv": "^17.3.1",
