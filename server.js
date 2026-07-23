@@ -14,7 +14,6 @@ const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKE
 const PORT = process.env.PORT || 8080;
 const GROUP_ID = process.env.GROUP_ID || config.GROUP_ID;
 const CHAT_ID = process.env.CHAT_ID || config.CHAT_ID;
-const APPEALS_GROUP_ID = Number(process.env.APPEALS_GROUP_ID || '-1003802751255'); // Група "Відгуки чат-бот Вільна"
 const AI_API_KEY = process.env.AI_API_KEY || process.env.OPENAI_API_KEY || '';
 const AI_API_URL = process.env.AI_API_URL || 'https://api.openai.com/v1/chat/completions';
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
@@ -8120,10 +8119,10 @@ bot.on('message', async (msg) => {
             `"${feedbackText}"`;
 
         try {
-            if (APPEALS_GROUP_ID) {
-                await bot.sendMessage(APPEALS_GROUP_ID, adminMessage);
+            if (GROUP_ID) {
+                await bot.sendMessage(GROUP_ID, adminMessage);
             } else {
-                console.warn('⚠️ APPEALS_GROUP_ID не встановлено, відгук не переслано в адмін-групу');
+                console.warn('⚠️ GROUP_ID не встановлено, відгук не переслано в адмін-групу');
             }
 
             setFeedbackStatus(chatId, dateKey, 'submitted');
