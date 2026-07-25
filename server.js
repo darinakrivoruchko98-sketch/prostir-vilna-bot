@@ -354,12 +354,14 @@ const REMINDERS_STATE_META_KEY = '_meta';
 const FEEDBACK_PROMPT_HOUR = 19;
 const FEEDBACK_PROMPT_MINUTE = 0;
 const FEEDBACK_HISTORY_DAYS_TO_KEEP = 30;
+const MANUAL_NOTE_CONFIRMATION_DELAY_MS = Number(process.env.MANUAL_NOTE_CONFIRMATION_DELAY_MS || 15000);
 const FEEDBACK_BUTTON_YES = '✅ Так, залишити відгук';
 const FEEDBACK_BUTTON_NO = '❌ Ні, дякую';
 
 let seenChatIds = new Set();
 let dailyFeedbackCandidatesByDate = {};
 let feedbackRequestStatusByDate = {};
+const pendingManualNoteConfirmationTimers = new Map();
 
 function createDefaultReminderSettings(enabled = true) {
     return {
@@ -541,7 +543,12 @@ function mergeReminderDuplicates(registrations, isFriend = false) {
 
     for (const raw of registrations) {
         if (!raw) continue;
-
+                        reminded1h: registration.reminded1h === true,
+                        manualRegistrationSource: String(registration.manualRegistrationSource || ''),
+                        manualRegistrationDetectedAt: registration.manualRegistrationDetectedAt
+                            ? String(registration.manualRegistrationDetectedAt)
+                            : '',
+                        manualRegistrationConfirmed: registration.manualRegistrationConfirmed === true
         const eventId = String(raw.eventId || '').trim();
         const registrantName = String(raw.registrantName || '').trim();
         const registrantPhone = String(raw.registrantPhone || '').trim();
@@ -661,7 +668,10 @@ function normalizeReminderRegistration(raw) {
         registrantName: String(raw.registrantName || '').trim(),
         registrantPhone: String(raw.registrantPhone || '').trim(),
         reminded24h: raw.reminded24h === true,
-        reminded1h: raw.reminded1h === true
+        reminded1h: raw.reminded1h === true,
+        manualRegistrationSource: String(raw.manualRegistrationSource || '').trim(),
+        manualRegistrationDetectedAt: raw.manualRegistrationDetectedAt ? String(raw.manualRegistrationDetectedAt) : '',
+        manualRegistrationConfirmed: raw.manualRegistrationConfirmed === true
     };
 }
 
@@ -988,6 +998,7 @@ function loadReminderStateFromDisk() {
         userEventRegistrations = restored;
         friendEventRegistrations = restoredFriendRegistrations;
         rebuildFeedbackCandidatesFromActiveRegistrations();
+        schedulePendingManualNoteConfirmations();
         const restoredCount = Object.values(userEventRegistrations).reduce((sum, items) => sum + items.length, 0);
         const restoredFriendCount = Object.values(friendEventRegistrations).reduce((sum, items) => sum + items.length, 0);
         console.log(`♻️ Відновлено ${restoredCount} реєстрацій нагадувань та ${restoredFriendCount} реєстрацій подруг з ${REMINDERS_STATE_PATH}`);
@@ -1191,7 +1202,12 @@ function saveReminderStateToDisk() {
                         registrantName: String(registration.registrantName || ''),
                         registrantPhone: String(registration.registrantPhone || ''),
                         reminded24h: registration.reminded24h === true,
-                        reminded1h: registration.reminded1h === true
+                        reminded1h: registration.reminded1h === true,
+                        manualRegistrationSource: String(registration.manualRegistrationSource || ''),
+                        manualRegistrationDetectedAt: registration.manualRegistrationDetectedAt
+                            ? String(registration.manualRegistrationDetectedAt)
+                            : '',
+                        manualRegistrationConfirmed: registration.manualRegistrationConfirmed === true
                     };
                 })
                 .filter(Boolean);
@@ -1984,6 +2000,250 @@ async function resolveReminderRecipientChatId(defaultChatId, registration, cache
         cache.set(normalizedPhone, finalChatId);
     }
     return finalChatId;
+}
+
+async function resolveChatIdByPhone(phone, cache = null) {
+    const normalizedPhone = normalizeRegistrantPhone(phone);
+    if (!normalizedPhone) {
+        return '';
+    }
+
+    if (cache && cache.has(normalizedPhone)) {
+        return cache.get(normalizedPhone) || '';
+    }
+
+    let resolvedChatId = '';
+
+    for (const [rawChatId, profile] of Object.entries(knownUsers || {})) {
+        if (normalizeRegistrantPhone(profile && profile.phone) === normalizedPhone) {
+            const parsed = parsePositiveChatId(rawChatId);
+            if (parsed) {
+                resolvedChatId = String(parsed);
+                break;
+            }
+        }
+    }
+
+    if (!resolvedChatId) {
+        for (const [rawChatId, profile] of Object.entries(users || {})) {
+            if (normalizeRegistrantPhone(profile && profile.phone) === normalizedPhone) {
+                const parsed = parsePositiveChatId(rawChatId);
+                if (parsed) {
+                    resolvedChatId = String(parsed);
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!resolvedChatId) {
+        try {
+            const knownByPhone = await loadKnownUserByPhone(normalizedPhone);
+            const parsed = parsePositiveChatId(knownByPhone && knownByPhone.chatId);
+            if (parsed) {
+                resolvedChatId = String(parsed);
+            }
+        } catch (e) {
+            logger.warn('resolveChatIdByPhone: loadKnownUserByPhone failed', e && e.message ? e.message : e);
+        }
+    }
+
+    if (cache) {
+        cache.set(normalizedPhone, resolvedChatId);
+    }
+
+    return resolvedChatId;
+}
+
+function buildManualNoteConfirmationKey(chatId, registration) {
+    const normalizedChatId = String(chatId || '').trim();
+    const eventId = String(registration && registration.eventId || '').trim();
+    const phoneKey = normalizeRegistrantPhone(registration && registration.registrantPhone);
+    return `${normalizedChatId}::${eventId}::${phoneKey}`;
+}
+
+function getRegistrationConfirmationDate(registration) {
+    const parsed = registration && registration.eventDate instanceof Date
+        ? registration.eventDate
+        : new Date(registration && registration.eventDate);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isManualNoteRegistration(registration) {
+    return String(registration && registration.manualRegistrationSource || '').trim() === 'sheet-note';
+}
+
+function getManualRegistrationDetectedAtMs(registration) {
+    const raw = registration && registration.manualRegistrationDetectedAt
+        ? String(registration.manualRegistrationDetectedAt)
+        : '';
+    if (!raw) {
+        return Date.now();
+    }
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? Date.now() : parsed.getTime();
+}
+
+async function sendManualRegistrationConfirmation(chatId, registration) {
+    const eventDate = getRegistrationConfirmationDate(registration);
+    const eventName = String(registration && registration.eventName || '').trim() || 'обраний захід';
+    const eventId = String(registration && registration.eventId || '').trim();
+
+    let details = `📌 ${eventName}`;
+    if (eventDate) {
+        const dateStr = eventDate.toLocaleDateString('uk-UA', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            timeZone: APP_TIME_ZONE
+        });
+        const timeStr = eventDate.toLocaleTimeString('uk-UA', {
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZone: APP_TIME_ZONE
+        });
+        details += `\n🕐 ${dateStr} о ${timeStr}`;
+    }
+
+    const replyMarkup = eventId
+        ? { inline_keyboard: [[{ text: 'Відмінити', callback_data: `UNDO_REGISTER:${eventId}` }]] }
+        : undefined;
+
+    await bot.sendMessage(String(chatId), `✅ <b>Вас зареєстровано на захід</b>\n\n${details}`, {
+        parse_mode: 'HTML',
+        reply_markup: replyMarkup
+    });
+}
+
+function scheduleManualNoteConfirmation(chatId, registration, delayMs = MANUAL_NOTE_CONFIRMATION_DELAY_MS) {
+    const chatKey = String(chatId || '').trim();
+    if (!chatKey || !registration || registration.manualRegistrationConfirmed === true) {
+        return false;
+    }
+
+    const confirmationKey = buildManualNoteConfirmationKey(chatKey, registration);
+    if (!confirmationKey || pendingManualNoteConfirmationTimers.has(confirmationKey)) {
+        return false;
+    }
+
+    const timeoutMs = Math.max(0, Number(delayMs) || 0);
+    const timer = setTimeout(async () => {
+        pendingManualNoteConfirmationTimers.delete(confirmationKey);
+
+        const registrations = Array.isArray(userEventRegistrations[chatKey])
+            ? userEventRegistrations[chatKey]
+            : [];
+        const target = registrations.find((item) => buildManualNoteConfirmationKey(chatKey, item) === confirmationKey);
+        if (!target || target.manualRegistrationConfirmed === true || !isManualNoteRegistration(target)) {
+            return;
+        }
+
+        try {
+            await sendManualRegistrationConfirmation(chatKey, target);
+            target.manualRegistrationConfirmed = true;
+            saveReminderStateToDisk();
+        } catch (error) {
+            console.error(`❌ Не вдалося надіслати підтвердження ручної реєстрації для ${chatKey}:`, error && error.message ? error.message : error);
+        }
+    }, timeoutMs);
+
+    pendingManualNoteConfirmationTimers.set(confirmationKey, timer);
+    return true;
+}
+
+function schedulePendingManualNoteConfirmations() {
+    const nowMs = Date.now();
+
+    for (const [chatId, registrations] of Object.entries(userEventRegistrations || {})) {
+        for (const registration of registrations || []) {
+            if (!registration || !isManualNoteRegistration(registration) || registration.manualRegistrationConfirmed === true) {
+                continue;
+            }
+
+            const eventDate = getRegistrationConfirmationDate(registration);
+            if (!eventDate || eventDate <= new Date()) {
+                continue;
+            }
+
+            const detectedAtMs = getManualRegistrationDetectedAtMs(registration);
+            const remainingDelay = MANUAL_NOTE_CONFIRMATION_DELAY_MS - (nowMs - detectedAtMs);
+            scheduleManualNoteConfirmation(chatId, registration, remainingDelay);
+        }
+    }
+}
+
+async function syncManualRegistrationsFromScheduleNotes() {
+    if (!SPREADSHEET_ID || !sheetsClient) {
+        return;
+    }
+
+    const noteIndex = await buildScheduleEventNoteIndex();
+    if (noteIndex.size === 0) {
+        return;
+    }
+
+    const now = new Date();
+    let hasReminderChanges = false;
+    const resolveCache = new Map();
+
+    for (const event of getAllEvents()) {
+        if (!event || !event.date || event.date <= now) {
+            continue;
+        }
+
+        const eventKey = getEventIdentityKey(event);
+        const noteText = eventKey ? noteIndex.get(eventKey) : '';
+        if (!noteText) {
+            continue;
+        }
+
+        const registrants = parseRegistrantsFromNote(noteText);
+        for (const registrant of registrants) {
+            const phoneKey = normalizeRegistrantPhone(registrant && registrant.phone);
+            if (!phoneKey) {
+                continue;
+            }
+
+            const recipientChatId = await resolveChatIdByPhone(phoneKey, resolveCache);
+            if (!recipientChatId) {
+                continue;
+            }
+
+            if (!userEventRegistrations[recipientChatId]) {
+                userEventRegistrations[recipientChatId] = [];
+            }
+
+            const alreadyAdded = userEventRegistrations[recipientChatId]
+                .some((registration) => registration.eventId === event.id && normalizeRegistrantPhone(registration.registrantPhone) === phoneKey);
+            if (alreadyAdded) {
+                continue;
+            }
+
+            const registration = {
+                eventId: event.id,
+                eventName: event.name,
+                eventDate: event.date,
+                registrantName: String(registrant && registrant.name || '').trim(),
+                registrantPhone: String(registrant && registrant.phone || '').trim(),
+                reminded24h: false,
+                reminded1h: false,
+                manualRegistrationSource: 'sheet-note',
+                manualRegistrationDetectedAt: new Date().toISOString(),
+                manualRegistrationConfirmed: false
+            };
+
+            userEventRegistrations[recipientChatId].push(registration);
+            recordFeedbackCandidate(recipientChatId, event.date, event.name);
+            hasReminderChanges = true;
+            scheduleManualNoteConfirmation(recipientChatId, registration, MANUAL_NOTE_CONFIRMATION_DELAY_MS);
+        }
+    }
+
+    if (hasReminderChanges) {
+        saveReminderStateToDisk();
+    }
+
+    schedulePendingManualNoteConfirmations();
 }
 
 async function notifyRegistrantAboutRegistration(registrarChatId, event, registrantProfile, options = {}) {
@@ -4247,6 +4507,7 @@ function clearFriendRegistrationState(user) {
 
     delete user.friendRegistrationMode;
     delete user.friendRegistrationDraft;
+    delete user.friendTargetChatId;
 }
 
 async function startFriendRegistrationFlow(chatId, user) {
@@ -4462,6 +4723,10 @@ async function startSelectedEventsRegistration(chatId, user, options = {}) {
         ? getActiveRegistrationDraft(user)
         : await resolveRegistrantFormData(chatId, user);
 
+    if (isFriendMode && !String(user.friendTargetChatId || '').trim()) {
+        user.friendTargetChatId = await resolveChatIdByPhone(registrantData.phone);
+    }
+
     if (!isFriendMode) {
         user.name = registrantData.name;
         user.phone = registrantData.phone;
@@ -4486,12 +4751,31 @@ async function startSelectedEventsRegistration(chatId, user, options = {}) {
         return;
     }
 
+    if (isFriendMode) {
+        let registrationOwnerChatId = String(user.friendTargetChatId || '').trim();
+        if (!registrationOwnerChatId) {
+            registrationOwnerChatId = String(chatId || '').trim();
+        }
+
+        try {
+            await appendRegistrationRow(registrationOwnerChatId, registrantData);
+        } catch (error) {
+            console.error('❌ Не вдалося синхронізувати дані подруги у таблицю перед реєстрацією:', error && error.message ? error.message : error);
+        }
+    }
+
     const { successEvents, alreadyRegisteredEvents, reserveEvents, failedEvents } = await completeSelectedEventsRegistration(
         chatId,
         user,
         registrantData.name,
         registrantData.phone,
-        { skipReminders: isFriendMode, reserveMode: user.afishaReserveMode === true }
+        {
+            skipReminders: isFriendMode,
+            reserveMode: user.afishaReserveMode === true,
+            reminderOwnerChatId: isFriendMode
+                ? String(user.friendTargetChatId || '').trim()
+                : String(chatId)
+        }
     );
 
     if (instantAfisha && !isFriendMode) {
@@ -4663,8 +4947,14 @@ async function initSheets() {
                 console.error('❌ Помилка перевірки запитів на відгук:', error);
             });
         }, 60 * 1000); // 1 хвилина
+
+        setInterval(() => {
+            syncManualRegistrationsFromScheduleNotes().catch((error) => {
+                console.error('❌ Помилка синхронізації ручних реєстрацій з нотаток:', error && error.message ? error.message : error);
+            });
+        }, 15 * 1000);
         
-        console.log('⏰ Система нагадувань активована (перевірка щохвилини)');
+        console.log('⏰ Система нагадувань активована (перевірка щохвилини, синхронізація нотаток кожні 15 сек)');
 
     } catch (err) {
         console.error("❌ Google Sheets не підключено:", err && err.message ? err.message : err);
@@ -4977,6 +5267,7 @@ async function loadEventsFromSheet() {
         // Додаткова діагностика
         const futureCount = events.filter(e => e.date > now).length;
         syncReminderRegistrationsWithEvents();
+        await syncManualRegistrationsFromScheduleNotes();
         console.log(`   📊 Поточний час: ${now.toLocaleString('uk-UA')}`);
         console.log(`   📊 Майбутніх заходів: ${futureCount} з ${events.length}`);
 
@@ -5701,6 +5992,9 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
 
     const skipReminders = options.skipReminders === true;
     const reserveMode = options.reserveMode === true;
+    const reminderOwnerChatId = skipReminders
+        ? String(options.reminderOwnerChatId || '').trim()
+        : String(options.reminderOwnerChatId || chatId || '').trim();
 
     const seatsLeft = await getSeatsLeft(eventId);
     if (seatsLeft <= 0) {
@@ -5791,6 +6085,29 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
                 registrantName: registrantProfile.name,
                 registrantPhone: registrantProfile.phone
             });
+
+            if (reminderOwnerChatId) {
+                if (!userEventRegistrations[reminderOwnerChatId]) {
+                    userEventRegistrations[reminderOwnerChatId] = [];
+                }
+
+                const ownerAlreadyAdded = userEventRegistrations[reminderOwnerChatId]
+                    .some((registration) => registration.eventId === eventId);
+                if (!ownerAlreadyAdded) {
+                    userEventRegistrations[reminderOwnerChatId].push({
+                        eventId,
+                        eventName,
+                        eventDate: evObj.date,
+                        registrantName: registrantProfile.name,
+                        registrantPhone: registrantProfile.phone,
+                        reminded24h: false,
+                        reminded1h: false
+                    });
+                    recordFeedbackCandidate(reminderOwnerChatId, evObj.date, eventName);
+                    logger.info(`Saved friend reminder registration: ${reminderOwnerChatId} → ${eventName} (${registrantProfile.name || 'без name'})`);
+                }
+            }
+
             saveReminderStateToDisk();
             logger.info(`Saved friend registration: ${chatId} → ${eventName} (${registrantProfile.name || 'без name'})`);
         }
@@ -5817,8 +6134,11 @@ async function registerForSelectedEventReserve(chatId, user, providedName, provi
     }
 
     const skipReminders = options.skipReminders === true;
+    const reminderOwnerChatId = skipReminders
+        ? String(options.reminderOwnerChatId || '').trim()
+        : String(options.reminderOwnerChatId || chatId || '').trim();
     const registrantProfile = await resolveRegistrantProfile(chatId, user, providedName || '', providedPhone || '');
-    registrantProfile.userId = String(chatId || '');
+    registrantProfile.userId = reminderOwnerChatId || String(chatId || '');
 
     const event = events.find((item) => item.id === eventId);
     if (!event) {
@@ -8743,8 +9063,19 @@ bot.on('message', async (msg) => {
                     friendMode: isFriendRegistrationMode(user)
                 });
                 
-                // Записуємо дані прямо в таблицю без пункту username
-                await appendRegistrationRow(chatId, registrationDraft);
+                // Для реєстрації подруги намагаємось прив'язати запис до її chatId за номером телефону.
+                let registrationOwnerChatId = isFriendRegistrationMode(user)
+                    ? ''
+                    : String(chatId || '').trim();
+                if (isFriendRegistrationMode(user)) {
+                    const friendChatId = await resolveChatIdByPhone(registrationDraft.phone);
+                    user.friendTargetChatId = friendChatId;
+                    if (friendChatId) {
+                        registrationOwnerChatId = friendChatId;
+                    }
+                }
+
+                await appendRegistrationRow(registrationOwnerChatId, registrationDraft);
 
                 console.log(`✅ Реєстрація успішно збережена для ${chatId}`);
                 console.log(`===============================\n`);
@@ -8775,7 +9106,10 @@ bot.on('message', async (msg) => {
                         registrationDraft.phone,
                         {
                             skipReminders: isFriendRegistrationMode(user),
-                            reserveMode: user.afishaReserveMode === true
+                            reserveMode: user.afishaReserveMode === true,
+                            reminderOwnerChatId: isFriendRegistrationMode(user)
+                                ? String(user.friendTargetChatId || '').trim()
+                                : String(chatId)
                         }
                     );
 
