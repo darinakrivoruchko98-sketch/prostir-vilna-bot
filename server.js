@@ -543,12 +543,6 @@ function mergeReminderDuplicates(registrations, isFriend = false) {
 
     for (const raw of registrations) {
         if (!raw) continue;
-                        reminded1h: registration.reminded1h === true,
-                        manualRegistrationSource: String(registration.manualRegistrationSource || ''),
-                        manualRegistrationDetectedAt: registration.manualRegistrationDetectedAt
-                            ? String(registration.manualRegistrationDetectedAt)
-                            : '',
-                        manualRegistrationConfirmed: registration.manualRegistrationConfirmed === true
         const eventId = String(raw.eventId || '').trim();
         const registrantName = String(raw.registrantName || '').trim();
         const registrantPhone = String(raw.registrantPhone || '').trim();
