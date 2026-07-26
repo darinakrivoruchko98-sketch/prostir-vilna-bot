@@ -4332,58 +4332,29 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
                 {
                     repeatCell: {
                         range: {
-                            try {
-                                let deliveredToAdmin = false;
+                            sheetId,
+                            startRowIndex: rowIndex,
+                            endRowIndex: rowIndex + 1,
+                            startColumnIndex: 4,
+                            endColumnIndex: 5
+                        },
+                        cell: {
+                            note: nextNote
+                        },
+                        fields: 'note'
+                    }
+                }
+            ]
+        }
+    });
+}
 
-                                if (effectiveAppealsGroupId) {
-                                    try {
-                                        await bot.sendMessage(effectiveAppealsGroupId, adminMessage);
-                                        deliveredToAdmin = true;
-                                    } catch (groupSendError) {
-                                        console.error(
-                                            '❌ Не вдалося надіслати відгук у APPEALS_GROUP_ID:',
-                                            groupSendError && groupSendError.response && groupSendError.response.body
-                                                ? groupSendError.response.body
-                                                : (groupSendError && groupSendError.message ? groupSendError.message : groupSendError)
-                                        );
-                                    }
-                                } else {
-                                    console.warn('⚠️ APPEALS_GROUP_ID не встановлено, відгук не переслано в адмін-групу');
-                                }
-
-                                if (!deliveredToAdmin && DARYNA_CHAT_ID) {
-                                    const fallbackMessage =
-                                        '⚠️ Fallback-доставка відгуку (не вдалося надіслати в APPEALS_GROUP_ID)\n\n' +
-                                        adminMessage;
-                                    await bot.sendMessage(DARYNA_CHAT_ID, fallbackMessage);
-                                    deliveredToAdmin = true;
-                                }
-
-                                if (!deliveredToAdmin) {
-                                    throw new Error('Feedback delivery failed for both APPEALS_GROUP_ID and fallback recipient');
-                                }
-
-                                setFeedbackStatus(chatId, dateKey, 'submitted');
-                                delete user.pendingFeedbackDateKey;
-                                user.context = null;
-                                saveReminderStateToDisk();
-
-                                await bot.sendMessage(chatId,
-                                    'Дякуємо за ваш відгук 💛\nМи раді були вас почути 😊', {
-                                    reply_markup: {
-                                        keyboard: getMainMenuKeyboard(chatId),
-                                        resize_keyboard: true
-                                    }
-                                });
-                            } catch (error) {
-                                console.error(
-                                    '❌ Помилка обробки відгуку:',
-                                    error && error.response && error.response.body
-                                        ? error.response.body
-                                        : (error && error.message ? error.message : error)
-                                );
-                                await bot.sendMessage(chatId, '❌ Не вдалося надіслати відгук. Спробуйте ще раз трохи пізніше.');
-                            }
+function getLocalDateKey(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
 
 function isSameLocalDate(left, right) {
     return left.getFullYear() === right.getFullYear()
