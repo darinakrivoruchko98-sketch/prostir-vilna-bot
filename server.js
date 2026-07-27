@@ -6876,6 +6876,9 @@ async function processParsedEvents(parsedEvents) {
         delete user.pendingFriendUnregKey;
         delete user.pendingFriendUnregEventName;
         delete user.pendingFriendRegistrantName;
+        delete user.eventButtonMap;
+        delete user.pendingReserveEventId;
+        delete user.pendingReserveEventName;
         user.context = 'unsubscribe-root';
 
         await bot.sendMessage(chatId, 'Оберіть, від чого потрібно відписатись:', {
@@ -11227,47 +11230,58 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // Перевіряємо чи натиснута кнопка з заходом (робимо це до перевірки дня тижня)
-    let selectedEvent = null;
-    const selectedEventId = resolveAfishaEventIdFromButtonText(user, text);
-    if (selectedEventId) {
-        selectedEvent = getAllEvents().find((eventItem) => eventItem.id === selectedEventId) || null;
-    }
-    if (selectedEvent) {
-        const seatsLeft = await getSeatsLeft(selectedEvent.id);
+    const isUnsubscribeFlowActive =
+        user.context === 'unsubscribe-root' ||
+        user.context === 'unregister' ||
+        user.context === 'friend-unregister' ||
+        user.context === 'cancel-consultation-select' ||
+        user.context === 'cancel-consultation-confirm' ||
+        Boolean(user.pendingUnregEventId) ||
+        Boolean(user.pendingFriendUnregKey);
 
-        if (seatsLeft <= 0) {
-            user.pendingReserveEventId = selectedEvent.id;
-            user.pendingReserveEventName = selectedEvent.name;
-            await bot.sendMessage(chatId, `На жаль, на захід "${selectedEvent.name}" місць уже немає.\n\nМожна записатись у резерв.`, {
-                reply_markup: {
-                    keyboard: [
-                        [{ text: AFISHA_ACTION_BUTTONS.reserve }],
-                        [{ text: NAVIGATION_BUTTONS.backToDays }],
-                        [{ text: NAVIGATION_BUTTONS.menu }]
-                    ],
-                    resize_keyboard: true
-                }
-            });
+    // Перевіряємо чи натиснута кнопка з заходом лише в контексті афіші.
+    if (!isUnsubscribeFlowActive && user.context === 'afisha') {
+        let selectedEvent = null;
+        const selectedEventId = resolveAfishaEventIdFromButtonText(user, text);
+        if (selectedEventId) {
+            selectedEvent = getAllEvents().find((eventItem) => eventItem.id === selectedEventId) || null;
+        }
+        if (selectedEvent) {
+            const seatsLeft = await getSeatsLeft(selectedEvent.id);
+
+            if (seatsLeft <= 0) {
+                user.pendingReserveEventId = selectedEvent.id;
+                user.pendingReserveEventName = selectedEvent.name;
+                await bot.sendMessage(chatId, `На жаль, на захід "${selectedEvent.name}" місць уже немає.\n\nМожна записатись у резерв.`, {
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: AFISHA_ACTION_BUTTONS.reserve }],
+                            [{ text: NAVIGATION_BUTTONS.backToDays }],
+                            [{ text: NAVIGATION_BUTTONS.menu }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
+            user.afishaInstantMode = true;
+            user.selectedEventsList = [{
+                id: selectedEvent.id,
+                name: selectedEvent.name,
+                date: selectedEvent.date
+            }];
+
+            user.currentSelectedEventName = selectedEvent.name;
+            user.currentSelectedEventId = selectedEvent.id;
+            delete user.pendingReserveEventId;
+            delete user.pendingReserveEventName;
+            await startSelectedEventsRegistration(chatId, user, { instantAfisha: true });
             return;
         }
-
-        user.afishaInstantMode = true;
-        user.selectedEventsList = [{
-            id: selectedEvent.id,
-            name: selectedEvent.name,
-            date: selectedEvent.date
-        }];
-
-        user.currentSelectedEventName = selectedEvent.name;
-        user.currentSelectedEventId = selectedEvent.id;
-        delete user.pendingReserveEventId;
-        delete user.pendingReserveEventName;
-        await startSelectedEventsRegistration(chatId, user, { instantAfisha: true });
-        return;
     }
 
-    if (text === AFISHA_ACTION_BUTTONS.reserve && user.pendingReserveEventId) {
+    if (!isUnsubscribeFlowActive && user.context === 'afisha' && text === AFISHA_ACTION_BUTTONS.reserve && user.pendingReserveEventId) {
         const reserveEvent = getAllEvents().find((eventItem) => eventItem.id === user.pendingReserveEventId);
         if (!reserveEvent) {
             await bot.sendMessage(chatId, '❌ Захід для резерву не знайдено. Спробуйте обрати його з афіші ще раз.', {
