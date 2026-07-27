@@ -7,7 +7,6 @@ const fs = require("fs");
 const path = require("path");
 const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
-const { findUserByChatId } = require('./src/sheets/personal-data');
 const { createAuthorizedSheetsClient } = require('./src/sheets/auth');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
@@ -5757,13 +5756,50 @@ async function loadKnownUserByChatId(chatId, options = {}) {
     }
 
     try {
-        const found = await findUserByChatId(chatId);
+        const found = await findUserByChatIdInSheet(chatIdStr);
         if (found) {
             knownUsers[chatId] = found;
             return found;
         }
     } catch (e) {
         console.error('loadKnownUserByChatId error:', e && e.message ? e.message : e);
+    }
+
+    return null;
+}
+
+async function findUserByChatIdInSheet(chatIdStr) {
+    if (!sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID || !chatIdStr) {
+        return null;
+    }
+
+    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:M`, 'A:M'];
+    for (const range of rangesToTry) {
+        try {
+            const resp = await sheetsClient.spreadsheets.values.get({
+                spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                range
+            });
+
+            const rows = resp.data.values || [];
+            for (let i = rows.length - 1; i >= 0; i--) {
+                const row = rows[i] || [];
+                const restored = parsePersonalDataRow(row);
+                const directChatId = String(restored.chatId || '').trim();
+                const fallbackChatId = String(row[12] || row[11] || row[10] || '').trim();
+                const legacyChatId = String(row[6] || '').trim();
+
+                if (directChatId === chatIdStr || fallbackChatId === chatIdStr || legacyChatId === chatIdStr) {
+                    return restored;
+                }
+            }
+        } catch (e) {
+            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+            if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                continue;
+            }
+            break;
+        }
     }
 
     return null;
