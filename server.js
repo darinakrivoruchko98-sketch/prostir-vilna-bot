@@ -1587,7 +1587,7 @@ function cleanupPastEvents() {
 
         friendEventRegistrations[chatId] = mergeReminderDuplicates(normalized, true).filter((reg) => {
             const dt = reg && reg.eventDate instanceof Date ? reg.eventDate : new Date(reg && reg.eventDate);
-            return dt instanceof Date && !Number.isNaN(dt.getTime()) && dt > now;
+            return dt instanceof Date && !Number.isNaN(dt.getTime());
         });
         if (friendEventRegistrations[chatId].length !== before) {
             hasReminderChanges = true;
@@ -1606,7 +1606,6 @@ function cleanupPastEvents() {
 function syncReminderRegistrationsWithEvents() {
     const allEvents = getAllEvents();
     const eventsById = new Map(allEvents.map((event) => [event.id, event]));
-    const now = new Date();
     let hasReminderChanges = false;
 
     for (const chatId in userEventRegistrations) {
@@ -1647,7 +1646,7 @@ function syncReminderRegistrationsWithEvents() {
         const beforeLength = registrations.length;
         const deduped = mergeReminderDuplicates(registrations, false).filter((item) => {
             const dt = item && item.eventDate instanceof Date ? item.eventDate : new Date(item && item.eventDate);
-            return dt instanceof Date && !Number.isNaN(dt.getTime()) && dt > now;
+            return dt instanceof Date && !Number.isNaN(dt.getTime());
         });
 
         if (deduped.length !== beforeLength) {
@@ -1700,7 +1699,7 @@ function syncReminderRegistrationsWithEvents() {
         const beforeLength = registrations.length;
         const deduped = mergeReminderDuplicates(registrations, true).filter((item) => {
             const dt = item && item.eventDate instanceof Date ? item.eventDate : new Date(item && item.eventDate);
-            return dt instanceof Date && !Number.isNaN(dt.getTime()) && dt > now;
+            return dt instanceof Date && !Number.isNaN(dt.getTime());
         });
 
         if (deduped.length !== beforeLength) {
