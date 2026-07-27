@@ -3415,15 +3415,28 @@ function parseRegistrantsFromNote(noteText) {
 
     const registrants = [];
     const seen = new Set();
+    let currentSection = 'registered';
     const lines = text
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter(Boolean);
 
     for (const line of lines) {
-        if (/^зареєстровано\s*:/i.test(line)
-            || /^резерв\s*:/i.test(line)
-            || /^список\s+порожній$/i.test(line)
+        if (/^зареєстровано\s*:/i.test(line)) {
+            currentSection = 'registered';
+            continue;
+        }
+
+        if (/^резерв\s*:/i.test(line)) {
+            currentSection = 'reserve';
+            continue;
+        }
+
+        if (currentSection !== 'registered') {
+            continue;
+        }
+
+        if (/^список\s+порожній$/i.test(line)
             || /^EVENT_ID\s*:/i.test(line)
             || /^\d+[.)-]?\s*EVENT_ID\s*:/i.test(line)) {
             continue;
@@ -3918,6 +3931,90 @@ function parseReserveRegistrantsFromNote(noteText) {
     return reservists;
 }
 
+function parseReserveRegistrantsFromRegistrationNote(noteText) {
+    const text = String(noteText || '').trim();
+    if (!text) return [];
+
+    const reservists = [];
+    const seen = new Set();
+    let currentSection = 'registered';
+    const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    for (const line of lines) {
+        if (/^зареєстровано\s*:/i.test(line)) {
+            currentSection = 'registered';
+            continue;
+        }
+        if (/^резерв\s*:/i.test(line)) {
+            currentSection = 'reserve';
+            continue;
+        }
+        if (currentSection !== 'reserve') {
+            continue;
+        }
+
+        if (/^список\s+порожній$/i.test(line)
+            || /^EVENT_ID\s*:/i.test(line)
+            || /^\d+[.)-]?\s*EVENT_ID\s*:/i.test(line)) {
+            continue;
+        }
+
+        const cleaned = line
+            .replace(/^[-*•]\s*/, '')
+            .replace(/^\d+[.)-]?\s*/, '')
+            .trim();
+        if (!cleaned) continue;
+        if (/^EVENT_ID\s*:/i.test(cleaned)) continue;
+
+        const parts = cleaned.split('|').map((part) => String(part || '').trim());
+        let name = String(parts[0] || '').trim();
+        let phone = String(parts[1] || '').trim();
+        let userId = String(parts[2] || '').trim();
+
+        if (!phone && !userId) {
+            const structuredMatch = cleaned.match(/^(.*?)\s*(?:\||[—-])\s*(.+)$/);
+            if (structuredMatch) {
+                name = String(structuredMatch[1] || '').trim();
+                phone = String(structuredMatch[2] || '').trim();
+            } else {
+                const phoneMatch = cleaned.match(/(\+?\d[\d\s()\-]{6,})$/);
+                if (phoneMatch) {
+                    phone = String(phoneMatch[1] || '').trim();
+                    name = cleaned.slice(0, cleaned.length - phone.length).replace(/[,:;\-\s]+$/, '').trim();
+                }
+            }
+        }
+
+        if (!name && !phone && !userId) {
+            continue;
+        }
+
+        const key = `${normalizeRegistrantName(name)}|${normalizeRegistrantPhone(phone)}|${normalizeRegistrantUserId(userId)}`;
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        reservists.push({ name, phone, userId });
+    }
+
+    return reservists;
+}
+
+async function getEffectiveReserveRegistrants(scheduleSheet, rowIndex) {
+    const reserveNote = await getScheduleCellNote(scheduleSheet, rowIndex, 'F');
+    const reserveFromF = parseReserveRegistrantsFromNote(reserveNote);
+    if (reserveFromF.length > 0) {
+        return reserveFromF;
+    }
+
+    // Legacy fallback: reserve could be stored in registration note (column E)
+    const registrationNote = await getScheduleCellNote(scheduleSheet, rowIndex, 'E');
+    return parseReserveRegistrantsFromRegistrationNote(registrationNote);
+}
+
 function buildReserveNoteFromList(reserveCount, reservists, eventId = '') {
     const safeCount = Number.isFinite(reserveCount) ? reserveCount : reservists.length;
     const header = `Резерв: ${safeCount}`;
@@ -3969,8 +4066,19 @@ async function updateScheduleReserveNote({ scheduleSheet, rowIndex, reserveCount
     }
 
     const existingNote = await getScheduleCellNote(scheduleSheet, rowIndex, 'F');
-    const existingEventId = extractScheduleNoteEventId(existingNote) || eventId;
+    let existingEventId = extractScheduleNoteEventId(existingNote) || eventId;
     let reservists = parseReserveRegistrantsFromNote(existingNote);
+
+    if (reservists.length === 0) {
+        const legacyRegistrationNote = await getScheduleCellNote(scheduleSheet, rowIndex, 'E');
+        const legacyReservists = parseReserveRegistrantsFromRegistrationNote(legacyRegistrationNote);
+        if (legacyReservists.length > 0) {
+            reservists = legacyReservists;
+            if (!existingEventId) {
+                existingEventId = extractScheduleNoteEventId(legacyRegistrationNote) || eventId;
+            }
+        }
+    }
 
     if (removeRegistrant) {
         const removeNameKey = normalizeRegistrantName(removeRegistrant.name);
@@ -4066,8 +4174,7 @@ async function isRegistrantAlreadyInEventReserveNote(event, registrantProfile) {
         return false;
     }
 
-    const existingNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex, 'F');
-    const reservists = parseReserveRegistrantsFromNote(existingNote);
+    const reservists = await getEffectiveReserveRegistrants(match.scheduleSheet, match.rowIndex);
     return reservists.some((item) => {
         const sameName = normalizeRegistrantName(item.name) === normalizedName;
         const samePhone = normalizeRegistrantPhone(item.phone) === normalizedPhone;
@@ -4118,8 +4225,7 @@ async function removeRegistrantFromReserve(event, registrantProfile) {
         return false;
     }
 
-    const existingNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex, 'F');
-    const reservists = parseReserveRegistrantsFromNote(existingNote);
+    const reservists = await getEffectiveReserveRegistrants(match.scheduleSheet, match.rowIndex);
 
     const targetName = normalizeRegistrantName(registrantProfile.name || '');
     const targetPhone = normalizeRegistrantPhone(registrantProfile.phone || '');
@@ -4171,9 +4277,9 @@ async function promoteFirstReserveRegistrantToRegistration(event) {
         return false;
     }
 
-    // У розкладі event.seats уже означає кількість вільних місць (колонка D),
-    // тому не віднімаємо registrations вдруге.
-    const seatsLeft = Math.max(0, Number(event.seats) || 0);
+    // У runtime event.seats = загальна місткість, event.registrations = зайняті місця.
+    // Автоперенос із резерву дозволений лише за фактичної наявності вільних місць.
+    const seatsLeft = Math.max(0, (Number(event.seats) || 0) - (Number(event.registrations) || 0));
     if (seatsLeft <= 0) {
         return false;
     }
@@ -4183,8 +4289,7 @@ async function promoteFirstReserveRegistrantToRegistration(event) {
         return false;
     }
 
-    const reserveNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex, 'F');
-    const reservists = parseReserveRegistrantsFromNote(reserveNote);
+    const reservists = await getEffectiveReserveRegistrants(match.scheduleSheet, match.rowIndex);
     if (reservists.length === 0) {
         return false;
     }
@@ -6226,9 +6331,32 @@ async function unregisterFromEvent(chatId, eventId) {
         return { status: 'not-found' };
     }
 
-    // Видаляємо з пам'яті користувача
+    // Видаляємо з пам'яті користувача (включно з можливими дублями того ж запису)
     const registration = userEventRegistrations[chatId][regIndex];
-    userEventRegistrations[chatId].splice(regIndex, 1);
+    const targetPhoneKey = normalizeRegistrantPhone(registration && registration.registrantPhone);
+    const targetNameKey = normalizeRegistrantName(registration && registration.registrantName);
+    const canMatchByIdentity = Boolean(targetPhoneKey || targetNameKey);
+    let removedFallbackByIndex = false;
+    userEventRegistrations[chatId] = userEventRegistrations[chatId].filter((entry, index) => {
+        if (!entry || entry.eventId !== eventId) {
+            return true;
+        }
+
+        if (!canMatchByIdentity) {
+            if (!removedFallbackByIndex && index === regIndex) {
+                removedFallbackByIndex = true;
+                return false;
+            }
+            return true;
+        }
+
+        const entryPhoneKey = normalizeRegistrantPhone(entry.registrantPhone);
+        const entryNameKey = normalizeRegistrantName(entry.registrantName);
+        const samePhone = targetPhoneKey && entryPhoneKey && targetPhoneKey === entryPhoneKey;
+        const sameName = targetNameKey && entryNameKey && targetNameKey === entryNameKey;
+
+        return !(samePhone || sameName);
+    });
     removeFeedbackCandidate(chatId, registration.eventDate, registration.eventName);
 
     // Очищаємо пустий масив
@@ -7026,8 +7154,9 @@ async function processParsedEvents(parsedEvents) {
     async function handleUnsubscribeIntent(chatId, user) {
         await restoreUserRegistrationsFromSheet(chatId, user);
         const userRegistrations = userEventRegistrations[chatId] || [];
+        const userReserveRegistrations = userEventReserveRegistrations[chatId] || [];
 
-        if (userRegistrations.length === 0) {
+        if (userRegistrations.length === 0 && userReserveRegistrations.length === 0) {
             await bot.sendMessage(chatId, "📅 У вас немає запланованих заходів для відписання.", {
                 reply_markup: {
                     keyboard: [
@@ -7040,17 +7169,39 @@ async function processParsedEvents(parsedEvents) {
         }
 
         const unregButtonMap = {};
-        const buttons = userRegistrations.map((reg, index) => {
-            const dateStr = reg.eventDate.toLocaleDateString('uk-UA', {
+        const toSafeDate = (value) => {
+            if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+            const parsed = new Date(value);
+            return Number.isNaN(parsed.getTime()) ? null : parsed;
+        };
+        const allEntries = [
+            ...userRegistrations.map((reg) => ({ ...reg, mode: 'registration' })),
+            ...userReserveRegistrations.map((reg) => ({ ...reg, mode: 'reserve' }))
+        ].sort((left, right) => {
+            const leftDate = toSafeDate(left && left.eventDate);
+            const rightDate = toSafeDate(right && right.eventDate);
+            const leftTs = leftDate ? leftDate.getTime() : 0;
+            const rightTs = rightDate ? rightDate.getTime() : 0;
+            return leftTs - rightTs;
+        });
+
+        const buttons = allEntries.map((reg, index) => {
+            const eventDate = toSafeDate(reg.eventDate);
+            const dateStr = eventDate ? eventDate.toLocaleDateString('uk-UA', {
                 day: '2-digit',
                 month: '2-digit'
-            });
-            const timeStr = reg.eventDate.toLocaleTimeString('uk-UA', {
+            }) : '--.--';
+            const timeStr = eventDate ? eventDate.toLocaleTimeString('uk-UA', {
                 hour: '2-digit',
                 minute: '2-digit'
-            });
-            const buttonText = `${index + 1}. ${reg.eventName} (${dateStr} ${timeStr})`;
-            unregButtonMap[buttonText] = reg.eventId;
+            }) : '--:--';
+            const modeLabel = reg.mode === 'reserve' ? '🕓 резерв' : '✅ реєстрація';
+            const buttonText = `${index + 1}. ${reg.eventName} (${dateStr} ${timeStr}) — ${modeLabel}`;
+            unregButtonMap[buttonText] = {
+                eventId: reg.eventId,
+                eventName: reg.eventName,
+                mode: reg.mode
+            };
             return [{ text: buttonText }];
         });
 
@@ -11302,11 +11453,16 @@ bot.on('message', async (msg) => {
     // === ПЕРЕВІРЯЄМО КОНТЕКСТ ВІДПИСАННЯ ДО ПОШУКУ ЗАХОДУ ===
     // Обробка вибору заходу для відписання
     if (user.context === 'unregister' && user.unregButtonMap && user.unregButtonMap[text]) {
-        const eventId = user.unregButtonMap[text];
+        const mapped = user.unregButtonMap[text];
+        const eventId = mapped && mapped.eventId;
+        const selectedMode = mapped && mapped.mode ? mapped.mode : 'registration';
         
-        // Знаходимо інформацію про захід
-        const regIndex = (userEventRegistrations[chatId] || []).findIndex(r => r.eventId === eventId);
-        if (regIndex === -1) {
+        // Знаходимо інформацію про захід у відповідному списку
+        const sourceList = selectedMode === 'reserve'
+            ? (userEventReserveRegistrations[chatId] || [])
+            : (userEventRegistrations[chatId] || []);
+        const regIndex = sourceList.findIndex((r) => r.eventId === eventId);
+        if (!eventId || regIndex === -1) {
             bot.sendMessage(chatId, "❌ Захід не знайдено.", {
                 reply_markup: {
                     keyboard: [[{ text: MAIN_MENU_BUTTONS.reminders }], [{ text: NAVIGATION_BUTTONS.menu }]],
@@ -11318,11 +11474,12 @@ bot.on('message', async (msg) => {
             return;
         }
         
-        const eventName = userEventRegistrations[chatId][regIndex].eventName;
+        const eventName = String((mapped && mapped.eventName) || sourceList[regIndex].eventName || '').trim();
         
         // Підтвердження
         user.pendingUnregEventId = eventId;
         user.pendingUnregEventName = eventName;
+        user.pendingUnregMode = selectedMode;
         
         const confirmMsg = `❓ <b>Ви впевнені, що хочете відписатись від цього заходу?</b>\n\n📌 <b>${eventName}</b>\n\nДані про вас залишаться в базі, але місце звільниться для інших учасників.`;
         
@@ -11747,8 +11904,20 @@ bot.on('message', async (msg) => {
     if (text === "✅ Так, відписатись" && user.pendingUnregEventId) {
         const eventId = user.pendingUnregEventId;
         const eventName = user.pendingUnregEventName;
-        
-        const result = await unregisterFromEvent(chatId, eventId);
+        const unregMode = user.pendingUnregMode;
+
+        let result;
+        if (unregMode === 'reserve') {
+            result = await unregisterFromReserve(chatId, eventId);
+            if (result.status !== 'ok') {
+                result = await unregisterFromEvent(chatId, eventId);
+            }
+        } else {
+            result = await unregisterFromEvent(chatId, eventId);
+            if (result.status !== 'ok') {
+                result = await unregisterFromReserve(chatId, eventId);
+            }
+        }
         
         if (result.status === 'ok') {
             bot.sendMessage(chatId, 
@@ -11773,6 +11942,7 @@ bot.on('message', async (msg) => {
         
         delete user.pendingUnregEventId;
         delete user.pendingUnregEventName;
+        delete user.pendingUnregMode;
         delete user.unregButtonMap;
         user.context = null;
         return;
@@ -11820,6 +11990,7 @@ bot.on('message', async (msg) => {
         delete user.friendUnregButtonMap;
         delete user.pendingUnregEventId;
         delete user.pendingUnregEventName;
+        delete user.pendingUnregMode;
         delete user.pendingFriendUnregKey;
         delete user.pendingFriendUnregEventName;
         delete user.pendingFriendRegistrantName;
