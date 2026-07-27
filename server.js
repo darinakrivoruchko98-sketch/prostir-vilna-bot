@@ -1561,6 +1561,8 @@ function syncReminderRegistrationsWithEvents() {
 
         if (deduped.length > 0) {
             userEventRegistrations[chatId] = deduped;
+        } else {
+            delete userEventRegistrations[chatId];
         }
     }
 
@@ -1611,6 +1613,8 @@ function syncReminderRegistrationsWithEvents() {
 
         if (deduped.length > 0) {
             friendEventRegistrations[chatId] = deduped;
+        } else {
+            delete friendEventRegistrations[chatId];
         }
     }
 
@@ -8689,10 +8693,11 @@ bot.on('message', async (msg) => {
     // === ОБРОБКА РЕЄСТРАЦІЙНОЇ ФОРМИ (КРОКИ 1-6) ===
     // ВАЖЛИВО: цей блок повинен бути ПЕРЕД всіма іншими обробниками меню!
     const registrationStep = Number(user.step);
-    if (user.registrationMode || (Number.isInteger(registrationStep) && registrationStep >= 1 && registrationStep <= 11)) {
+    const hasValidRegistrationStep = Number.isInteger(registrationStep) && registrationStep >= 1 && registrationStep <= 11;
+    if (user.registrationMode || hasValidRegistrationStep) {
         // Відновлюємо режим форми, якщо прапорець загубився, але крок лишився
         user.registrationMode = true;
-        user.step = registrationStep;
+        user.step = hasValidRegistrationStep ? registrationStep : 1;
         const registrationDraft = getActiveRegistrationDraft(user);
 
         if (user.step === 1) {
