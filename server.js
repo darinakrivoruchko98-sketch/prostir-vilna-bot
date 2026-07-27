@@ -5773,7 +5773,21 @@ async function findUserByChatIdInSheet(chatIdStr) {
         return null;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:M`, 'A:M'];
+    const rangesToTry = [];
+    if (PERSONAL_DATA_SHEET_NAME) {
+        rangesToTry.push(`${PERSONAL_DATA_SHEET_NAME}!A:M`);
+        rangesToTry.push(`'${PERSONAL_DATA_SHEET_NAME}'!A:M`);
+    }
+    rangesToTry.push('Зареєстровані!A:M');
+    rangesToTry.push("'Зареєстровані'!A:M");
+    rangesToTry.push('A:M');
+
+    const normalizeChatIdValue = (value) => String(value || '')
+        .trim()
+        .replace(/^'/, '')
+        .replace(/\.0+$/, '');
+    const targetChatId = normalizeChatIdValue(chatIdStr);
+
     for (const range of rangesToTry) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -5785,11 +5799,11 @@ async function findUserByChatIdInSheet(chatIdStr) {
             for (let i = rows.length - 1; i >= 0; i--) {
                 const row = rows[i] || [];
                 const restored = parsePersonalDataRow(row);
-                const directChatId = String(restored.chatId || '').trim();
-                const fallbackChatId = String(row[12] || row[11] || row[10] || '').trim();
-                const legacyChatId = String(row[6] || '').trim();
+                const directChatId = normalizeChatIdValue(restored.chatId || '');
+                const fallbackChatId = normalizeChatIdValue(row[12] || row[11] || row[10] || '');
+                const legacyChatId = normalizeChatIdValue(row[6] || '');
 
-                if (directChatId === chatIdStr || fallbackChatId === chatIdStr || legacyChatId === chatIdStr) {
+                if (directChatId === targetChatId || fallbackChatId === targetChatId || legacyChatId === targetChatId) {
                     return restored;
                 }
             }
@@ -8230,7 +8244,7 @@ bot.on('message', async (msg) => {
             foundProfile = await loadKnownUserByUsername(msg.from.username);
         }
         
-        if (foundProfile && foundProfile.name && foundProfile.phone) {
+        if (foundProfile) {
             // Профіль знайдено — логінимо користувача
             Object.assign(user, foundProfile);
             user.profileHydrated = true;
@@ -8238,7 +8252,10 @@ bot.on('message', async (msg) => {
             // Завантажуємо заходи з розпису для цього тижня
             const thisWeekEvents = await getUserWeeklyEvents(chatId, foundProfile);
             
-            let greeting = `✅ Привіт, ${foundProfile.name.split(' ')[1]}! Рад(а) тебе бачити.\n\n`;
+            const greetingName = String(foundProfile.name || '').trim().split(/\s+/)[1]
+                || String(foundProfile.name || '').trim().split(/\s+/)[0]
+                || 'друже';
+            let greeting = `✅ Привіт, ${greetingName}! Рад(а) тебе бачити.\n\n`;
             
             if (thisWeekEvents && thisWeekEvents.length > 0) {
                 greeting += `📅 <b>Ваші заходи на цьому тижні:</b>\n`;
