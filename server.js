@@ -2527,6 +2527,23 @@ function resolveFeedbackUserName(chatId, msgFrom = null) {
     return String(chatId || 'Невідомо');
 }
 
+function resolveFeedbackUserPhone(chatId, msgFrom = null) {
+    const userProfile = users[chatId] || {};
+    const knownProfile = knownUsers[chatId] || {};
+
+    const phoneFromProfile = String(userProfile.phone || knownProfile.phone || '').trim();
+    if (phoneFromProfile) {
+        return phoneFromProfile;
+    }
+
+    const phoneFromMessage = String((msgFrom && msgFrom.phone_number) || '').trim();
+    if (phoneFromMessage) {
+        return phoneFromMessage;
+    }
+
+    return 'не вказано';
+}
+
 async function sendDailyFeedbackPrompt(chatId, dateKey) {
     await bot.sendMessage(chatId,
         'Дякуємо, що сьогодні були з нами 💛\nНам дуже важлива ваша думка. Бажаєте залишити відгук про сьогоднішні заходи?', {
@@ -8637,10 +8654,12 @@ bot.on('message', async (msg) => {
             ? eventNames.map((eventName) => `- ${eventName}`).join('\n')
             : '- (події не знайдено)';
         const userName = resolveFeedbackUserName(chatId, msg.from || null);
+        const userPhone = resolveFeedbackUserPhone(chatId, msg.from || null);
 
         const adminMessage =
             '📝 Новий відгук\n' +
             `👤 Користувач: ${userName}\n` +
+            `📱 Телефон: ${userPhone}\n` +
             `📅 Дата: ${dateLabel}\n` +
             '📌 Заходи:\n' +
             `${eventsBlock}\n\n` +
