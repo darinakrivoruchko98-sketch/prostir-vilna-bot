@@ -66,6 +66,14 @@ async function appendRegistrationRow(chatId, user) {
 
         try {
             console.log(`\n📝 Спроба ${attempt}/${maxTries}: Читання листа "${config.PERSONAL_DATA_SHEET_NAME}"...`);
+            const metaResp = await state.sheetsClient.spreadsheets.get({
+                spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID
+            });
+            const sheetTitles = (metaResp.data.sheets || []).map((sheet) => sheet.properties && sheet.properties.title ? sheet.properties.title : '');
+            console.log(`📋 Доступні листи: ${sheetTitles.join(', ') || '(немає)'}`);
+            if (!sheetTitles.includes(config.PERSONAL_DATA_SHEET_NAME)) {
+                throw new Error(`Лист "${config.PERSONAL_DATA_SHEET_NAME}" не знайдено. Доступні листи: ${sheetTitles.join(', ') || '(немає)'}`);
+            }
             const existingResp = await state.sheetsClient.spreadsheets.values.get({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
                 range: `${config.PERSONAL_DATA_SHEET_NAME}!A:M`
