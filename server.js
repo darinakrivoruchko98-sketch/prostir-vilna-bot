@@ -8015,6 +8015,8 @@ bot.on('message', async (msg) => {
     const commandText = trimmedText.startsWith('/') ? trimmedText : '';
 
     if (commandText && matchesCommand(commandText, '/test_feedback_group', '/test_feedback_group@' + BOT_USERNAME, '/test_feedback', '/test_feedback@' + BOT_USERNAME, '/test_feedback_me', '/test_feedback_me@' + BOT_USERNAME)) {
+        await bot.sendMessage(chatId, `🧪 Отримано команду: ${commandText}`);
+
         if (matchesCommand(commandText, '/test_feedback_group', '/test_feedback_group@' + BOT_USERNAME)) {
             const testFeedbackMessage = `🧪 Тестове повідомлення у групу відгуків\n\nЦе повідомлення має потрапити в групу “Відгуки”.`;
             if (effectiveAppealsGroupId) {
