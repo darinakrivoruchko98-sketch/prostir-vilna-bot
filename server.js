@@ -8120,7 +8120,7 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    if (text === '/test_feedback') {
+    if (matchesCommand(text, '/test_feedback', '/test_feedback@' + BOT_USERNAME)) {
         const testFeedbackMessage = `🧪 Тестове повідомлення від бота\n\nЦе повідомлення відправлено для перевірки доставки у групу відгуків.`;
         if (effectiveAppealsGroupId) {
             try {
@@ -8139,7 +8139,7 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    if (text === '/test_feedback_me') {
+    if (matchesCommand(text, '/test_feedback_me', '/test_feedback_me@' + BOT_USERNAME)) {
         try {
             await bot.sendMessage(chatId, '🧪 Це тестове повідомлення від бота. Якщо ти його бачиш — команда працює.');
             await bot.sendMessage(chatId, '✅ Тестове повідомлення надіслано тобі в приватний чат.');
@@ -8153,7 +8153,7 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    if (text === '/test_feedback_group') {
+    if (matchesCommand(text, '/test_feedback_group', '/test_feedback_group@' + BOT_USERNAME)) {
         const testFeedbackMessage = `🧪 Тестове повідомлення у групу відгуків\n\nЦе повідомлення має потрапити в групу “Відгуки”.`;
         if (effectiveAppealsGroupId) {
             try {
