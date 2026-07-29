@@ -8019,9 +8019,12 @@ bot.on('message', async (msg) => {
 
         if (matchesCommand(commandText, '/test_feedback_group', '/test_feedback_group@' + BOT_USERNAME)) {
             const testFeedbackMessage = `🧪 Тестове повідомлення у групу відгуків\n\nЦе повідомлення має потрапити в групу “Відгуки”.`;
+            console.log(`[TEST_FEEDBACK_GROUP] command received from chat ${chatId}; target=${effectiveAppealsGroupId}`);
             if (effectiveAppealsGroupId) {
                 try {
+                    console.log(`[TEST_FEEDBACK_GROUP] attempting send to ${effectiveAppealsGroupId}`);
                     await bot.sendMessage(effectiveAppealsGroupId, testFeedbackMessage);
+                    console.log(`[TEST_FEEDBACK_GROUP] send succeeded to ${effectiveAppealsGroupId}`);
                     await bot.sendMessage(chatId, `✅ Тестове повідомлення відправлено в групу ${effectiveAppealsGroupId}`);
                 } catch (error) {
                     const errorBody = error && error.response && error.response.body
