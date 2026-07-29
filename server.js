@@ -8030,8 +8030,9 @@ bot.on('message', async (msg) => {
                     const errorBody = error && error.response && error.response.body
                         ? error.response.body
                         : (error && error.message ? error.message : error);
-                    console.error('❌ Не вдалося відправити тестове повідомлення в групу:', errorBody);
-                    await bot.sendMessage(chatId, `❌ Не вдалося відправити тестове повідомлення в групу: ${String(errorBody || error || '')}`);
+                    const errorText = JSON.stringify(errorBody || error || {}, null, 2);
+                    console.error('❌ Не вдалося відправити тестове повідомлення в групу:', errorText);
+                    await bot.sendMessage(chatId, `❌ Не вдалося відправити тестове повідомлення в групу. Telegram відповів: ${String(errorText)}`);
                 }
             } else {
                 await bot.sendMessage(chatId, '❌ APPEALS_GROUP_ID не встановлено');
