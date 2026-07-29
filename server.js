@@ -8221,6 +8221,20 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    if (matchesCommand(text, '/debug_send_to_chat', '/debug_send_to_chat@' + BOT_USERNAME)) {
+        const targetChatId = Number(process.env.DEBUG_TARGET_CHAT_ID || '-1003802751255');
+        try {
+            await bot.sendMessage(targetChatId, '🧪 DEBUG: direct send to numeric chat id');
+            await bot.sendMessage(chatId, `✅ DEBUG send succeeded to ${targetChatId}`);
+        } catch (error) {
+            const errorBody = error && error.response && error.response.body
+                ? error.response.body
+                : (error && error.message ? error.message : error);
+            await bot.sendMessage(chatId, `❌ DEBUG send failed: ${JSON.stringify(errorBody || error || {}, null, 2)}`);
+        }
+        return;
+    }
+
     // ДІАГНОСТИКА: тест запису в таблицю персональних даних
     if (text === '/test_write' || text === '/test_table') {
         bot.sendMessage(chatId, '⏳ Тестую запис в таблицю "Зареєстровані"...');
