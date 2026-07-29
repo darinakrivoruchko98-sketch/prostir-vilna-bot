@@ -3500,9 +3500,13 @@ function ensureScheduleNoteEventIdTag(noteText, eventId) {
 }
 
 function buildRegistrantsNoteFromList(registrationsCount, registrants, eventId = '') {
-    const safeCount = Number.isFinite(registrationsCount) ? registrationsCount : registrants.length;
+    const safeRegistrants = Array.isArray(registrants) ? registrants : [];
+    const derivedCount = Math.max(safeRegistrants.length, 0);
+    const safeCount = Number.isFinite(registrationsCount) && registrationsCount > derivedCount
+        ? derivedCount
+        : derivedCount;
     const header = `Зареєстровано: ${safeCount}`;
-    const people = registrants.map((item, index) => {
+    const people = safeRegistrants.map((item, index) => {
         const name = String(item.name || '').trim() || 'Без імені';
         const phone = String(item.phone || '').trim();
         return `${index + 1}. ${name}${phone ? ` | ${phone}` : ''}`;
@@ -4301,7 +4305,17 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
         return; // Нічого робити
     }
 
-    const nextNote = buildRegistrantsNoteFromList(registrationsCount, registrants, eventId);
+    const normalizedRegistrants = registrants.filter((item) => {
+        const hasName = String(item.name || '').trim();
+        const hasPhone = String(item.phone || '').trim();
+        return hasName || hasPhone;
+    });
+
+    const nextNote = buildRegistrantsNoteFromList(
+        normalizedRegistrants.length,
+        normalizedRegistrants,
+        eventId
+    );
 
     await sheetsClient.spreadsheets.batchUpdate({
         spreadsheetId: SPREADSHEET_ID,
