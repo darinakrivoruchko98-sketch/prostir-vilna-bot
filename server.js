@@ -8011,6 +8011,49 @@ bot.on('message', async (msg) => {
 
     if (!text) return;
 
+    const trimmedText = String(text || '').trim();
+    const commandText = trimmedText.startsWith('/') ? trimmedText : '';
+
+    if (commandText && matchesCommand(commandText, '/test_feedback_group', '/test_feedback_group@' + BOT_USERNAME, '/test_feedback', '/test_feedback@' + BOT_USERNAME, '/test_feedback_me', '/test_feedback_me@' + BOT_USERNAME)) {
+        if (matchesCommand(commandText, '/test_feedback_group', '/test_feedback_group@' + BOT_USERNAME)) {
+            const testFeedbackMessage = `🧪 Тестове повідомлення у групу відгуків\n\nЦе повідомлення має потрапити в групу “Відгуки”.`;
+            if (effectiveAppealsGroupId) {
+                try {
+                    await bot.sendMessage(effectiveAppealsGroupId, testFeedbackMessage);
+                    await bot.sendMessage(chatId, `✅ Тестове повідомлення відправлено в групу ${effectiveAppealsGroupId}`);
+                } catch (error) {
+                    const errorBody = error && error.response && error.response.body
+                        ? error.response.body
+                        : (error && error.message ? error.message : error);
+                    console.error('❌ Не вдалося відправити тестове повідомлення в групу:', errorBody);
+                    await bot.sendMessage(chatId, `❌ Не вдалося відправити тестове повідомлення в групу: ${String(errorBody || error || '')}`);
+                }
+            } else {
+                await bot.sendMessage(chatId, '❌ APPEALS_GROUP_ID не встановлено');
+            }
+        } else if (matchesCommand(commandText, '/test_feedback', '/test_feedback@' + BOT_USERNAME)) {
+            const testFeedbackMessage = `🧪 Тестове повідомлення від бота\n\nЦе повідомлення відправлено для перевірки доставки у групу відгуків.`;
+            if (effectiveAppealsGroupId) {
+                try {
+                    await bot.sendMessage(effectiveAppealsGroupId, testFeedbackMessage);
+                    await bot.sendMessage(chatId, `✅ Тестове повідомлення відправлено в групу ${effectiveAppealsGroupId}`);
+                } catch (error) {
+                    const errorBody = error && error.response && error.response.body
+                        ? error.response.body
+                        : (error && error.message ? error.message : error);
+                    console.error('❌ Не вдалося відправити тестовий відгук:', errorBody);
+                    await bot.sendMessage(chatId, `❌ Не вдалося відправити тестове повідомлення: ${String(errorBody || error || '')}`);
+                }
+            } else {
+                await bot.sendMessage(chatId, '❌ APPEALS_GROUP_ID не встановлено');
+            }
+        } else {
+            await bot.sendMessage(chatId, '🧪 Це тестове повідомлення від бота. Якщо ти його бачиш — команда працює.');
+            await bot.sendMessage(chatId, '✅ Тестове повідомлення надіслано тобі в приватний чат.');
+        }
+        return;
+    }
+
     if (msg.chat.type === 'private' && await tryHandleOwnerBroadcast(chatId, text)) {
         return;
     }
