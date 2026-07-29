@@ -8153,6 +8153,25 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    if (text === '/test_feedback_group') {
+        const testFeedbackMessage = `🧪 Тестове повідомлення у групу відгуків\n\nЦе повідомлення має потрапити в групу “Відгуки”.`;
+        if (effectiveAppealsGroupId) {
+            try {
+                await bot.sendMessage(effectiveAppealsGroupId, testFeedbackMessage);
+                await bot.sendMessage(chatId, `✅ Тестове повідомлення відправлено в групу ${effectiveAppealsGroupId}`);
+            } catch (error) {
+                const errorBody = error && error.response && error.response.body
+                    ? error.response.body
+                    : (error && error.message ? error.message : error);
+                console.error('❌ Не вдалося відправити тестове повідомлення в групу:', errorBody);
+                await bot.sendMessage(chatId, `❌ Не вдалося відправити тестове повідомлення в групу: ${String(errorBody || error || '')}`);
+            }
+        } else {
+            await bot.sendMessage(chatId, '❌ APPEALS_GROUP_ID не встановлено');
+        }
+        return;
+    }
+
     // ДІАГНОСТИКА: тест запису в таблицю персональних даних
     if (text === '/test_write' || text === '/test_table') {
         bot.sendMessage(chatId, '⏳ Тестую запис в таблицю "Зареєстровані"...');
@@ -8566,10 +8585,12 @@ bot.on('message', async (msg) => {
             `"${feedbackText}"`;
 
         try {
-            if (GROUP_ID) {
-                await bot.sendMessage(GROUP_ID, adminMessage);
+            const feedbackDestinationId = effectiveAppealsGroupId || GROUP_ID;
+            if (feedbackDestinationId) {
+                await bot.sendMessage(feedbackDestinationId, adminMessage);
+                console.log(`[FEEDBACK] Sent feedback to ${feedbackDestinationId}`);
             } else {
-                console.warn('⚠️ GROUP_ID не встановлено, відгук не переслано в адмін-групу');
+                console.warn('⚠️ Не вдалося визначити цільову групу для відгуку');
             }
 
             setFeedbackStatus(chatId, dateKey, 'submitted');
