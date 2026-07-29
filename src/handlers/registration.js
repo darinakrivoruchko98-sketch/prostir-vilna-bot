@@ -228,8 +228,9 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
                 }
             });
         } catch (err) {
+            const errorMessage = err && err.message ? err.message : String(err || '');
             console.error('Помилка запису в таблицю під час діалогу:', err);
-            bot.sendMessage(chatId, "Помилка при збереженні даних у таблиці.", {
+            bot.sendMessage(chatId, `⚠️ Помилка при збереженні даних у таблиці.\n\nДеталі: ${errorMessage}`, {
                 reply_markup: {
                     keyboard: [[{ text: "Далі" }]],
                     resize_keyboard: true
