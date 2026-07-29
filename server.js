@@ -8106,6 +8106,25 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    if (text === '/test_feedback') {
+        const testFeedbackMessage = `🧪 Тестове повідомлення від бота\n\nЦе повідомлення відправлено для перевірки доставки у групу відгуків.`;
+        if (effectiveAppealsGroupId) {
+            try {
+                await bot.sendMessage(effectiveAppealsGroupId, testFeedbackMessage);
+                await bot.sendMessage(chatId, `✅ Тестове повідомлення відправлено в групу ${effectiveAppealsGroupId}`);
+            } catch (error) {
+                const errorBody = error && error.response && error.response.body
+                    ? error.response.body
+                    : (error && error.message ? error.message : error);
+                console.error('❌ Не вдалося відправити тестовий відгук:', errorBody);
+                await bot.sendMessage(chatId, `❌ Не вдалося відправити тестове повідомлення: ${String(errorBody || error || '')}`);
+            }
+        } else {
+            await bot.sendMessage(chatId, '❌ APPEALS_GROUP_ID не встановлено');
+        }
+        return;
+    }
+
     // ДІАГНОСТИКА: тест запису в таблицю персональних даних
     if (text === '/test_write' || text === '/test_table') {
         bot.sendMessage(chatId, '⏳ Тестую запис в таблицю "Зареєстровані"...');
