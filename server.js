@@ -8125,6 +8125,20 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    if (text === '/test_feedback_me') {
+        try {
+            await bot.sendMessage(chatId, '🧪 Це тестове повідомлення від бота. Якщо ти його бачиш — команда працює.');
+            await bot.sendMessage(chatId, '✅ Тестове повідомлення надіслано тобі в приватний чат.');
+        } catch (error) {
+            const errorBody = error && error.response && error.response.body
+                ? error.response.body
+                : (error && error.message ? error.message : error);
+            console.error('❌ Не вдалося відправити тестове повідомлення користувачу:', errorBody);
+            await bot.sendMessage(chatId, `❌ Не вдалося надіслати тестове повідомлення: ${String(errorBody || error || '')}`);
+        }
+        return;
+    }
+
     // ДІАГНОСТИКА: тест запису в таблицю персональних даних
     if (text === '/test_write' || text === '/test_table') {
         bot.sendMessage(chatId, '⏳ Тестую запис в таблицю "Зареєстровані"...');
