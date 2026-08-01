@@ -8,6 +8,7 @@ const path = require("path");
 const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
 const { createAuthorizedSheetsClient } = require('./src/sheets/auth');
+const { isRegistrationCancelText } = require('./src/utils/registration-flow');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
 const PORT = process.env.PORT || 8080;
@@ -8689,7 +8690,10 @@ bot.on('message', async (msg) => {
             });
         } catch (error) {
             console.error('❌ Помилка обробки відгуку:', error && error.message ? error.message : error);
-            await bot.sendMessage(chatId, '❌ Не вдалося надіслати відгук. Спробуйте ще раз трохи пізніше.');
+            const errorText = error && error.response && error.response.body
+                ? JSON.stringify(error.response.body)
+                : (error && error.message ? error.message : String(error));
+            await bot.sendMessage(chatId, `❌ Не вдалося надіслати відгук. Спробуйте ще раз трохи пізніше.\n\nДеталі: ${errorText}`);
         }
         return;
     }
@@ -8770,7 +8774,7 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    if (text === "❌ Скасувати реєстрацію") {
+    if (isRegistrationCancelText(text)) {
         clearPendingRegistrationSelection(user);
         delete user.afishaMultiRegistration;
         delete user.afishaFullRegistration;
