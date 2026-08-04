@@ -10,6 +10,7 @@ const TelegramBot = require("node-telegram-bot-api");
 const { createAuthorizedSheetsClient } = require('./src/sheets/auth');
 const { isRegistrationCancelText } = require('./src/utils/registration-flow');
 const { buildBeneficiarySummary, parseRegistrantsFromNoteText } = require('./src/utils/beneficiary-summary');
+const { hasCompleteRegistrationProfile } = require('./src/utils/profile');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
 const PORT = process.env.PORT || 8080;
@@ -7301,24 +7302,11 @@ async function processParsedEvents(parsedEvents) {
         user.profileHydrated = true;
 
         const registrantData = await resolveRegistrantFormData(chatId, user);
-        const hasAllData = registrantData.name && registrantData.phone && registrantData.birth &&
-            registrantData.status && registrantData.childrenCount && registrantData.health && registrantData.evacuationStatus &&
-            registrantData.shellingImpact && registrantData.employment && registrantData.beneficiaryCategory && registrantData.gzn;
+        const hasCompleteProfile = hasCompleteRegistrationProfile(registrantData);
         const hasExistingProfile = Boolean(sheetProfile || user.name || user.phone);
 
-        if (!hasAllData && !hasExistingProfile) {
-            user.step = 1;
-            user.registrationMode = true;
-            await bot.sendMessage(chatId, "Спочатку заповніть дані.\n\n📝 <b>Крок 1/11:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
-                parse_mode: 'HTML',
-                reply_markup: {
-                    keyboard: [
-                        [{ text: "❌ Скасувати реєстрацію" }]
-                    ],
-                    resize_keyboard: true
-                }
-            });
-            return;
+        if (!hasCompleteProfile && !hasExistingProfile) {
+            Object.assign(user, registrantData);
         }
 
         user.context = 'afisha';
