@@ -5309,6 +5309,7 @@ async function appendRegistrationRow(chatId, user) {
     const normalizeUsername = (value) => String(value || '').trim().toLowerCase().replace(/^@+/, '');
     const normalizeName = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
     const normalizePhone = (value) => String(value || '').replace(/\D/g, '');
+    const normalizeChatId = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
     const phonesMatch = (left, right) => {
         if (!left || !right) {
@@ -5330,8 +5331,9 @@ async function appendRegistrationRow(chatId, user) {
         const inputUsername = normalizeUsername(values[0]);
         const inputName = normalizeName(values[1]);
         const inputPhone = normalizePhone(values[2]);
+        const inputChatId = normalizeChatId(values[12]);
 
-        if (!inputUsername && !inputName && !inputPhone) {
+        if (!inputUsername && !inputName && !inputPhone && !inputChatId) {
             return null;
         }
 
@@ -5340,8 +5342,9 @@ async function appendRegistrationRow(chatId, user) {
             const rowUsername = normalizeUsername(row[0]);
             const rowName = normalizeName(row[1]);
             const rowPhone = normalizePhone(row[2]);
+            const rowChatId = normalizeChatId(row[12] || row[11] || row[10] || '');
 
-            const hasData = rowUsername || rowName || rowPhone;
+            const hasData = rowUsername || rowName || rowPhone || rowChatId;
             if (!hasData) {
                 continue;
             }
@@ -5349,8 +5352,9 @@ async function appendRegistrationRow(chatId, user) {
             const usernameMatch = inputUsername && rowUsername && inputUsername === rowUsername;
             const phoneMatch = phonesMatch(inputPhone, rowPhone);
             const nameMatch = inputName && rowName && inputName === rowName;
+            const chatIdMatch = inputChatId && rowChatId && inputChatId === rowChatId;
 
-            if (usernameMatch || phoneMatch || nameMatch) {
+            if (usernameMatch || phoneMatch || nameMatch || chatIdMatch) {
                 return i + 1;
             }
         }
@@ -8222,10 +8226,10 @@ bot.on('message', async (msg) => {
 
     if (matchesCommand(text, '/test_feedback_group', '/test_feedback_group@' + BOT_USERNAME)) {
         const testFeedbackMessage = `🧪 Тестове повідомлення у групу відгуків\n\nЦе повідомлення має потрапити в групу “Відгуки”.`;
-        if (effectiveAppealsGroupId) {
+        if (APPEALS_GROUP_ID) {
             try {
-                await bot.sendMessage(effectiveAppealsGroupId, testFeedbackMessage);
-                await bot.sendMessage(chatId, `✅ Тестове повідомлення відправлено в групу ${effectiveAppealsGroupId}`);
+                const result = await bot.sendMessage(APPEALS_GROUP_ID, testFeedbackMessage);
+                await bot.sendMessage(chatId, `✅ Тестове повідомлення відправлено в групу ${APPEALS_GROUP_ID}\n\nMessage ID: ${result && result.message_id ? result.message_id : 'N/A'}`);
             } catch (error) {
                 const errorBody = error && error.response && error.response.body
                     ? error.response.body

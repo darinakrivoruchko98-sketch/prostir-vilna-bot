@@ -1,6 +1,79 @@
 const state = require('../state');
 const config = require('../config');
 
+function normalizeIdentityValue(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/^@+/, '')
+        .replace(/\s+/g, ' ');
+}
+
+function normalizePhoneValue(value) {
+    return String(value || '').replace(/\D/g, '');
+}
+
+function findExistingRowByIdentity(rows, values) {
+    const inputUsername = normalizeIdentityValue(values[0]);
+    const inputName = normalizeIdentityValue(values[1]);
+    const inputPhone = normalizePhoneValue(values[2]);
+    const inputChatId = normalizeIdentityValue(values[12]);
+
+    if (!inputUsername && !inputName && !inputPhone && !inputChatId) {
+        return null;
+    }
+
+    for (let i = rows.length - 1; i >= 1; i--) {
+        const row = rows[i] || [];
+        const rowUsername = normalizeIdentityValue(row[0]);
+        const rowName = normalizeIdentityValue(row[1]);
+        const rowPhone = normalizePhoneValue(row[2]);
+        const rowChatId = normalizeIdentityValue(row[12] || row[11] || row[10] || '');
+
+        const hasData = rowUsername || rowName || rowPhone || rowChatId;
+        if (!hasData) {
+            continue;
+        }
+
+        const usernameMatch = inputUsername && rowUsername && inputUsername === rowUsername;
+        const phoneMatch = inputPhone && rowPhone && inputPhone === rowPhone;
+        const nameMatch = inputName && rowName && inputName === rowName;
+        const chatIdMatch = inputChatId && rowChatId && inputChatId === rowChatId;
+
+        if (usernameMatch || phoneMatch || nameMatch || chatIdMatch) {
+            return i + 1;
+        }
+    }
+
+    return null;
+}
+
+function mergeWithExistingRow(existingRow, values) {
+    return values.map((incomingValue, idx) => {
+        const incomingText = String(incomingValue || '').trim();
+        if (incomingText !== '') {
+            return incomingValue;
+        }
+        return existingRow && existingRow[idx] ? existingRow[idx] : '';
+    });
+}
+
+function findFirstFreeRow(rows) {
+    const searchStartIndex = 1;
+    let targetRow = Math.max(2, rows.length + 1);
+
+    for (let i = searchStartIndex; i < rows.length; i++) {
+        const row = rows[i] || [];
+        const personalDataHasValues = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].some((idx) => String(row[idx] || '').trim() !== '');
+        if (!personalDataHasValues) {
+            targetRow = i + 1;
+            break;
+        }
+    }
+
+    return targetRow;
+}
+
 async function appendRegistrationRow(chatId, user) {
     if (!config.PERSONAL_DATA_SPREADSHEET_ID) {
         throw new Error('PERSONAL_DATA_SPREADSHEET_ID not set');
@@ -36,22 +109,6 @@ async function appendRegistrationRow(chatId, user) {
         String(chatId)
     ];
 
-    const findFirstFreeRow = (rows) => {
-        const searchStartIndex = 1;
-        let targetRow = Math.max(2, rows.length + 1);
-
-        for (let i = searchStartIndex; i < rows.length; i++) {
-            const row = rows[i] || [];
-            const cell = String(row[0] || '').trim();
-            if (cell === '') {
-                targetRow = i + 1;
-                break;
-            }
-        }
-
-        return targetRow;
-    };
-
     console.log(`appendRegistrationRow -> writing to ${config.PERSONAL_DATA_SHEET_NAME}:`, values);
 
     const maxTries = 3;
@@ -81,14 +138,17 @@ async function appendRegistrationRow(chatId, user) {
             const rows = existingResp.data.values || [];
             console.log(`✅ Лист прочитаний. Рядків: ${rows.length}`);
 
-            const targetRow = findFirstFreeRow(rows);
-            console.log(`📝 Запис у рядок ${targetRow}`);
+            const existingRowNumber = findExistingRowByIdentity(rows, values);
+            const targetRow = existingRowNumber || findFirstFreeRow(rows);
+            const rowSnapshot = rows[targetRow - 1] || [];
+            const valuesToWrite = mergeWithExistingRow(rowSnapshot, values);
+            console.log(`📝 ${existingRowNumber ? 'Оновлення' : 'Запис'} рядка ${targetRow}`);
 
             await state.sheetsClient.spreadsheets.values.update({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
                 range: `${config.PERSONAL_DATA_SHEET_NAME}!A${targetRow}:M${targetRow}`,
                 valueInputOption: 'RAW',
-                requestBody: { values: [values] }
+                requestBody: { values: [valuesToWrite] }
             });
             console.log(`✅ Записано в таблицю ${config.PERSONAL_DATA_SHEET_NAME} (рядок ${targetRow}) ✅\n`);
             return;
@@ -119,13 +179,16 @@ async function appendRegistrationRow(chatId, user) {
                         range: 'A:M'
                     });
                     const rows = existingResp.data.values || [];
-                    const targetRow = findFirstFreeRow(rows);
+                    const existingRowNumber = findExistingRowByIdentity(rows, values);
+                    const targetRow = existingRowNumber || findFirstFreeRow(rows);
+                    const rowSnapshot = rows[targetRow - 1] || [];
+                    const valuesToWrite = mergeWithExistingRow(rowSnapshot, values);
 
                     await state.sheetsClient.spreadsheets.values.update({
                         spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
                         range: `A${targetRow}:M${targetRow}`,
                         valueInputOption: 'RAW',
-                        requestBody: { values: [values] }
+                        requestBody: { values: [valuesToWrite] }
                     });
                     console.log(`✅ Записано в таблицю (fallback A:M, рядок ${targetRow}) ✅\n`);
                     return;
