@@ -5926,6 +5926,10 @@ async function collectBeneficiaryRecordsForPeriod(startDate, endDate) {
         const noteText = noteIndex.get(eventKey) || '';
         const registrants = parseRegistrantsFromNote(noteText);
 
+        if (!Array.isArray(registrants) || registrants.length === 0) {
+            continue;
+        }
+
         for (const registrant of registrants) {
             const profile = await findProfileByNameOrPhone(registrant);
             const name = String(profile && profile.name ? profile.name : registrant.name || '').trim();
