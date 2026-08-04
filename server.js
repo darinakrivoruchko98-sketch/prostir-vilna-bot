@@ -11,6 +11,7 @@ const { createAuthorizedSheetsClient } = require('./src/sheets/auth');
 const { isRegistrationCancelText } = require('./src/utils/registration-flow');
 const { buildBeneficiarySummary, parseRegistrantsFromNoteText } = require('./src/utils/beneficiary-summary');
 const { hasCompleteRegistrationProfile } = require('./src/utils/profile');
+const { shouldSkipAiIntentDetection } = require('./src/utils/intent-detection');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
 const PORT = process.env.PORT || 8080;
@@ -12596,9 +12597,9 @@ bot.on('message', async (msg) => {
 
     // AI fallback: якщо текст не збігся з жодною кнопкою/сценарієм вище.
     if (msg.chat.type === 'private') {
-        if (!AI_ENABLED) {
+        if (!AI_ENABLED || shouldSkipAiIntentDetection(text)) {
             const fallbackIntentTag = detectIntentLocally(text);
-            console.log(`🧠 AI disabled, local intent fallback: ${fallbackIntentTag}`);
+            console.log(`🧠 Local fallback: ${fallbackIntentTag}`);
             if (await handleIntentTag(chatId, user, fallbackIntentTag, text)) {
                 return;
             }
