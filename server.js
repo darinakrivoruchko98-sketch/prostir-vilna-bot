@@ -3469,6 +3469,10 @@ function normalizeRegistrantPhone(value) {
     return String(value || '').replace(/\D+/g, '');
 }
 
+function normalizeRegistrantUserId(value) {
+    return String(value || '').replace(/\D/g, '');
+}
+
 function buildFriendRegistrationKey(eventId, registrantName, registrantPhone) {
     const eventKey = String(eventId || '').trim();
     const nameKey = normalizeRegistrantName(registrantName);
@@ -3476,10 +3480,14 @@ function buildFriendRegistrationKey(eventId, registrantName, registrantPhone) {
     return `${eventKey}::${nameKey}::${phoneKey}`;
 }
 
-function isSameRegistrant(item, candidateNameKey, candidatePhoneKey) {
+function isSameRegistrant(item, candidateNameKey, candidatePhoneKey, candidateUserId) {
     const sameName = normalizeRegistrantName(item.name) === candidateNameKey;
     const samePhone = normalizeRegistrantPhone(item.phone) === candidatePhoneKey;
-    return (candidateNameKey && candidatePhoneKey && sameName && samePhone)
+    const sameUserId = normalizeRegistrantUserId(item.userId) && normalizeRegistrantUserId(candidateUserId)
+        && normalizeRegistrantUserId(item.userId) === normalizeRegistrantUserId(candidateUserId);
+
+    return (candidateUserId && sameUserId)
+        || (candidateNameKey && candidatePhoneKey && sameName && samePhone)
         || (!candidatePhoneKey && candidateNameKey && sameName)
         || (!candidateNameKey && candidatePhoneKey && samePhone);
 }
@@ -4269,12 +4277,13 @@ async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, exis
 
     const candidateName = String((fallbackRegistrant && fallbackRegistrant.name) || '').trim();
     const candidatePhone = String((fallbackRegistrant && fallbackRegistrant.phone) || '').trim();
-    if (candidateName || candidatePhone) {
+    const candidateUserId = normalizeRegistrantUserId(fallbackRegistrant && fallbackRegistrant.userId);
+    if (candidateName || candidatePhone || candidateUserId) {
         const candidateNameKey = normalizeRegistrantName(candidateName);
         const candidatePhoneKey = normalizeRegistrantPhone(candidatePhone);
-        const exists = registrants.some((item) => isSameRegistrant(item, candidateNameKey, candidatePhoneKey));
+        const exists = registrants.some((item) => isSameRegistrant(item, candidateNameKey, candidatePhoneKey, candidateUserId));
         if (!exists) {
-            registrants.push({ name: candidateName, phone: candidatePhone });
+            registrants.push({ name: candidateName, phone: candidatePhone, userId: candidateUserId });
         }
     }
 
@@ -4299,8 +4308,9 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
         // При відписці: парсимо, видаляємо, перебудовуємо
         const removeNameKey = normalizeRegistrantName(removeRegistrant.name);
         const removePhoneKey = normalizeRegistrantPhone(removeRegistrant.phone);
-        if (removeNameKey || removePhoneKey) {
-            registrants = registrants.filter((item) => !isSameRegistrant(item, removeNameKey, removePhoneKey));
+        const removeUserId = normalizeRegistrantUserId(removeRegistrant.userId);
+        if (removeNameKey || removePhoneKey || removeUserId) {
+            registrants = registrants.filter((item) => !isSameRegistrant(item, removeNameKey, removePhoneKey, removeUserId));
         }
     } else if (fallbackRegistrant) {
         // При реєстрації: додаємо у нормалізований список і перебудовуємо всю нотатку.
@@ -4310,13 +4320,15 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
         if (!candidateName && !candidatePhone) {
             return;
         }
+        const candidateUserId = normalizeRegistrantUserId(fallbackRegistrant && fallbackRegistrant.userId);
         const candidateNameKey = normalizeRegistrantName(candidateName);
         const candidatePhoneKey = normalizeRegistrantPhone(candidatePhone);
-        const alreadyInNote = registrants.some((item) => isSameRegistrant(item, candidateNameKey, candidatePhoneKey));
+        const alreadyInNote = registrants.some((item) => isSameRegistrant(item, candidateNameKey, candidatePhoneKey, candidateUserId));
         if (!alreadyInNote) {
             registrants.push({
                 name: candidateName,
-                phone: candidatePhone
+                phone: candidatePhone,
+                userId: candidateUserId
             });
         }
     } else {
