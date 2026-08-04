@@ -8631,26 +8631,30 @@ bot.on('message', async (msg) => {
         if (msg.from && msg.from.username) {
             user.username = String(msg.from.username).trim();
         }
-        
-        // Шукаємо профіль по chatId, а якщо не знайдено — по username
-        let foundProfile = await loadKnownUserByChatId(chatId, { forceRefresh: true });
+
+        const existingCachedProfile = knownUsers[chatId] || null;
+        let foundProfile = existingCachedProfile;
+
+        if (!foundProfile) {
+            foundProfile = await loadKnownUserByChatId(chatId, { forceRefresh: true });
+        }
+
         if (!foundProfile && msg.from && msg.from.username) {
             foundProfile = await loadKnownUserByUsername(msg.from.username);
         }
-        
+
         if (foundProfile) {
-            // Профіль знайдено — логінимо користувача
             Object.assign(user, foundProfile);
             user.profileHydrated = true;
-            
-            // Завантажуємо заходи з розпису для цього тижня
+            knownUsers[chatId] = foundProfile;
+
             const thisWeekEvents = await getUserWeeklyEvents(chatId, foundProfile);
-            
+
             const greetingName = String(foundProfile.name || '').trim().split(/\s+/)[1]
                 || String(foundProfile.name || '').trim().split(/\s+/)[0]
                 || 'друже';
             let greeting = `✅ Привіт, ${greetingName}! Рад(а) тебе бачити.\n\n`;
-            
+
             if (thisWeekEvents && thisWeekEvents.length > 0) {
                 greeting += `📅 <b>Ваші заходи на цьому тижні:</b>\n`;
                 thisWeekEvents.forEach((evt, idx) => {
@@ -8660,9 +8664,9 @@ bot.on('message', async (msg) => {
             } else {
                 greeting += `📅 На цьому тижні у вас немає заходів\n\n`;
             }
-            
+
             greeting += `Оберіть дію:`;
-            
+
             await bot.sendMessage(chatId, greeting, {
                 parse_mode: 'HTML',
                 reply_markup: {
@@ -8671,22 +8675,34 @@ bot.on('message', async (msg) => {
                 }
             });
         } else {
-            // Профіль не знайдено — запускаємо реєстрацію
             user.step = 1;
             user.registrationMode = true;
             user.registrationData = {
                 chatId: String(chatId)
             };
-            
-            await bot.sendMessage(chatId, "Профіль не знайдено. 😔\n\nРозпочинаємо реєстрацію...\n\n📝 <b>Крок 1/11:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
-                parse_mode: 'HTML',
-                reply_markup: {
-                    keyboard: [
-                        [{ text: "❌ Скасувати реєстрацію" }]
-                    ],
-                    resize_keyboard: true
-                }
-            });
+
+            const existingSessionProfile = user.name || user.phone || user.birth || user.status || user.childrenCount || user.health;
+            if (existingSessionProfile) {
+                await bot.sendMessage(chatId, "🔄 Ми відновили ваші дані з поточної сесії. Продовжуємо реєстрацію.", {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "❌ Скасувати реєстрацію" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+            } else {
+                await bot.sendMessage(chatId, "Профіль не знайдено. 😔\n\nРозпочинаємо реєстрацію...\n\n📝 <b>Крок 1/11:</b> Будь ласка, введіть ваше <b>ПІБ</b> (Прізвище Ім'я По батькові):", {
+                    parse_mode: 'HTML',
+                    reply_markup: {
+                        keyboard: [
+                            [{ text: "❌ Скасувати реєстрацію" }]
+                        ],
+                        resize_keyboard: true
+                    }
+                });
+            }
         }
         return;
     }
