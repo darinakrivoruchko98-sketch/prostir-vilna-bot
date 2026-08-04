@@ -6199,6 +6199,9 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
     delete user.afishaFullRegistration;
     delete user.afishaPendingEventId;
     delete user.afishaPendingEventName;
+    delete user.pendingUnregEventId;
+    delete user.pendingFriendUnregKey;
+    delete user.pendingFeedbackDateKey;
 
     return { status: 'ok' };
 }
