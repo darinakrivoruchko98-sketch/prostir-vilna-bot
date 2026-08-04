@@ -2568,6 +2568,10 @@ async function checkAndSendDailyFeedbackRequests() {
     }
 
     const dateKey = formatDateKeyInAppTimeZone(now);
+    if (!dailyFeedbackCandidatesByDate[dateKey]) {
+        rebuildFeedbackCandidatesFromActiveRegistrations();
+    }
+
     const todayCandidates = dailyFeedbackCandidatesByDate[dateKey] || {};
     const chatIds = Object.keys(todayCandidates);
     if (chatIds.length === 0) {
