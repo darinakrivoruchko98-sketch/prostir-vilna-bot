@@ -9,7 +9,7 @@ const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
 const { createAuthorizedSheetsClient } = require('./src/sheets/auth');
 const { isRegistrationCancelText } = require('./src/utils/registration-flow');
-const { buildBeneficiarySummary } = require('./src/utils/beneficiary-summary');
+const { buildBeneficiarySummary, parseRegistrantsFromNoteText } = require('./src/utils/beneficiary-summary');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
 const PORT = process.env.PORT || 8080;
@@ -3307,74 +3307,7 @@ async function getSheetIdByTitle(spreadsheetId, sheetTitle) {
 }
 
 function parseRegistrantsFromNote(noteText) {
-    const text = String(noteText || '').trim();
-    if (!text) return [];
-
-    const registrants = [];
-    const seen = new Set();
-    let currentSection = 'registered';
-    const lines = text
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
-
-    for (const line of lines) {
-        if (/^зареєстровано\s*:/i.test(line)) {
-            currentSection = 'registered';
-            continue;
-        }
-
-        if (/^резерв\s*:/i.test(line)) {
-            currentSection = 'reserve';
-            continue;
-        }
-
-        if (currentSection !== 'registered') {
-            continue;
-        }
-
-        if (/^список\s+порожній$/i.test(line)
-            || /^EVENT_ID\s*:/i.test(line)
-            || /^\d+[.)-]?\s*EVENT_ID\s*:/i.test(line)) {
-            continue;
-        }
-
-        const cleaned = line
-            .replace(/^[-*•]\s*/, '')
-            .replace(/^\d+[.)-]?\s*/, '')
-            .trim();
-
-        if (!cleaned) continue;
-        if (/^EVENT_ID\s*:/i.test(cleaned)) continue;
-
-        let name = '';
-        let phone = '';
-
-        const structuredMatch = cleaned.match(/^(.*?)\s*(?:\||[—-])\s*(.+)$/);
-        if (structuredMatch) {
-            name = String(structuredMatch[1] || '').trim();
-            phone = String(structuredMatch[2] || '').trim();
-        } else {
-            const phoneMatch = cleaned.match(/(\+?\d[\d\s()\-]{6,})$/);
-            if (phoneMatch) {
-                phone = String(phoneMatch[1] || '').trim();
-                name = cleaned.slice(0, cleaned.length - phone.length).replace(/[,:;\-\s]+$/, '').trim();
-            }
-        }
-
-        if (!name && !phone) {
-            continue;
-        }
-
-        const key = `${normalizeRegistrantName(name)}|${normalizeRegistrantPhone(phone)}`;
-        if (seen.has(key)) {
-            continue;
-        }
-        seen.add(key);
-        registrants.push({ name, phone });
-    }
-
-    return registrants;
+    return parseRegistrantsFromNoteText(noteText);
 }
 
 async function findScheduleRowByEventByNoteTag(event) {
@@ -5865,10 +5798,25 @@ async function findProfileByNameOrPhone(registrant) {
     }
 
     const phone = String(registrant.phone || '').replace(/\D/g, '');
+    const identifier = String(registrant.identifier || registrant.chatId || registrant.userId || '').replace(/\D/g, '');
     const name = String(registrant.name || '').trim();
+
+    if (identifier && sheetsClient && PERSONAL_DATA_SPREADSHEET_ID) {
+        const chatProfile = await loadKnownUserByChatId(identifier);
+        if (chatProfile) {
+            return chatProfile;
+        }
+    }
 
     if (phone && sheetsClient && PERSONAL_DATA_SPREADSHEET_ID) {
         const phoneProfile = await loadKnownUserByPhone(phone);
+        if (phoneProfile) {
+            return phoneProfile;
+        }
+    }
+
+    if (identifier && sheetsClient && PERSONAL_DATA_SPREADSHEET_ID) {
+        const phoneProfile = await loadKnownUserByPhone(identifier);
         if (phoneProfile) {
             return phoneProfile;
         }
@@ -5910,6 +5858,14 @@ async function findProfileByNameOrPhone(registrant) {
 
 async function collectBeneficiaryRecordsForPeriod(startDate, endDate) {
     if (!Array.isArray(events) || events.length === 0) {
+        try {
+            await loadEventsFromSheet();
+        } catch (error) {
+            console.warn('⚠️ Не вдалося перезавантажити заходи для підсумку бенефіціарок:', error && error.message ? error.message : error);
+        }
+    }
+
+    if (!Array.isArray(events) || events.length === 0) {
         return [];
     }
 
@@ -5934,14 +5890,16 @@ async function collectBeneficiaryRecordsForPeriod(startDate, endDate) {
             const profile = await findProfileByNameOrPhone(registrant);
             const name = String(profile && profile.name ? profile.name : registrant.name || '').trim();
             const phone = String(profile && profile.phone ? profile.phone : registrant.phone || '').trim();
-            const key = `${name}|${phone}`.toLowerCase();
-            if (!name && !phone) continue;
+            const identifier = String(registrant.identifier || '').trim();
+            const key = `${name}|${phone}|${identifier}`.toLowerCase();
+            if (!name && !phone && !identifier) continue;
             if (seen.has(key)) continue;
             seen.add(key);
 
             records.push({
                 name,
                 phone,
+                identifier,
                 birth: profile && profile.birth ? profile.birth : '',
                 status: profile && profile.status ? profile.status : '',
                 health: profile && profile.health ? profile.health : ''

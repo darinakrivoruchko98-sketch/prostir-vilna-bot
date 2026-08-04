@@ -80,6 +80,104 @@ function hasHealthIssue(healthText) {
     return value.includes('інвалідність') || value.includes('істотні проблеми') || value.includes('проблеми зі здоров') || value.includes('проблеми со здоров') || value.includes('проблеми');
 }
 
+function parseRegistrantsFromNoteText(noteText) {
+    if (!noteText) return [];
+
+    const lines = String(noteText)
+        .split(/\r?\n/)
+        .map((line) => String(line || '').trim())
+        .filter(Boolean);
+
+    const registrants = [];
+    const seen = new Set();
+
+    let inRegisteredSection = false;
+    let sawRegisteredHeader = false;
+
+    for (const rawLine of lines) {
+        const line = rawLine.replace(/^[-*•]\s*/, '').trim();
+        if (!line) continue;
+
+        if (/^зареєстровано\s*:/i.test(line)) {
+            inRegisteredSection = true;
+            sawRegisteredHeader = true;
+            continue;
+        }
+
+        if (/^резерв\s*:/i.test(line)) {
+            inRegisteredSection = false;
+            continue;
+        }
+
+        if (!sawRegisteredHeader && !inRegisteredSection) {
+            inRegisteredSection = true;
+        }
+
+        if (!inRegisteredSection) {
+            continue;
+        }
+
+        if (/^список\s+порожній$/i.test(line)
+            || /^EVENT_ID\s*:/i.test(line)
+            || /^\d+[.)-]?\s*EVENT_ID\s*:/i.test(line)) {
+            continue;
+        }
+
+        let name = '';
+        let phone = '';
+        let identifier = '';
+
+        const cleanedLine = line.replace(/^\d+[.)-]?\s*/, '').trim();
+
+        const structuredMatch = cleanedLine.match(/^(.*?)\s*(?:\||[—-])\s*(.+)$/);
+        if (structuredMatch) {
+            name = String(structuredMatch[1] || '').trim();
+            const candidate = String(structuredMatch[2] || '').trim();
+            const normalizedCandidate = candidate.replace(/\D/g, '');
+            const isPhoneCandidate = /^\+?\d[\d\s()\-]{6,}$/.test(candidate);
+            if (isPhoneCandidate) {
+                phone = candidate;
+            } else if (/^\d+$/.test(candidate) && normalizedCandidate.length >= 5) {
+                identifier = normalizedCandidate;
+            } else if (normalizedCandidate.length >= 5) {
+                identifier = normalizedCandidate;
+            } else {
+                phone = candidate;
+            }
+        } else {
+            const trimmed = String(cleanedLine).trim();
+            if (/^\d+$/.test(trimmed) && trimmed.length >= 5) {
+                identifier = trimmed;
+            } else {
+                const phoneMatch = cleanedLine.match(/(\+?\d[\d\s()\-]{6,})$/);
+                if (phoneMatch) {
+                    phone = String(phoneMatch[1] || '').trim();
+                    name = cleanedLine.slice(0, cleanedLine.length - phone.length).replace(/[,:;\-\s]+$/, '').trim();
+                } else {
+                    const bulletName = cleanedLine.trim();
+                    if (bulletName) {
+                        name = bulletName;
+                    }
+                }
+            }
+        }
+
+        if (!name && !phone && !identifier) continue;
+
+        const key = `${normalizeName(name)}|${String(phone).replace(/\D/g, '')}|${identifier}`.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        if (identifier) {
+            registrants.push({ name, phone, identifier });
+        } else {
+            registrants.push({ name, phone });
+        }
+    }
+
+    return registrants;
+}
+
 function buildBeneficiarySummary(records, referenceDate = new Date()) {
     const uniqueRecords = [];
     const seen = new Set();
@@ -147,6 +245,7 @@ function buildBeneficiarySummary(records, referenceDate = new Date()) {
 
 module.exports = {
     buildBeneficiarySummary,
+    parseRegistrantsFromNoteText,
     getAgeFromBirthDate,
     categorizeStatus,
     hasHealthIssue,
