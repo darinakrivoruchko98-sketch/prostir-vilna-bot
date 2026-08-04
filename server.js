@@ -9,6 +9,7 @@ const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
 const { createAuthorizedSheetsClient } = require('./src/sheets/auth');
 const { isRegistrationCancelText } = require('./src/utils/registration-flow');
+const { buildBeneficiarySummary } = require('./src/utils/beneficiary-summary');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
 const PORT = process.env.PORT || 8080;
@@ -25,6 +26,7 @@ const BROADCAST_OWNER_CHAT_ID = Number(String(process.env.BROADCAST_OWNER_CHAT_I
 const BROADCAST_ALL_TRIGGER_REGEX = /❗️?|‼️/;
 const BROADCAST_TARGETED_TRIGGER_REGEX = /❕/;
 const APP_TIME_ZONE = process.env.TZ || 'Europe/Kyiv';
+const BENEFICIARY_SUMMARY_STORAGE_PATH = path.join(__dirname, 'data', 'beneficiary-summary-cache.json');
 // Захист ідентичності бота: якщо хтось змінить назву/опис через BotFather, бот відновить їх автоматично
 const BOT_USERNAME = process.env.BOT_USERNAME || '';
 const BOT_DISPLAY_NAME = 'Бот простору Вільна🌷';
@@ -5820,6 +5822,235 @@ async function loadKnownUserByChatId(chatId, options = {}) {
     return null;
 }
 
+function getPeriodRange(referenceDate = new Date()) {
+    const startOfDay = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+    const endOfDay = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate(), 23, 59, 59, 999);
+
+    const startOfWeek = new Date(startOfDay);
+    startOfWeek.setDate(startOfDay.getDate() - ((startOfDay.getDay() + 6) % 7));
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+    endOfWeek.setHours(23, 59, 59, 999);
+
+    const startOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1);
+    const endOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    return {
+        day: { start: startOfDay, end: endOfDay },
+        week: { start: startOfWeek, end: endOfWeek },
+        month: { start: startOfMonth, end: endOfMonth }
+    };
+}
+
+function getPeriodLabel(periodName, referenceDate = new Date()) {
+    const dayNames = ['Неділя', 'Понеділок', 'Вівторок', 'Середа', 'Четвер', 'Пʼятниця', 'Субота'];
+    const monthNames = ['січня', 'лютого', 'березня', 'квітня', 'травня', 'червня', 'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня'];
+
+    if (periodName === 'day') {
+        const dayName = dayNames[referenceDate.getDay()];
+        return `${dayName}, ${referenceDate.getDate()} ${monthNames[referenceDate.getMonth()]} ${referenceDate.getFullYear()}`;
+    }
+
+    if (periodName === 'week') {
+        const range = getPeriodRange(referenceDate).week;
+        return `${range.start.getDate()} ${monthNames[range.start.getMonth()]} – ${range.end.getDate()} ${monthNames[range.end.getMonth()]} ${range.end.getFullYear()}`;
+    }
+
+    return `${monthNames[referenceDate.getMonth()]} ${referenceDate.getFullYear()}`;
+}
+
+async function findProfileByNameOrPhone(registrant) {
+    if (!registrant) {
+        return null;
+    }
+
+    const phone = String(registrant.phone || '').replace(/\D/g, '');
+    const name = String(registrant.name || '').trim();
+
+    if (phone && sheetsClient && PERSONAL_DATA_SPREADSHEET_ID) {
+        const phoneProfile = await loadKnownUserByPhone(phone);
+        if (phoneProfile) {
+            return phoneProfile;
+        }
+    }
+
+    if (name && sheetsClient && PERSONAL_DATA_SPREADSHEET_ID) {
+        try {
+            const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:M`, 'A:M'];
+            for (const range of rangesToTry) {
+                const resp = await sheetsClient.spreadsheets.values.get({
+                    spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                    range
+                });
+                const rows = resp.data.values || [];
+                const normalizedName = name.toLowerCase();
+
+                for (let i = rows.length - 1; i >= 0; i--) {
+                    const row = rows[i] || [];
+                    const rowName = String(row[1] || '').trim().toLowerCase();
+                    if (!rowName) continue;
+                    if (rowName === normalizedName || rowName.includes(normalizedName) || normalizedName.includes(rowName)) {
+                        return parsePersonalDataRow(row);
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('Не вдалося знайти профіль за імʼям:', e && e.message ? e.message : e);
+        }
+    }
+
+    return {
+        name,
+        phone,
+        birth: '',
+        status: '',
+        health: ''
+    };
+}
+
+async function collectBeneficiaryRecordsForPeriod(startDate, endDate) {
+    if (!Array.isArray(events) || events.length === 0) {
+        return [];
+    }
+
+    const noteIndex = await buildScheduleEventNoteIndex();
+    const records = [];
+    const seen = new Set();
+
+    for (const event of events) {
+        const eventDate = event && event.date instanceof Date ? event.date : null;
+        if (!eventDate) continue;
+        if (eventDate < startDate || eventDate > endDate) continue;
+
+        const eventKey = getEventIdentityKey(event);
+        const noteText = noteIndex.get(eventKey) || '';
+        const registrants = parseRegistrantsFromNote(noteText);
+
+        for (const registrant of registrants) {
+            const profile = await findProfileByNameOrPhone(registrant);
+            const name = String(profile && profile.name ? profile.name : registrant.name || '').trim();
+            const phone = String(profile && profile.phone ? profile.phone : registrant.phone || '').trim();
+            const key = `${name}|${phone}`.toLowerCase();
+            if (!name && !phone) continue;
+            if (seen.has(key)) continue;
+            seen.add(key);
+
+            records.push({
+                name,
+                phone,
+                birth: profile && profile.birth ? profile.birth : '',
+                status: profile && profile.status ? profile.status : '',
+                health: profile && profile.health ? profile.health : ''
+            });
+        }
+    }
+
+    return records;
+}
+
+function buildSummaryMessage(records, periodName, referenceDate = new Date()) {
+    const summary = buildBeneficiarySummary(records, referenceDate);
+    const sectionTitle = periodName === 'day'
+        ? '📅 За день'
+        : periodName === 'week'
+            ? '📆 За тиждень'
+            : '🗓️ За місяць';
+    const periodLabel = getPeriodLabel(periodName, referenceDate);
+
+    const lines = [];
+    lines.push(`<b>${sectionTitle}</b>`);
+    lines.push(`Період: ${periodLabel}`);
+    lines.push(`• ВПО: ${summary.counts.vpo}`);
+    lines.push(`• Не ВПО, що постраждали від війни: ${summary.counts.nonVpoDamaged}`);
+    lines.push(`• Не ВПО, що не постраждали від війни: ${summary.counts.nonVpoSafe}`);
+    lines.push(`• До 18 років: ${summary.counts.under18}`);
+    lines.push(`• 18–59 років: ${summary.counts.age18to59}`);
+    lines.push(`• 60+ років: ${summary.counts.age60plus}`);
+    lines.push(`• Інвалідність / істотні проблеми зі здоровʼям: ${summary.counts.healthIssues}`);
+
+    if (summary.items.length > 0) {
+        lines.push('');
+        lines.push('<b>Список бенефіціарок:</b>');
+        summary.items.forEach((item) => {
+            const ageText = Number.isFinite(item.age) ? `${item.age} р.` : 'н/д';
+            const statusText = item.status || '—';
+            const healthText = item.health || '—';
+            lines.push(`• ${item.name || 'Без імені'} — ${ageText}; ${statusText}; ${healthText}`);
+        });
+    } else {
+        lines.push('');
+        lines.push('Нічого не знайдено у нотатках за цей період.');
+    }
+
+    return lines.join('\n');
+}
+
+function ensureBeneficiarySummaryStorageDir() {
+    const dir = path.dirname(BENEFICIARY_SUMMARY_STORAGE_PATH);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+}
+
+function deleteExpiredBeneficiarySummaryStorage(referenceDate = new Date()) {
+    if (!fs.existsSync(BENEFICIARY_SUMMARY_STORAGE_PATH)) {
+        return;
+    }
+
+    try {
+        const raw = fs.readFileSync(BENEFICIARY_SUMMARY_STORAGE_PATH, 'utf8');
+        const parsed = raw ? JSON.parse(raw) : null;
+        if (!parsed || !parsed.generatedAt) {
+            fs.unlinkSync(BENEFICIARY_SUMMARY_STORAGE_PATH);
+            return;
+        }
+
+        const generated = new Date(parsed.generatedAt);
+        if (Number.isNaN(generated.getTime())) {
+            fs.unlinkSync(BENEFICIARY_SUMMARY_STORAGE_PATH);
+            return;
+        }
+
+        const nextMonthEnd = new Date(generated.getFullYear(), generated.getMonth() + 2, 0, 23, 59, 59, 999);
+        if (referenceDate > nextMonthEnd) {
+            fs.unlinkSync(BENEFICIARY_SUMMARY_STORAGE_PATH);
+        }
+    } catch (error) {
+        console.warn('Не вдалося очистити файл підсумків бенефіціарок:', error && error.message ? error.message : error);
+    }
+}
+
+function saveBeneficiarySummaryToStorage(text, referenceDate = new Date()) {
+    ensureBeneficiarySummaryStorageDir();
+    const payload = {
+        generatedAt: referenceDate.toISOString(),
+        text
+    };
+    fs.writeFileSync(BENEFICIARY_SUMMARY_STORAGE_PATH, JSON.stringify(payload, null, 2), 'utf8');
+}
+
+async function sendBeneficiarySummary(bot, chatId, referenceDate = new Date()) {
+    const periods = getPeriodRange(referenceDate);
+    const dayRecords = await collectBeneficiaryRecordsForPeriod(periods.day.start, periods.day.end);
+    const weekRecords = await collectBeneficiaryRecordsForPeriod(periods.week.start, periods.week.end);
+    const monthRecords = await collectBeneficiaryRecordsForPeriod(periods.month.start, periods.month.end);
+
+    const message = [
+        '🧮 <b>Підсумок бенефіціарок</b>',
+        '',
+        buildSummaryMessage(dayRecords, 'day', referenceDate),
+        '',
+        buildSummaryMessage(weekRecords, 'week', referenceDate),
+        '',
+        buildSummaryMessage(monthRecords, 'month', referenceDate),
+        '',
+        'ℹ️ Цей підсумок збережено локально до кінця наступного місяця.'
+    ].join('\n');
+
+    saveBeneficiarySummaryToStorage(message, referenceDate);
+    await bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+}
+
 async function findUserByChatIdInSheet(chatIdStr) {
     if (!sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID || !chatIdStr) {
         return null;
@@ -8054,6 +8285,13 @@ bot.on('message', async (msg) => {
 
     const trimmedText = String(text || '').trim();
     const commandText = trimmedText.startsWith('/') ? trimmedText : '';
+    const isBeneficiarySummaryTrigger = trimmedText === '🧮' || trimmedText === '/summary';
+
+    if (isBeneficiarySummaryTrigger) {
+        deleteExpiredBeneficiarySummaryStorage(new Date());
+        await sendBeneficiarySummary(bot, chatId, new Date());
+        return;
+    }
 
     if (commandText && matchesCommand(commandText, '/test_feedback_group', '/test_feedback_group@' + BOT_USERNAME, '/test_feedback', '/test_feedback@' + BOT_USERNAME, '/test_feedback_me', '/test_feedback_me@' + BOT_USERNAME)) {
         await bot.sendMessage(chatId, `🧪 Отримано команду: ${commandText}`);
