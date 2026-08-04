@@ -1,8 +1,36 @@
 const state = require('../state');
-const { appendRegistrationRow } = require('../sheets/personal-data');
+const { appendRegistrationRow, findUserByChatId, resolveKnownUser } = require('../sheets/personal-data');
 const { registerForSelectedEvent } = require('./event-selection');
 
-function handleRegistrationStart(bot, chatId, user) {
+function applyKnownUserProfile(user, knownUser) {
+    if (!knownUser) return false;
+
+    user.name = knownUser.name || user.name;
+    user.phone = knownUser.phone || user.phone;
+    user.birth = knownUser.birth || user.birth;
+    user.status = knownUser.status || user.status;
+    user.childrenCount = knownUser.childrenCount || user.childrenCount;
+    user.health = knownUser.health || user.health;
+    user.evacuationStatus = knownUser.evacuationStatus || user.evacuationStatus;
+    user.shellingImpact = knownUser.shellingImpact || user.shellingImpact;
+    user.employment = knownUser.employment || user.employment;
+    user.gzn = knownUser.gzn || user.gzn;
+    user.beneficiaryCategory = knownUser.beneficiaryCategory || user.beneficiaryCategory;
+
+    return true;
+}
+
+async function handleRegistrationStart(bot, chatId, user) {
+    const existingUser = await resolveKnownUser(chatId, state.knownUsers, findUserByChatId);
+    if (existingUser) {
+        applyKnownUserProfile(user, existingUser);
+        state.knownUsers[chatId] = { ...existingUser };
+        user.step = 12;
+        user.selectedEvents = user.selectedEvents || [];
+        bot.sendMessage(chatId, "ℹ️ Ми знайшли ваші дані в реєстраційній таблиці. Ви можете одразу продовжити вибір заходів.");
+        return;
+    }
+
     user.step = 1;
     bot.sendMessage(chatId, "Прізвище Ім'я По-батькові");
 }
@@ -171,6 +199,70 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
     if (user.step === 11) {
         user.gzn = text;
         try {
+            const existingUser = await resolveKnownUser(chatId, state.knownUsers, findUserByChatId);
+            if (existingUser) {
+                applyKnownUserProfile(user, existingUser);
+                state.knownUsers[chatId] = {
+                    ...existingUser,
+                    name: user.name,
+                    phone: user.phone,
+                    birth: user.birth,
+                    status: user.status,
+                    childrenCount: user.childrenCount,
+                    health: user.health,
+                    evacuationStatus: user.evacuationStatus,
+                    shellingImpact: user.shellingImpact,
+                    employment: user.employment,
+                    gzn: user.gzn,
+                    beneficiaryCategory: user.beneficiaryCategory,
+                };
+
+                if (user.afishaFullRegistration) {
+                    user.selectedEventId = user.afishaPendingEventId;
+                    user.selectedEventName = user.afishaPendingEventName;
+
+                    const result = await registerForSelectedEvent(chatId, user, user.name || '', user.phone || '');
+                    if (result.status === 'no-selection') {
+                        bot.sendMessage(chatId, "Спочатку оберіть захід.");
+                        return true;
+                    }
+                    if (result.status === 'no-seats') {
+                        bot.sendMessage(chatId, "❌ Вибачте, місця закінчилися.");
+                        return true;
+                    }
+                    if (result.status === 'reserve-added') {
+                        bot.sendMessage(chatId, "🕒 Місць поки немає, але вас додано в резерв. Коли кількість місць збільшиться, бот перенесе вас у реєстрацію автоматично.");
+                        return true;
+                    }
+                    if (result.status === 'already-registered') {
+                        bot.sendMessage(chatId, "ℹ️ Ви вже зареєстровані на цей захід.");
+                        return true;
+                    }
+
+                    bot.sendMessage(chatId, "✅ Ви успішно зареєстровані на захід!", {
+                        reply_markup: {
+                            keyboard: [
+                                [{ text: "Назад" }],
+                                [{ text: "Повернутися в меню" }]
+                            ],
+                            resize_keyboard: true
+                        }
+                    });
+                    return true;
+                }
+
+                user.step = 12;
+                user.selectedEvents = [];
+
+                bot.sendMessage(chatId, "ℹ️ Ви вже є в реєстраційній таблиці. Ваші дані знайдено, і ми продовжимо без дублювання.", {
+                    reply_markup: {
+                        keyboard: [[{ text: "Далі" }]],
+                        resize_keyboard: true
+                    }
+                });
+                return true;
+            }
+
             await appendRegistrationRow(chatId, user);
             state.knownUsers[chatId] = {
                 name: user.name,
@@ -246,6 +338,7 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
 }
 
 module.exports = {
+    applyKnownUserProfile,
     handleRegistrationStart,
     handlePersonalDataStep,
 };
