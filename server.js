@@ -8210,6 +8210,38 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    if (matchesCommand(text, '/check_code', '/check_code@' + BOT_USERNAME)) {
+        const payload = String(text || '')
+            .replace(/^\/check_code(?:@\w+)?\s*/i, '')
+            .trim();
+
+        if (!payload) {
+            await bot.sendMessage(chatId, '🧪 Надішліть код після команди, наприклад: /check_code ABC123');
+            return;
+        }
+
+        const checkCodeMessage =
+            '🧪 Перевірка доставки\n' +
+            `👤 Відправив: ${resolveFeedbackUserName(chatId, msg.from || null)}\n` +
+            `📌 Код для перевірки:\n${payload}`;
+
+        if (effectiveAppealsGroupId) {
+            try {
+                await bot.sendMessage(effectiveAppealsGroupId, checkCodeMessage);
+                await bot.sendMessage(chatId, `✅ Код відправлено в чат для відгуків: ${effectiveAppealsGroupId}`);
+            } catch (error) {
+                const errorBody = error && error.response && error.response.body
+                    ? error.response.body
+                    : (error && error.message ? error.message : error);
+                console.error('❌ Не вдалося відправити код для перевірки:', errorBody);
+                await bot.sendMessage(chatId, `❌ Не вдалося відправити код: ${String(errorBody || error || '')}`);
+            }
+        } else {
+            await bot.sendMessage(chatId, '❌ Чат для відгуків не налаштовано');
+        }
+        return;
+    }
+
     if (matchesCommand(text, '/test_feedback', '/test_feedback@' + BOT_USERNAME)) {
         const testFeedbackMessage = `🧪 Тестове повідомлення від бота\n\nЦе повідомлення відправлено для перевірки доставки у групу відгуків.`;
         if (effectiveAppealsGroupId) {
