@@ -1,6 +1,7 @@
 const state = require('../state');
 const { appendRegistrationRow, findUserByChatId, resolveKnownUser } = require('../sheets/personal-data');
 const { registerForSelectedEvent } = require('./event-selection');
+const { getUserFacingSheetsMessage } = require('../utils/sheets-errors');
 
 function applyKnownUserProfile(user, knownUser) {
     if (!knownUser) return false;
@@ -324,7 +325,7 @@ async function handlePersonalDataStep(bot, chatId, text, user) {
         } catch (err) {
             const errorMessage = err && err.message ? err.message : String(err || '');
             console.error('Помилка запису в таблицю під час діалогу:', err);
-            bot.sendMessage(chatId, `⚠️ Помилка при збереженні даних у таблиці.\n\nДеталі: ${errorMessage}`, {
+            bot.sendMessage(chatId, `${getUserFacingSheetsMessage(err)}\n\nДеталі: ${errorMessage}`, {
                 reply_markup: {
                     keyboard: [[{ text: "Далі" }]],
                     resize_keyboard: true

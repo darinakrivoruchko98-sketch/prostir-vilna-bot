@@ -6,6 +6,7 @@ const { findUserByChatId } = require('../sheets/personal-data');
 const { appendEventReservation, incrementSheetRegistration, isRegistrantAlreadyInEventNote } = require('../sheets/schedule');
 const { formatEventDate, formatShortDate, formatTime } = require('../utils/date');
 const { pluralizeEvents } = require('../utils/text');
+const { getUserFacingSheetsMessage } = require('../utils/sheets-errors');
 
 function normalizeSelectionText(text) {
     return String(text || '')
@@ -213,7 +214,7 @@ async function handleRegister(bot, chatId, user) {
         }
     } catch (registrationError) {
         console.error('Помилка під час реєстрації на захід', registrationError && registrationError.message ? registrationError.message : registrationError);
-        bot.sendMessage(chatId, "Помилка при записі реєстрації в таблицю. Спробуйте ще раз.");
+        bot.sendMessage(chatId, getUserFacingSheetsMessage(registrationError));
         return;
     }
 
