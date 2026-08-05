@@ -1,5 +1,6 @@
 const state = require('../state');
 const config = require('../config');
+const { withCache, invalidateCache } = require('./cache');
 
 function normalizeIdentityValue(value) {
     return String(value || '')
@@ -123,19 +124,23 @@ async function appendRegistrationRow(chatId, user) {
 
         try {
             console.log(`\n📝 Спроба ${attempt}/${maxTries}: Читання листа "${config.PERSONAL_DATA_SHEET_NAME}"...`);
-            const metaResp = await state.sheetsClient.spreadsheets.get({
-                spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID
+            const sheetTitles = await withCache('personal-data', `titles:${config.PERSONAL_DATA_SPREADSHEET_ID}`, 60000, async () => {
+                const metaResp = await state.sheetsClient.spreadsheets.get({
+                    spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID
+                });
+                return (metaResp.data.sheets || []).map((sheet) => sheet.properties && sheet.properties.title ? sheet.properties.title : '');
             });
-            const sheetTitles = (metaResp.data.sheets || []).map((sheet) => sheet.properties && sheet.properties.title ? sheet.properties.title : '');
             console.log(`📋 Доступні листи: ${sheetTitles.join(', ') || '(немає)'}`);
             if (!sheetTitles.includes(config.PERSONAL_DATA_SHEET_NAME)) {
                 throw new Error(`Лист "${config.PERSONAL_DATA_SHEET_NAME}" не знайдено. Доступні листи: ${sheetTitles.join(', ') || '(немає)'}`);
             }
-            const existingResp = await state.sheetsClient.spreadsheets.values.get({
-                spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${config.PERSONAL_DATA_SHEET_NAME}!A:M`
+            const rows = await withCache('personal-data', `rows:${config.PERSONAL_DATA_SPREADSHEET_ID}:${config.PERSONAL_DATA_SHEET_NAME}:A:M`, 10000, async () => {
+                const existingResp = await state.sheetsClient.spreadsheets.values.get({
+                    spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
+                    range: `${config.PERSONAL_DATA_SHEET_NAME}!A:M`
+                });
+                return existingResp.data.values || [];
             });
-            const rows = existingResp.data.values || [];
             console.log(`✅ Лист прочитаний. Рядків: ${rows.length}`);
 
             const existingRowNumber = findExistingRowByIdentity(rows, values);
@@ -150,6 +155,8 @@ async function appendRegistrationRow(chatId, user) {
                 valueInputOption: 'RAW',
                 requestBody: { values: [valuesToWrite] }
             });
+            invalidateCache('personal-data');
+            invalidateCache('schedule');
             console.log(`✅ Записано в таблицю ${config.PERSONAL_DATA_SHEET_NAME} (рядок ${targetRow}) ✅\n`);
             return;
         } catch (e) {
@@ -190,6 +197,8 @@ async function appendRegistrationRow(chatId, user) {
                         valueInputOption: 'RAW',
                         requestBody: { values: [valuesToWrite] }
                     });
+                    invalidateCache('personal-data');
+                    invalidateCache('schedule');
                     console.log(`✅ Записано в таблицю (fallback A:M, рядок ${targetRow}) ✅\n`);
                     return;
                 } catch (e2) {

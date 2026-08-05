@@ -1,7 +1,7 @@
 const state = require('../state');
 const { getAllEvents } = require('../events/store');
 const { findEventByButtonText } = require('../events/parser');
-const { appendEventRegistration, getSeatsLeft } = require('../sheets/registration');
+const { registerAndSyncToSheets, getSeatsLeft } = require('../sheets/registration');
 const { findUserByChatId } = require('../sheets/personal-data');
 const { appendEventReservation, incrementSheetRegistration, isRegistrantAlreadyInEventNote } = require('../sheets/schedule');
 const { formatEventDate, formatShortDate, formatTime } = require('../utils/date');
@@ -131,17 +131,14 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
         return { status: 'no-seats' };
     }
 
-    await appendEventRegistration(user, evObj || { name: eventName, date: new Date() }, {
+    const registrationEvent = evObj || { id: eventId, name: eventName, date: new Date(), seats: 0, registrations: 0 };
+    await registerAndSyncToSheets(user, registrationEvent, {
+        userId: registrantProfile.userId,
         name: registrantProfile.name,
         phone: registrantProfile.phone
     });
 
     if (evObj) {
-        await incrementSheetRegistration(evObj, {
-            userId: registrantProfile.userId,
-            name: registrantProfile.name,
-            phone: registrantProfile.phone
-        });
         evObj.registrations = (evObj.registrations || 0) + 1;
         if (typeof evObj.seats === 'number') evObj.seats = Math.max(0, evObj.seats - 1);
     }

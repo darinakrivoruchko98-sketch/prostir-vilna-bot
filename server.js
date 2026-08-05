@@ -54,6 +54,7 @@ const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || config.SCHEDULE_S
 // Таблиця для персональних даних (ПІБ, телефон тощо)
 const PERSONAL_DATA_SPREADSHEET_ID = process.env.PERSONAL_DATA_SPREADSHEET_ID || config.PERSONAL_DATA_SPREADSHEET_ID;
 const PERSONAL_DATA_SHEET_NAME = process.env.PERSONAL_DATA_SHEET_NAME || config.PERSONAL_DATA_SHEET_NAME;
+const REGISTRATIONS_SHEET_NAME = process.env.REGISTRATIONS_SHEET_NAME || config.REGISTRATIONS_SHEET_NAME || PERSONAL_DATA_SHEET_NAME;
 const SOCIAL_CONSULTATIONS_SHEET_NAME = process.env.SOCIAL_CONSULTATIONS_SHEET_NAME || config.SOCIAL_CONSULTATIONS_SHEET_NAME || 'Соц';
 const PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME = process.env.PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME || config.PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME || 'Псих';
 const SOCIAL_SPECIALIST_CHAT_ID = process.env.SOCIAL_SPECIALIST_CHAT_ID || config.SOCIAL_SPECIALIST_CHAT_ID || '';
@@ -3217,34 +3218,43 @@ async function incrementSheetRegistration(event, fallbackRegistrant) {
         return;
     }
 
-    const registrationsCount = Number.isFinite(event.registrations) ? event.registrations : 0;
-    const totalSeats = Number.isFinite(event.seats) ? Math.max(0, event.seats) : 0;
-    // Зберігаємо залишок місць (D) та кількість реєстрацій (E), щоб D + E = загальна місткість
-    const remainingSeats = Math.max(0, totalSeats - registrationsCount);
-
     try {
+        const currentResp = await sheetsClient.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`
+        });
+        const currentRow = (currentResp.data.values || [])[0] || [];
+        const currentRemaining = parseInt(currentRow[0] || '0', 10);
+        const currentRegistrations = parseInt(currentRow[1] || '0', 10);
+        const nextRegistrations = currentRegistrations + 1;
+        const nextRemaining = Math.max(0, currentRemaining - 1);
+        const nextCapacity = nextRemaining + nextRegistrations;
+
         await sheetsClient.spreadsheets.values.update({
             spreadsheetId: SPREADSHEET_ID,
             range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`,
-            valueInputOption: 'RAW',
+            valueInputOption: 'USER_ENTERED',
             requestBody: {
-                values: [[remainingSeats, registrationsCount]]
+                values: [[nextRemaining, nextRegistrations]]
             }
         });
-    } catch (error) {
-        console.error('❌ Не вдалося оновити місця/реєстрації у розкладі:', error && error.message ? error.message : error);
-    }
 
-    try {
         await updateScheduleRegistrationNote({
             scheduleSheet: match.scheduleSheet,
             rowIndex: match.rowIndex,
-            registrationsCount,
+            registrationsCount: nextRegistrations,
             fallbackRegistrant,
             eventId: event.id
         });
+
+        if (Number.isFinite(event.registrations)) {
+            event.registrations = nextRegistrations;
+        }
+        if (Number.isFinite(event.seats)) {
+            event.seats = nextCapacity;
+        }
     } catch (error) {
-        console.error('❌ Не вдалося оновити нотатку реєстрації у розкладі:', error && error.message ? error.message : error);
+        console.error('❌ Не вдалося оновити місця/реєстрації у розкладі:', error && error.message ? error.message : error);
     }
 }
 
@@ -3259,34 +3269,43 @@ async function decrementSheetRegistration(event, registrantProfile) {
         return;
     }
 
-    const registrationsCount = Number.isFinite(event.registrations) ? event.registrations : 0;
-    const totalSeats = Number.isFinite(event.seats) ? Math.max(0, event.seats) : 0;
-    // Зберігаємо залишок місць (D) та кількість реєстрацій (E), щоб D + E = загальна місткість
-    const remainingSeats = Math.max(0, totalSeats - registrationsCount);
-
     try {
+        const currentResp = await sheetsClient.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`
+        });
+        const currentRow = (currentResp.data.values || [])[0] || [];
+        const currentRemaining = parseInt(currentRow[0] || '0', 10);
+        const currentRegistrations = parseInt(currentRow[1] || '0', 10);
+        const nextRegistrations = Math.max(0, currentRegistrations - 1);
+        const nextRemaining = currentRemaining + 1;
+        const nextCapacity = nextRemaining + nextRegistrations;
+
         await sheetsClient.spreadsheets.values.update({
             spreadsheetId: SPREADSHEET_ID,
             range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`,
-            valueInputOption: 'RAW',
+            valueInputOption: 'USER_ENTERED',
             requestBody: {
-                values: [[remainingSeats, registrationsCount]]
+                values: [[nextRemaining, nextRegistrations]]
             }
         });
-    } catch (error) {
-        console.error('❌ Не вдалося оновити місця/реєстрації після відписки:', error && error.message ? error.message : error);
-    }
 
-    try {
         await updateScheduleRegistrationNote({
             scheduleSheet: match.scheduleSheet,
             rowIndex: match.rowIndex,
-            registrationsCount,
+            registrationsCount: nextRegistrations,
             removeRegistrant: registrantProfile,
             eventId: event.id
         });
+
+        if (Number.isFinite(event.registrations)) {
+            event.registrations = nextRegistrations;
+        }
+        if (Number.isFinite(event.seats)) {
+            event.seats = nextCapacity;
+        }
     } catch (error) {
-        console.error('❌ Не вдалося оновити нотатку після відписки:', error && error.message ? error.message : error);
+        console.error('❌ Не вдалося оновити місця/реєстрації після відписки:', error && error.message ? error.message : error);
     }
 }
 
@@ -6304,11 +6323,16 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
         }
     }
 
-    // Оновлюємо лічильник тільки в пам'яті
-    // event.seats = місткість (константа), тому не зменшуємо
+    // Оновлюємо лічильник у розкладі та зберігаємо реєстрацію у листі "Зареєстровані"
     if (evObj) {
-        evObj.registrations = (evObj.registrations || 0) + 1;
+        await appendEventRegistration(eventId, chatId, {
+            name: registrantProfile.name,
+            phone: registrantProfile.phone,
+            eventName: evObj.name,
+            eventDate: evObj.date
+        });
         await incrementSheetRegistration(evObj, registrantProfile);
+        evObj.registrations = (evObj.registrations || 0) + 1;
     }
 
     if (user.step === 7) {
@@ -6698,8 +6722,72 @@ async function appendEventToSheet(date, time, title, capacity) {
     console.error(`   ❌ Не знайдено аркуш для запису розкладу (${SCHEDULE_SHEET_CANDIDATES.join(', ')})`);
 }
 
+async function ensureRegistrationSheetExists() {
+    if (!sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID || !REGISTRATIONS_SHEET_NAME) {
+        return false;
+    }
+
+    try {
+        const metaResp = await sheetsClient.spreadsheets.get({
+            spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+            fields: 'sheets.properties.title'
+        });
+        const titles = (metaResp.data.sheets || []).map((sheet) => sheet && sheet.properties && sheet.properties.title ? sheet.properties.title : '');
+        if (titles.includes(REGISTRATIONS_SHEET_NAME)) {
+            return true;
+        }
+
+        await sheetsClient.spreadsheets.batchUpdate({
+            spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+            requestBody: {
+                requests: [{ addSheet: { properties: { title: REGISTRATIONS_SHEET_NAME } } }]
+            }
+        });
+
+        await sheetsClient.spreadsheets.values.update({
+            spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+            range: `${REGISTRATIONS_SHEET_NAME}!A1:E1`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: [['Дата реєстрації', 'ПІБ', 'Телефон', 'Назва заходу', 'Дата заходу']] }
+        });
+        return true;
+    } catch (error) {
+        console.error('❌ Не вдалося створити/перевірити лист реєстрацій:', error && error.message ? error.message : error);
+        return false;
+    }
+}
+
 async function appendEventRegistration(eventId, userId, registrantInfo) {
-    return true;
+    if (!sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID || !REGISTRATIONS_SHEET_NAME) {
+        return false;
+    }
+
+    const resolvedName = String((registrantInfo && registrantInfo.name) || '').trim();
+    const resolvedPhone = String((registrantInfo && registrantInfo.phone) || '').trim();
+    const resolvedEventName = String((registrantInfo && registrantInfo.eventName) || (registrantInfo && registrantInfo.event && registrantInfo.event.name) || '').trim();
+    const resolvedEventDate = registrantInfo && registrantInfo.eventDate
+        ? formatSheetDate(registrantInfo.eventDate)
+        : '';
+
+    if (!resolvedName && !resolvedPhone && !resolvedEventName) {
+        return false;
+    }
+
+    try {
+        await ensureRegistrationSheetExists();
+        await sheetsClient.spreadsheets.values.append({
+            spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+            range: `${REGISTRATIONS_SHEET_NAME}!A:E`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: {
+                values: [[new Date().toISOString(), resolvedName, resolvedPhone, resolvedEventName, resolvedEventDate]]
+            }
+        });
+        return true;
+    } catch (error) {
+        console.error('❌ Не вдалося додати реєстрацію в лист "Зареєстровані":', error && error.message ? error.message : error);
+        return false;
+    }
 }
 
 /* === ОБРОБКА МАСИВУ РОЗПАРЕНИХ ЗАХОДІВ === */

@@ -3,6 +3,7 @@ const config = require('../config');
 const { createAuthorizedSheetsClient } = require('./auth');
 const { parseEventFromRow } = require('../events/parser');
 const { promoteReserveRegistrantsIfNeeded } = require('./schedule');
+const { withCache } = require('./cache');
 
 function startPollingIfNeeded(bot) {
     if (state.pollingStarted) return;
@@ -19,50 +20,54 @@ async function loadEventsFromSheet() {
 
     try {
         const previousEventsById = new Map((state.events || []).map((event) => [event.id, event]));
-        let rows = [];
-        const readErrors = [];
-        for (const scheduleSheet of config.SCHEDULE_SHEET_CANDIDATES) {
-            try {
-                console.log(`📖 Спроба прочитати лист: "${scheduleSheet}"`);
-                const resp = await state.sheetsClient.spreadsheets.values.get({
-                    spreadsheetId: config.SPREADSHEET_ID,
-                    range: `${scheduleSheet}!A:E`
-                });
-                rows = resp.data.values || [];
-                if (rows && rows.length) {
-                    console.log(`   ✅ Використано лист "${scheduleSheet}" (${rows.length} рядків)`);
-                    break;
+        const cacheKey = `rows:${config.SPREADSHEET_ID}:${config.SCHEDULE_SHEET_CANDIDATES.join(',')}`;
+        let rows = await withCache('schedule', cacheKey, 60000, async () => {
+            const readErrors = [];
+            for (const scheduleSheet of config.SCHEDULE_SHEET_CANDIDATES) {
+                try {
+                    console.log(`📖 Спроба прочитати лист: "${scheduleSheet}"`);
+                    const resp = await state.sheetsClient.spreadsheets.values.get({
+                        spreadsheetId: config.SPREADSHEET_ID,
+                        range: `${scheduleSheet}!A:E`
+                    });
+                    const sheetRows = resp.data.values || [];
+                    if (sheetRows && sheetRows.length) {
+                        console.log(`   ✅ Використано лист "${scheduleSheet}" (${sheetRows.length} рядків)`);
+                        return sheetRows;
+                    }
+                } catch (e) {
+                    const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+                    if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                        console.log(`   ⚠️ Лист "${scheduleSheet}" не знайдено, пробую далі...`);
+                        continue;
+                    }
+                    readErrors.push({ sheet: scheduleSheet, message: e && e.message ? e.message : String(e) });
                 }
-            } catch (e) {
-                const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-                if (msg.includes('unable to parse range') || msg.includes('not found')) {
-                    console.log(`   ⚠️ Лист "${scheduleSheet}" не знайдено, пробую далі...`);
-                    continue;
-                }
-                readErrors.push({ sheet: scheduleSheet, message: e && e.message ? e.message : String(e) });
             }
-        }
 
-        // Если всё ещё пусто, попробуем ещё общий диапазон
-        if (!rows || rows.length === 0) {
             try {
                 console.log('📖 Спроба прочитати діапазон A:E (перший лист)...');
                 const alt2 = await state.sheetsClient.spreadsheets.values.get({
                     spreadsheetId: config.SPREADSHEET_ID,
                     range: "A:E"
                 });
-                rows = alt2.data.values || [];
-                if (rows && rows.length) console.log(`   ✅ Прочитано ${rows.length} рядків`);
+                const fallbackRows = alt2.data.values || [];
+                if (fallbackRows && fallbackRows.length) {
+                    console.log(`   ✅ Прочитано ${fallbackRows.length} рядків`);
+                    return fallbackRows;
+                }
             } catch (e) {
                 const msg = e && e.message ? e.message : String(e);
                 readErrors.push({ sheet: 'A:E', message: msg });
             }
-        }
 
-        if ((!rows || rows.length === 0) && readErrors.length > 0) {
-            const details = readErrors.map((entry) => `${entry.sheet}: ${entry.message}`).join(' | ');
-            throw new Error(`Не вдалося зчитати розклад із таблиці ${config.SPREADSHEET_ID}. ${details}`);
-        }
+            if (readErrors.length > 0) {
+                const details = readErrors.map((entry) => `${entry.sheet}: ${entry.message}`).join(' | ');
+                throw new Error(`Не вдалося зчитати розклад із таблиці ${config.SPREADSHEET_ID}. ${details}`);
+            }
+
+            return [];
+        });
 
         console.log(`\n🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):`);
         for (let i = 0; i < Math.min(5, rows.length); i++) {
@@ -181,7 +186,7 @@ async function initSheets(bot) {
         }
         state.sheetsRefreshInterval = setInterval(() => {
             loadEventsFromSheet();
-        }, 15000);
+        }, 60000);
 
     } catch (err) {
         console.error("Sheets error", err && err.message ? err.message : err);
