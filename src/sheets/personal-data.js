@@ -280,47 +280,67 @@ function parsePersonalDataRow(row) {
 async function findUserByChatId(chatId) {
     if (!state.sheetsClient || !config.PERSONAL_DATA_SPREADSHEET_ID) return null;
 
-    const ranges = [];
-    if (config.PERSONAL_DATA_SHEET_NAME) {
-        ranges.push(`${config.PERSONAL_DATA_SHEET_NAME}!A:M`);
-        ranges.push(`'${config.PERSONAL_DATA_SHEET_NAME}'!A:M`);
-    }
-    ranges.push('Зареєстровані!A:M');
-    ranges.push("'Зареєстровані'!A:M");
-    ranges.push('A:M');
-
-    const chatIdStr = String(chatId).trim();
-
-    for (const range of ranges) {
-        try {
-            const resp = await state.sheetsClient.spreadsheets.values.get({
-                spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range
-            });
-            const rows = resp.data.values || [];
-            for (let i = rows.length - 1; i >= 0; i--) {
-                const row = rows[i] || [];
-                const rowChatId = String(row[12] || row[11] || row[10] || '').trim();
-                const rowLegacyChatId = String(row[6] || '').trim();
-                const rowLegacyUsernameAsChatId = String(row[7] || '').trim();
-                if (rowChatId === chatIdStr || rowLegacyChatId === chatIdStr || rowLegacyUsernameAsChatId === chatIdStr) {
-                    return parsePersonalDataRow(row);
-                }
-            }
-        } catch (e) {
-            const msg = e && e.message ? String(e.message).toLowerCase() : '';
-            if (msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('invalid argument')) {
-                continue;
-            }
-            console.error('findUserByChatId error:', e && e.message ? e.message : e);
-            break;
+    // Use cache to avoid repeated reads for the same chatId
+    const cacheKey = `findUserByChatId:${chatId}`;
+    return await withCache('personal-data', cacheKey, 60000, async () => {
+        const ranges = [];
+        if (config.PERSONAL_DATA_SHEET_NAME) {
+            ranges.push(`${config.PERSONAL_DATA_SHEET_NAME}!A:M`);
+            ranges.push(`'${config.PERSONAL_DATA_SHEET_NAME}'!A:M`);
         }
-    }
+        ranges.push('Зареєстровані!A:M');
+        ranges.push("'Зареєстровані'!A:M");
+        ranges.push('A:M');
 
-    return null;
+        const chatIdStr = String(chatId).trim();
+
+        for (const range of ranges) {
+            try {
+                const resp = await state.sheetsClient.spreadsheets.values.get({
+                    spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
+                    range
+                });
+                const rows = resp.data.values || [];
+                for (let i = rows.length - 1; i >= 0; i--) {
+                    const row = rows[i] || [];
+                    const rowChatId = String(row[12] || row[11] || row[10] || '').trim();
+                    const rowLegacyChatId = String(row[6] || '').trim();
+                    const rowLegacyUsernameAsChatId = String(row[7] || '').trim();
+                    if (rowChatId === chatIdStr || rowLegacyChatId === chatIdStr || rowLegacyUsernameAsChatId === chatIdStr) {
+                        return parsePersonalDataRow(row);
+                    }
+                }
+            } catch (e) {
+                const msg = e && e.message ? String(e.message).toLowerCase() : '';
+                if (msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('invalid argument')) {
+                    continue;
+                }
+                console.error('findUserByChatId error:', e && e.message ? e.message : e);
+                break;
+            }
+        }
+
+        return null;
+    });
+}
+
+async function resolveKnownUser(chatId, knownUsers, lookupUser) {
+    // Check memory cache first
+    if (knownUsers && knownUsers[chatId]) {
+        return knownUsers[chatId];
+    }
+    
+    // Fetch from Sheets, which now has its own cache
+    const fetched = await lookupUser(chatId);
+    if (fetched && knownUsers) {
+        knownUsers[chatId] = fetched;
+    }
+    
+    return fetched;
 }
 
 module.exports = {
     appendRegistrationRow,
     findUserByChatId,
+    resolveKnownUser,
 };
