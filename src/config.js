@@ -6,8 +6,11 @@ const GROUP_ID = process.env.GROUP_ID;
 const CHAT_ID = process.env.CHAT_ID;
 const APPEALS_GROUP_ID = Number(process.env.APPEALS_GROUP_ID || '-1003802751255');
 globalThis.APPEALS_GROUP_ID = APPEALS_GROUP_ID;
-// Адміни (можна додавати через ADMIN_IDS або просто в коді)
-const ADMIN_IDS = (process.env.ADMIN_IDS || '375328037').split(',').map(id => Number(id.trim()));
+// Адміни (основний Telegram user_id адміністратора — 375328037)
+const ADMIN_IDS = Array.from(new Set([
+    375328037,
+    ...String(process.env.ADMIN_IDS || '375328037').split(',').map((id) => Number(String(id).trim())).filter((id) => Number.isFinite(id))
+]));
 // Таблиця для розкладу та реєстрацій на заходи
 const DEFAULT_SCHEDULE_SPREADSHEET_ID = "1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8";
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || DEFAULT_SCHEDULE_SPREADSHEET_ID;

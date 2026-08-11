@@ -21,6 +21,7 @@ const {
     getStatisticsSelectionButtons,
     resolveStatisticsSelectionFromText
 } = require('./src/utils/statistics');
+const { isAdminUserId } = require('./src/utils/admin-access');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
 const PORT = process.env.PORT || 8080;
@@ -6884,18 +6885,23 @@ async function processParsedEvents(parsedEvents) {
 
     const AI_INTENT_TAGS = ['SHOW_DAY', 'REGISTER_EVENT', 'SHOW_AFFISHA', 'UNKNOWN'];
 
-    function getMainMenuKeyboard() {
-        return [
+    function getMainMenuKeyboard(chatId) {
+        const buttons = [
             [{ text: MAIN_MENU_BUTTONS.afisha }],
             [{ text: MAIN_MENU_BUTTONS.unsubscribe }],
             [{ text: MAIN_MENU_BUTTONS.friend }],
             [{ text: MAIN_MENU_BUTTONS.editProfile }],
             [{ text: MAIN_MENU_BUTTONS.consultations }],
             [{ text: MAIN_MENU_BUTTONS.violenceHelp }],
-            [{ text: MAIN_MENU_BUTTONS.reminders }],
-            [{ text: MAIN_MENU_BUTTONS.statistics }],
-            [{ text: MAIN_MENU_BUTTONS.contacts }]
+            [{ text: MAIN_MENU_BUTTONS.reminders }]
         ];
+
+        if (isAdminUserId(chatId)) {
+            buttons.push([{ text: MAIN_MENU_BUTTONS.statistics }]);
+        }
+
+        buttons.push([{ text: MAIN_MENU_BUTTONS.contacts }]);
+        return buttons;
     }
 
     function buildStatisticsSelectionKeyboard() {
@@ -10211,6 +10217,16 @@ bot.on('message', async (msg) => {
     }
 
     if (matchesCommand(text, MAIN_MENU_BUTTONS.statistics, 'Статистика')) {
+        if (!isAdminUserId(chatId)) {
+            await bot.sendMessage(chatId, '⛔ Доступ заборонено', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(chatId),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
         clearFriendRegistrationState(user);
         clearConsultationState(user);
         user.context = 'statistics-selection';
@@ -10225,6 +10241,17 @@ bot.on('message', async (msg) => {
     }
 
     if (user.context === 'statistics-selection') {
+        if (!isAdminUserId(chatId)) {
+            user.context = null;
+            await bot.sendMessage(chatId, '⛔ Доступ заборонено', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(chatId),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
         const selection = resolveStatisticsSelectionFromText(text);
         if (!selection) {
             if (matchesCommand(text, NAVIGATION_BUTTONS.menu, 'Повернутися в меню', 'Назад в меню')) {
