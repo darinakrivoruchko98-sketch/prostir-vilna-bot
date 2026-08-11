@@ -13,6 +13,7 @@ const { buildBeneficiarySummary, parseRegistrantsFromNoteText } = require('./src
 const { hasCompleteRegistrationProfile } = require('./src/utils/profile');
 const { shouldSkipAiIntentDetection } = require('./src/utils/intent-detection');
 const { createNotificationDeduper } = require('./src/utils/notification-dedup');
+const { clearFeedbackFlowState } = require('./src/utils/feedback-state');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
 const PORT = process.env.PORT || 8080;
@@ -9062,8 +9063,7 @@ bot.on('message', async (msg) => {
             }
 
             setFeedbackStatus(chatId, dateKey, 'submitted');
-            delete user.pendingFeedbackDateKey;
-            user.context = null;
+            clearFeedbackFlowState(user);
             saveReminderStateToDisk();
 
             await bot.sendMessage(chatId,
@@ -9078,6 +9078,7 @@ bot.on('message', async (msg) => {
             const errorText = error && error.response && error.response.body
                 ? JSON.stringify(error.response.body)
                 : (error && error.message ? error.message : String(error));
+            clearFeedbackFlowState(user);
             await bot.sendMessage(chatId, `❌ Не вдалося надіслати відгук. Спробуйте ще раз трохи пізніше.\n\nДеталі: ${errorText}`);
         }
         return;
@@ -9099,6 +9100,7 @@ bot.on('message', async (msg) => {
 
     if (text === FEEDBACK_BUTTON_NO && pendingFeedbackDateKey) {
         setFeedbackStatus(chatId, pendingFeedbackDateKey, 'declined');
+        clearFeedbackFlowState(user);
         saveReminderStateToDisk();
         await bot.sendMessage(chatId,
             'Дякуємо, що були з нами 💛\nМожливо, наступного разу ви захочете поділитися своїми враженнями 😔', {
@@ -12264,6 +12266,10 @@ bot.on('message', async (msg) => {
             return;
         }
 
+        if (user.context === 'daily-feedback-write') {
+            clearFeedbackFlowState(user);
+        }
+
         if (user.context === 'afisha') {
             delete user.selectedEventName;
             delete user.selectedEventId;
@@ -12274,6 +12280,7 @@ bot.on('message', async (msg) => {
 
         delete user.selectedEventName;
         delete user.eventButtonMap;
+        clearFeedbackFlowState(user);
         user.context = null;
         bot.sendMessage(chatId, "Меню: оберіть потрібний розділ", {
             reply_markup: {
@@ -12587,7 +12594,7 @@ bot.on('message', async (msg) => {
             delete users[chatId].pendingFriendUnregKey;
             delete users[chatId].pendingFriendUnregEventName;
             delete users[chatId].pendingFriendRegistrantName;
-            delete users[chatId].pendingFeedbackDateKey;
+            clearFeedbackFlowState(users[chatId]);
             clearFriendRegistrationState(users[chatId]);
             clearConsultationState(users[chatId]);
             users[chatId].step = 0;
