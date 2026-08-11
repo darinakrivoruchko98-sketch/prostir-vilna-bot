@@ -15,6 +15,12 @@ const { shouldSkipAiIntentDetection } = require('./src/utils/intent-detection');
 const { createNotificationDeduper } = require('./src/utils/notification-dedup');
 const { clearFeedbackFlowState } = require('./src/utils/feedback-state');
 const { normalizeSendOptions } = require('./src/utils/telegram-reply-markup');
+const {
+    buildStatisticsSnapshotForSelection,
+    formatStatisticsSnapshot,
+    getStatisticsSelectionButtons,
+    resolveStatisticsSelectionFromText
+} = require('./src/utils/statistics');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
 const PORT = process.env.PORT || 8080;
@@ -1393,6 +1399,7 @@ const MAIN_MENU_BUTTONS = {
     consultations: '🗨️ Індивідуальні консультації',
     violenceHelp: '🚨 Допомога при насильстві',
     reminders: '🔔 Нагадування',
+    statistics: '🧮 Статистика',
     contacts: '📞 Контакти'
 };
 
@@ -6886,7 +6893,17 @@ async function processParsedEvents(parsedEvents) {
             [{ text: MAIN_MENU_BUTTONS.consultations }],
             [{ text: MAIN_MENU_BUTTONS.violenceHelp }],
             [{ text: MAIN_MENU_BUTTONS.reminders }],
+            [{ text: MAIN_MENU_BUTTONS.statistics }],
             [{ text: MAIN_MENU_BUTTONS.contacts }]
+        ];
+    }
+
+    function buildStatisticsSelectionKeyboard() {
+        const buttons = getStatisticsSelectionButtons();
+        return [
+            buttons.slice(0, 2).map((button) => ({ text: button.text })),
+            buttons.slice(2).map((button) => ({ text: button.text })),
+            [{ text: NAVIGATION_BUTTONS.menu }]
         ];
     }
 
@@ -10190,6 +10207,66 @@ bot.on('message', async (msg) => {
     if (matchesCommand(text, MAIN_MENU_BUTTONS.reminders, 'Нагадування')) {
         clearFriendRegistrationState(user);
         await showUserRemindersOverview(chatId, user);
+        return;
+    }
+
+    if (matchesCommand(text, MAIN_MENU_BUTTONS.statistics, 'Статистика')) {
+        clearFriendRegistrationState(user);
+        clearConsultationState(user);
+        user.context = 'statistics-selection';
+        await bot.sendMessage(chatId, '📊 Оберіть період для статистики:', {
+            parse_mode: 'HTML',
+            reply_markup: {
+                keyboard: buildStatisticsSelectionKeyboard(),
+                resize_keyboard: true
+            }
+        });
+        return;
+    }
+
+    if (user.context === 'statistics-selection') {
+        const selection = resolveStatisticsSelectionFromText(text);
+        if (!selection) {
+            if (matchesCommand(text, NAVIGATION_BUTTONS.menu, 'Повернутися в меню', 'Назад в меню')) {
+                user.context = null;
+                await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
+                    reply_markup: {
+                        keyboard: getMainMenuKeyboard(chatId),
+                        resize_keyboard: true
+                    }
+                });
+                return;
+            }
+
+            await bot.sendMessage(chatId, 'Оберіть один із доступних періодів кнопками нижче:', {
+                reply_markup: {
+                    keyboard: buildStatisticsSelectionKeyboard(),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        user.context = null;
+        try {
+            const snapshot = await buildStatisticsSnapshotForSelection(selection, new Date());
+            const statsMessage = formatStatisticsSnapshot(snapshot);
+            await bot.sendMessage(chatId, statsMessage, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(chatId),
+                    resize_keyboard: true
+                }
+            });
+        } catch (error) {
+            console.error('❌ Не вдалося зібрати статистику:', error && error.message ? error.message : error);
+            await bot.sendMessage(chatId, '❌ Не вдалося зібрати статистику. Спробуйте трохи пізніше.', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(chatId),
+                    resize_keyboard: true
+                }
+            });
+        }
         return;
     }
 

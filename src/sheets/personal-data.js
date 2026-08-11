@@ -343,4 +343,5 @@ module.exports = {
     appendRegistrationRow,
     findUserByChatId,
     resolveKnownUser,
+    parsePersonalDataRow,
 };
