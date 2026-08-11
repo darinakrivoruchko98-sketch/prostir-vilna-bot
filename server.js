@@ -12,6 +12,7 @@ const { isRegistrationCancelText } = require('./src/utils/registration-flow');
 const { buildBeneficiarySummary, parseRegistrantsFromNoteText } = require('./src/utils/beneficiary-summary');
 const { hasCompleteRegistrationProfile } = require('./src/utils/profile');
 const { shouldSkipAiIntentDetection } = require('./src/utils/intent-detection');
+const { createNotificationDeduper } = require('./src/utils/notification-dedup');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
 const PORT = process.env.PORT || 8080;
@@ -48,6 +49,7 @@ const REMINDER_24H_HOURS_MAX = 24;
 const REMINDER_1H_MINUTES_MIN = 1;
 const REMINDER_1H_MINUTES_MAX = 60;
 const PENDING_REGISTRATION_REMINDER_TIMEOUT_MS = 5 * 60 * 1000;
+const REGISTRATION_NOTIFICATION_COOLDOWN_MS = Number(process.env.REGISTRATION_NOTIFICATION_COOLDOWN_MS || 30000);
 // Таблиця для розкладу та реєстрацій на заходи
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || config.SPREADSHEET_ID;
 const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || config.SCHEDULE_SHEET_NAME;
@@ -2183,8 +2185,21 @@ async function notifyRegistrantAboutRegistration(registrarChatId, event, registr
         ? '🕓 <b>Вас додано в резерв на захід</b>'
         : '✅ <b>Вас зареєстровано на захід</b>';
 
+    const notification = {
+        chatId: recipientChatIdStr,
+        eventId: String(event && event.id || '').trim(),
+        eventName: String(event && event.name || '').trim(),
+        eventDate: event && event.date instanceof Date ? event.date : null,
+        kind: reserveMode ? 'registration-reserve-confirmation' : 'registration-confirmation'
+    };
+
+    if (!registrationNotificationDeduper.shouldSend(notification)) {
+        return;
+    }
+
     try {
         await bot.sendMessage(recipientChatIdStr, `${prefix}\n\n${details}`, { parse_mode: 'HTML' });
+        registrationNotificationDeduper.markSent(notification);
     } catch (error) {
         logger.warn('Failed to notify registrant about registration', error && error.message ? error.message : error);
     }
@@ -2437,16 +2452,27 @@ async function checkAndSendReminders() {
                         timeZone: APP_TIME_ZONE
                     });
                     
-                    await bot.sendMessage(recipientChatId, 
-                        `⏰ <b>Нагадування про захід</b>\n\n` +
-                        `Незабаром у вас захід:\n` +
-                        `📅 ${reg.eventName}\n` +
-                        `🕐 ${dateStr} о ${timeStr}\n\n` +
-                        `До початку ${hoursUntilEvent >= 1 ? `залишилось приблизно ${Math.round(hoursUntilEvent)} ${pluralizeHoursUa(Math.round(hoursUntilEvent))}` : `залишилось ${roundedMinutesUntilEvent} хвилин`}\n` +
-                        `Налаштовано: за ${formatReminderLeadTime('reminder24h', reminderSettings.reminder24h.hoursBefore)} до початку\n\n` +
-                        `Чекаємо на вас у Просторі «Вільна»! 🩵`,
-                        { parse_mode: 'HTML' }
-                    );
+                    const reminderNotification = {
+                        chatId: recipientChatId,
+                        eventId: String(reg.eventId || '').trim(),
+                        eventName: String(reg.eventName || '').trim(),
+                        eventDate: reg.eventDate instanceof Date ? reg.eventDate : null,
+                        kind: 'reminder-24h'
+                    };
+
+                    if (registrationNotificationDeduper.shouldSend(reminderNotification)) {
+                        await bot.sendMessage(recipientChatId, 
+                            `⏰ <b>Нагадування про захід</b>\n\n` +
+                            `Незабаром у вас захід:\n` +
+                            `📅 ${reg.eventName}\n` +
+                            `🕐 ${dateStr} о ${timeStr}\n\n` +
+                            `До початку ${hoursUntilEvent >= 1 ? `залишилось приблизно ${Math.round(hoursUntilEvent)} ${pluralizeHoursUa(Math.round(hoursUntilEvent))}` : `залишилось ${roundedMinutesUntilEvent} хвилин`}\n` +
+                            `Налаштовано: за ${formatReminderLeadTime('reminder24h', reminderSettings.reminder24h.hoursBefore)} до початку\n\n` +
+                            `Чекаємо на вас у Просторі «Вільна»! 🩵`,
+                            { parse_mode: 'HTML' }
+                        );
+                        registrationNotificationDeduper.markSent(reminderNotification);
+                    }
                     
                     reg.reminded24h = true;
                     hasReminderChanges = true;
@@ -2484,17 +2510,28 @@ async function checkAndSendReminders() {
                         timeLeftMsg = `залишилось ${roundedMinutesUntilEvent} хвилин`;
                     }
                     
-                    await bot.sendMessage(recipientChatId, 
-                        `⏰ <b>Нагадування про захід</b>\n\n` +
-                        `Скоро починається захід:\n` +
-                        `📅 ${reg.eventName}\n` +
-                        `🕐 Сьогодні о ${timeStr}\n\n` +
-                        `До початку ${timeLeftMsg}\n` +
-                        `Налаштовано: за ${formatReminderLeadTime('reminder1h', reminderSettings.reminder1h.minutesBefore)} до початку\n\n` +
-                        `Не забудьте! Чекаємо на вас 🩵\n\n` +
-                        `📍 м. Дніпро, вул. Дмитра Донцова, 4`,
-                        { parse_mode: 'HTML' }
-                    );
+                    const reminderNotification = {
+                        chatId: recipientChatId,
+                        eventId: String(reg.eventId || '').trim(),
+                        eventName: String(reg.eventName || '').trim(),
+                        eventDate: reg.eventDate instanceof Date ? reg.eventDate : null,
+                        kind: 'reminder-1h'
+                    };
+
+                    if (registrationNotificationDeduper.shouldSend(reminderNotification)) {
+                        await bot.sendMessage(recipientChatId, 
+                            `⏰ <b>Нагадування про захід</b>\n\n` +
+                            `Скоро починається захід:\n` +
+                            `📅 ${reg.eventName}\n` +
+                            `🕐 Сьогодні о ${timeStr}\n\n` +
+                            `До початку ${timeLeftMsg}\n` +
+                            `Налаштовано: за ${formatReminderLeadTime('reminder1h', reminderSettings.reminder1h.minutesBefore)} до початку\n\n` +
+                            `Не забудьте! Чекаємо на вас 🩵\n\n` +
+                            `📍 м. Дніпро, вул. Дмитра Донцова, 4`,
+                            { parse_mode: 'HTML' }
+                        );
+                        registrationNotificationDeduper.markSent(reminderNotification);
+                    }
                     
                     reg.reminded1h = true;
                     hasReminderChanges = true;
