@@ -23,6 +23,7 @@ const {
 } = require('./src/utils/statistics');
 const { appendStatisticsReportRow } = require('./src/utils/statistics-report');
 const { isAdminUserId } = require('./src/utils/admin-access');
+const scheduleSheetUtils = require('./src/sheets/schedule');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
 const PORT = process.env.PORT || 8080;
@@ -3321,54 +3322,14 @@ async function incrementSheetRegistration(event, fallbackRegistrant) {
 }
 
 async function decrementSheetRegistration(event, registrantProfile) {
-    if (!event || !sheetsClient || !SPREADSHEET_ID) {
-        return;
+    const result = await scheduleSheetUtils.decrementSheetRegistration(event, registrantProfile);
+    if (result && result.status === 'ok' && Number.isFinite(event.registrations)) {
+        event.registrations = Math.max(0, Number(event.registrations) || 0);
     }
-
-    const match = await findScheduleRowByEvent(event);
-    if (!match) {
-        console.warn(`⚠️ Не знайдено рядок у розкладі для відписки: ${event.name}`);
-        return;
+    if (result && result.status === 'ok' && Number.isFinite(event.seats)) {
+        event.seats = Math.max(0, Number(event.seats) || 0);
     }
-
-    try {
-        const currentResp = await sheetsClient.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID,
-            range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`
-        });
-        const currentRow = (currentResp.data.values || [])[0] || [];
-        const currentRemaining = parseInt(currentRow[0] || '0', 10);
-        const currentRegistrations = parseInt(currentRow[1] || '0', 10);
-        const nextRegistrations = Math.max(0, currentRegistrations - 1);
-        const nextRemaining = currentRemaining + 1;
-        const nextCapacity = nextRemaining + nextRegistrations;
-
-        await sheetsClient.spreadsheets.values.update({
-            spreadsheetId: SPREADSHEET_ID,
-            range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: {
-                values: [[nextRemaining, nextRegistrations]]
-            }
-        });
-
-        await updateScheduleRegistrationNote({
-            scheduleSheet: match.scheduleSheet,
-            rowIndex: match.rowIndex,
-            registrationsCount: nextRegistrations,
-            removeRegistrant: registrantProfile,
-            eventId: event.id
-        });
-
-        if (Number.isFinite(event.registrations)) {
-            event.registrations = nextRegistrations;
-        }
-        if (Number.isFinite(event.seats)) {
-            event.seats = nextCapacity;
-        }
-    } catch (error) {
-        console.error('❌ Не вдалося оновити місця/реєстрації після відписки:', error && error.message ? error.message : error);
-    }
+    return result;
 }
 
 async function getSheetIdByTitle(spreadsheetId, sheetTitle) {
@@ -4141,60 +4102,7 @@ async function addRegistrantToReserve(event, registrantProfile) {
 }
 
 async function removeRegistrantFromReserve(event, registrantProfile) {
-    if (!event || !registrantProfile) {
-        return false;
-    }
-
-    const match = await findScheduleRowByEvent(event);
-    if (!match) {
-        return false;
-    }
-
-    const reservists = await getEffectiveReserveRegistrants(match.scheduleSheet, match.rowIndex);
-
-    const targetName = normalizeRegistrantName(registrantProfile.name || '');
-    const targetPhone = normalizeRegistrantPhone(registrantProfile.phone || '');
-    const targetUserId = normalizeRegistrantUserId(registrantProfile.userId || registrantProfile.chatId || '');
-
-    const remaining = reservists.filter((item) => {
-        const sameName = normalizeRegistrantName(item.name) === targetName;
-        const samePhone = normalizeRegistrantPhone(item.phone) === targetPhone;
-        const sameUserId = normalizeRegistrantUserId(item.userId) === targetUserId;
-
-        if (targetName && targetPhone) {
-            return !(sameName && samePhone);
-        }
-        if (targetUserId) {
-            return !sameUserId;
-        }
-        if (targetName) {
-            return !sameName;
-        }
-        if (targetPhone) {
-            return !samePhone;
-        }
-        return true;
-    });
-
-    if (remaining.length === reservists.length) {
-        return false;
-    }
-
-    event.reserveCount = remaining.length;
-    await updateSheetReserveCount(event);
-    await updateScheduleReserveNote({
-        scheduleSheet: match.scheduleSheet,
-        rowIndex: match.rowIndex,
-        reserveCount: event.reserveCount,
-        removeRegistrant: {
-            name: registrantProfile.name,
-            phone: registrantProfile.phone,
-            userId: registrantProfile.userId || registrantProfile.chatId
-        },
-        eventId: event.id
-    });
-
-    return true;
+    return scheduleSheetUtils.removeRegistrantFromReserve(event, registrantProfile);
 }
 
 async function promoteFirstReserveRegistrantToRegistration(event) {
@@ -4202,8 +4110,6 @@ async function promoteFirstReserveRegistrantToRegistration(event) {
         return false;
     }
 
-    // У runtime event.seats = загальна місткість, event.registrations = зайняті місця.
-    // Автоперенос із резерву дозволений лише за фактичної наявності вільних місць.
     const seatsLeft = Math.max(0, (Number(event.seats) || 0) - (Number(event.registrations) || 0));
     if (seatsLeft <= 0) {
         return false;
@@ -4220,26 +4126,13 @@ async function promoteFirstReserveRegistrantToRegistration(event) {
     }
 
     const promoted = reservists[0];
-    const remainingReserve = reservists.slice(1);
-
-    event.reserveCount = remainingReserve.length;
-    await updateSheetReserveCount(event);
-    await updateScheduleReserveNote({
-        scheduleSheet: match.scheduleSheet,
-        rowIndex: match.rowIndex,
-        reserveCount: event.reserveCount,
-        removeRegistrant: promoted,
-        eventId: event.id
-    });
-
-    event.registrations = Math.max(0, Number(event.registrations) || 0) + 1;
-    await incrementSheetRegistration(event, {
-        name: promoted.name,
-        phone: promoted.phone,
-        userId: promoted.userId
-    });
-
     const promotedChatId = Number(String(promoted.userId || '').trim());
+
+    const promotedInSchedule = await scheduleSheetUtils.promoteFirstReserveRegistrantToRegistration(event);
+    if (!promotedInSchedule) {
+        return false;
+    }
+
     if (Number.isFinite(promotedChatId) && promotedChatId > 0) {
         if (!userEventRegistrations[promotedChatId]) {
             userEventRegistrations[promotedChatId] = [];
@@ -4263,18 +4156,6 @@ async function promoteFirstReserveRegistrantToRegistration(event) {
         userEventReserveRegistrations[promotedChatId] = reserveForUser.filter((entry) => entry.eventId !== event.id);
         if (userEventReserveRegistrations[promotedChatId].length === 0) {
             delete userEventReserveRegistrations[promotedChatId];
-        }
-
-        try {
-            await bot.sendMessage(promotedChatId,
-                `✅ Ви були в резерві на захід "${event.name}".\n\nЗвільнилося місце, вас додано до списку зареєстрованих.`, {
-                reply_markup: {
-                    keyboard: getMainMenuKeyboard(promotedChatId),
-                    resize_keyboard: true
-                }
-            });
-        } catch (error) {
-            console.error(`❌ Не вдалося надіслати повідомлення про переведення з резерву (chatId=${promotedChatId}):`, error && error.message ? error.message : error);
         }
     }
 

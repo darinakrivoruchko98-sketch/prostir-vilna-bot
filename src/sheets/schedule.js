@@ -165,6 +165,10 @@ function normalizeRegistrantPhone(value) {
     return String(value || '').replace(/\D+/g, '');
 }
 
+function normalizeRegistrantUserId(value) {
+    return String(value || '').replace(/\D/g, '');
+}
+
 function formatRegistrantLine(item, index) {
     const name = item.name || `user ${item.userId}`;
     const phone = item.phone || 'без номера';
@@ -271,7 +275,7 @@ function ensureScheduleNoteEventIdTag(noteText, eventId) {
 async function getSheetIdByTitle(spreadsheetId, sheetTitle) {
     const meta = await retryRequest(() => state.sheetsClient.spreadsheets.get({
         spreadsheetId,
-        fields: 'sheets.properties'
+        fields: 'sheets(properties(sheetId,title))'
     }));
     const sheets = (meta.data && meta.data.sheets) || [];
     const found = sheets.find((sheetItem) => {
@@ -856,13 +860,207 @@ async function incrementSheetRegistration(event, fallbackRegistrant) {
     logger.warn(`Не вдалося оновити лічильник у розкладі для eventId=${event.id}. Спробовано аркуші: ${config.SCHEDULE_SHEET_CANDIDATES.join(', ')}`);
 }
 
+async function decrementSheetRegistration(event, registrantProfile) {
+    if (!state.sheetsClient || !config.SPREADSHEET_ID || !event) {
+        return false;
+    }
+
+    const match = await findScheduleRowForEvent(event);
+    if (!match) {
+        logger.warn(`Не вдалося знайти рядок у розкладі для відписки: ${event.name}`);
+        return false;
+    }
+
+    try {
+        const resp = await retryRequest(() => state.sheetsClient.spreadsheets.values.get({
+            spreadsheetId: config.SPREADSHEET_ID,
+            range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`
+        }));
+        const row = (resp.data.values || [])[0] || [];
+        const currentRemaining = parseInt(row[0] || '0', 10);
+        const currentRegistrations = parseInt(row[1] || '0', 10);
+        const nextRegistrations = Math.max(0, currentRegistrations - 1);
+        const nextRemaining = currentRemaining + 1;
+        const nextCapacity = nextRemaining + nextRegistrations;
+
+        const existingNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex);
+        const sections = parseScheduleNoteSections(existingNote);
+        const filteredRegistered = (sections.registered || []).filter((item) => {
+            const itemName = normalizeRegistrantName(item.name || '');
+            const itemPhone = normalizeRegistrantPhone(item.phone || '');
+            const itemUser = String(item.userId || '').trim();
+            const targetName = normalizeRegistrantName(registrantProfile && registrantProfile.name ? registrantProfile.name : '');
+            const targetPhone = normalizeRegistrantPhone(registrantProfile && registrantProfile.phone ? registrantProfile.phone : '');
+            const targetUser = String((registrantProfile && registrantProfile.userId) || '').trim();
+
+            if (targetUser && itemUser && targetUser === itemUser) return false;
+            if (targetPhone && itemPhone && targetPhone === itemPhone) return false;
+            if (targetName && itemName && targetName === itemName) return false;
+            return true;
+        });
+
+        const noteText = buildScheduleNoteText({
+            registered: filteredRegistered,
+            reserve: sections.reserve,
+            registrationsCount: nextRegistrations,
+            eventId: event.id
+        });
+
+        await retryRequest(() => state.sheetsClient.spreadsheets.values.update({
+            spreadsheetId: config.SPREADSHEET_ID,
+            range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: [[String(nextRemaining), String(nextRegistrations)]] }
+        }));
+
+        const sheetId = await getSheetIdByTitle(config.SPREADSHEET_ID, match.scheduleSheet);
+        if (sheetId !== null && sheetId !== undefined && String(existingNote || '').trim() !== String(noteText || '').trim()) {
+            await retryRequest(() => state.sheetsClient.spreadsheets.batchUpdate({
+                spreadsheetId: config.SPREADSHEET_ID,
+                requestBody: {
+                    requests: [{
+                        repeatCell: {
+                            range: {
+                                sheetId,
+                                startRowIndex: match.rowIndex,
+                                endRowIndex: match.rowIndex + 1,
+                                startColumnIndex: 4,
+                                endColumnIndex: 5
+                            },
+                            cell: { note: noteText },
+                            fields: 'note'
+                        }
+                    }]
+                }
+            }));
+        }
+
+        invalidateCache('schedule');
+        event.seats = nextCapacity;
+        event.registrations = nextRegistrations;
+        return { status: 'ok' };
+    } catch (error) {
+        logger.error('Failed to decrement registration count for event', event && event.id, error && error.message ? error.message : error);
+        return { status: 'failed' };
+    }
+}
+
+async function removeRegistrantFromReserve(event, registrantProfile) {
+    if (!event || !registrantProfile || !state.sheetsClient || !config.SPREADSHEET_ID) {
+        return false;
+    }
+
+    const match = await findScheduleRowForEvent(event);
+    if (!match) {
+        return false;
+    }
+
+    const reservists = await getEffectiveReserveRegistrants(match.scheduleSheet, match.rowIndex);
+    const targetName = normalizeRegistrantName(registrantProfile.name || '');
+    const targetPhone = normalizeRegistrantPhone(registrantProfile.phone || '');
+    const targetUserId = normalizeRegistrantUserId(registrantProfile.userId || registrantProfile.chatId || '');
+
+    const remaining = reservists.filter((item) => {
+        const sameName = normalizeRegistrantName(item.name) === targetName;
+        const samePhone = normalizeRegistrantPhone(item.phone) === targetPhone;
+        const sameUserId = normalizeRegistrantUserId(item.userId) === targetUserId;
+
+        if (targetName && targetPhone) {
+            return !(sameName && samePhone);
+        }
+        if (targetUserId) {
+            return !sameUserId;
+        }
+        if (targetName) {
+            return !sameName;
+        }
+        if (targetPhone) {
+            return !samePhone;
+        }
+        return true;
+    });
+
+    if (remaining.length === reservists.length) {
+        return false;
+    }
+
+    event.reserveCount = remaining.length;
+    await updateSheetReserveCount(event);
+    await updateScheduleReserveNote({
+        scheduleSheet: match.scheduleSheet,
+        rowIndex: match.rowIndex,
+        reserveCount: event.reserveCount,
+        removeRegistrant: {
+            name: registrantProfile.name,
+            phone: registrantProfile.phone,
+            userId: registrantProfile.userId || registrantProfile.chatId
+        },
+        eventId: event.id
+    });
+
+    return true;
+}
+
+async function promoteFirstReserveRegistrantToRegistration(event) {
+    if (!event || !state.sheetsClient || !config.SPREADSHEET_ID) {
+        return false;
+    }
+
+    const match = await findScheduleRowForEvent(event);
+    if (!match) {
+        return false;
+    }
+
+    const reservists = await getEffectiveReserveRegistrants(match.scheduleSheet, match.rowIndex);
+    if (reservists.length === 0) {
+        return false;
+    }
+
+    const promoted = reservists[0];
+    const remainingReserve = reservists.slice(1);
+
+    event.reserveCount = remainingReserve.length;
+    await updateSheetReserveCount(event);
+    await updateScheduleReserveNote({
+        scheduleSheet: match.scheduleSheet,
+        rowIndex: match.rowIndex,
+        reserveCount: event.reserveCount,
+        removeRegistrant: promoted,
+        eventId: event.id
+    });
+
+    event.registrations = Math.max(0, Number(event.registrations) || 0) + 1;
+    event.seats = Math.max(0, (Number(event.seats) || 0) - 1);
+    await incrementSheetRegistration(event, {
+        name: promoted.name,
+        phone: promoted.phone,
+        userId: promoted.userId
+    });
+
+    if (state.bot && typeof state.bot.sendMessage === 'function') {
+        const userId = String(promoted.userId || '').trim();
+        if (userId) {
+            try {
+                await state.bot.sendMessage(userId, `✅ Вас перенесли з резерву до реєстрації на захід «${event.name}».`);
+            } catch (notifyErr) {
+                logger.warn('Failed to notify promoted reserve user', userId, notifyErr && notifyErr.message ? notifyErr.message : notifyErr);
+            }
+        }
+    }
+
+    return true;
+}
+
 module.exports = {
     appendEventToSheet,
     appendEventReservation,
     buildScheduleNoteText,
+    decrementSheetRegistration,
     incrementSheetRegistration,
     isRegistrantAlreadyInEventNote,
     parseScheduleNoteSections,
+    promoteFirstReserveRegistrantToRegistration,
     promoteReserveRegistrantsIfNeeded,
+    removeRegistrantFromReserve,
     undoLastSheetsAction: undoLastAction
 };
