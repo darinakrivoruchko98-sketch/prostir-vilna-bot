@@ -24,9 +24,30 @@ function buildReportRow(period, snapshot) {
         snapshot && snapshot.ageGroups ? snapshot.ageGroups['18–59 років'] || 0 : 0,
         snapshot && snapshot.ageGroups ? snapshot.ageGroups['60+ років'] || 0 : 0,
         snapshot && Number.isFinite(snapshot.specialNeeds) ? snapshot.specialNeeds : 0,
-        snapshot && snapshot.eventRegistrationTotals ? Object.values(snapshot.eventRegistrationTotals).reduce((sum, entry) => sum + (Number(entry && entry.registrationCount) || 0), 0) : 0,
+        snapshot && Number.isFinite(snapshot.totalRegistered) ? snapshot.totalRegistered : 0,
         new Date().toISOString()
     ];
+}
+
+function isActivePeriod(period) {
+    if (!period || !period.kind) {
+        return false;
+    }
+
+    const kind = String(period.kind).toLowerCase();
+    if (!kind.includes('current')) {
+        return false;
+    }
+
+    const startDate = period.startDate ? new Date(`${period.startDate}T00:00:00`) : null;
+    const endDate = period.endDate ? new Date(`${period.endDate}T23:59:59`) : null;
+    const now = new Date();
+
+    if (!startDate || !endDate || Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+        return true;
+    }
+
+    return now >= startDate && now <= endDate;
 }
 
 async function ensureStatisticsReportSheet(spreadsheetId, sheetName) {
@@ -82,11 +103,41 @@ async function appendStatisticsReportRow(period, snapshot) {
             return false;
         }
 
+        const existingResponse = await state.sheetsClient.spreadsheets.values.get({
+            spreadsheetId: target.spreadsheetId,
+            range: `${sheetName}!A:M`
+        });
+        const existingRows = existingResponse && existingResponse.data && Array.isArray(existingResponse.data.values)
+            ? existingResponse.data.values
+            : [];
+        const periodKey = period && period.key ? String(period.key) : '';
+        const matchingRowIndex = existingRows.findIndex((row) => {
+            const rowPeriodKey = row && row[1] ? String(row[1]).trim() : '';
+            return rowPeriodKey && periodKey && rowPeriodKey === periodKey;
+        });
+
+        const rowValues = buildReportRow(period, snapshot);
+
+        if (matchingRowIndex >= 0) {
+            if (!isActivePeriod(period)) {
+                return true;
+            }
+
+            const targetRowNumber = matchingRowIndex + 1;
+            await state.sheetsClient.spreadsheets.values.update({
+                spreadsheetId: target.spreadsheetId,
+                range: `${sheetName}!A${targetRowNumber}:M${targetRowNumber}`,
+                valueInputOption: 'USER_ENTERED',
+                requestBody: { values: [rowValues] }
+            });
+            return true;
+        }
+
         await state.sheetsClient.spreadsheets.values.append({
             spreadsheetId: target.spreadsheetId,
             range: `${sheetName}!A:M`,
             valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [buildReportRow(period, snapshot)] }
+            requestBody: { values: [rowValues] }
         });
         return true;
     } catch (error) {
@@ -99,5 +150,6 @@ module.exports = {
     buildReportRow,
     ensureStatisticsReportSheet,
     getReportSheetName,
-    getStatisticsReportTarget
+    getStatisticsReportTarget,
+    isActivePeriod
 };

@@ -1,12 +1,22 @@
 const state = require('../state');
 const config = require('../config');
 const { formatEventDate } = require('../utils/date');
-const { incrementSheetRegistration } = require('./schedule');
+const { incrementSheetRegistration, getScheduleEventSeatState } = require('./schedule');
 
 async function getSeatsLeft(eventId) {
     const event = state.events.find(e => e.id === eventId);
     if (!event) return 0;
-    return event.seats;
+
+    try {
+        const seatState = await getScheduleEventSeatState(event);
+        if (seatState && Number.isFinite(seatState.seatsLeft)) {
+            return Math.max(0, seatState.seatsLeft);
+        }
+    } catch (error) {
+        console.warn('getSeatsLeft: failed to read seat state from schedule', error && error.message ? error.message : error);
+    }
+
+    return Math.max(0, Number(event.seats) || 0);
 }
 
 async function appendEventRegistration(user, event, registrantInfo) {

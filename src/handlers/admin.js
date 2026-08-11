@@ -1,6 +1,8 @@
 const state = require('../state');
 const config = require('../config');
 const { findUserByChatId } = require('../sheets/personal-data');
+const statistics = require('../utils/statistics');
+const statisticsReport = require('../utils/statistics-report');
 
 const ADMIN_MENU_KEYBOARD = {
     keyboard: [
@@ -24,30 +26,12 @@ function handleAdminMenu(bot, chatId) {
 
 async function handleStatistics(bot, chatId) {
     try {
-        const totalEvents = state.events.length;
-        const totalRegistrations = Object.values(state.userEventRegistrations || {}).reduce((sum, events) => sum + events.length, 0);
-        
-        let eventDetails = "📊 <b>Статистика заходів:</b>\n\n";
-        
-        for (const event of state.events) {
-            const registeredCount = Object.values(state.userEventRegistrations || {}).filter(events => 
-                events.some(e => e.eventId === event.id)
-            ).length;
-            const availableSeats = event.availableSeats || 0;
-            const totalSeats = registeredCount + availableSeats;
-            
-            eventDetails += `<b>${event.title}</b>\n`;
-            eventDetails += `📅 ${event.date} о ${event.time}\n`;
-            eventDetails += `👥 Зареєстровано: ${registeredCount}/${totalSeats}\n`;
-            eventDetails += `💺 Вільних місць: ${availableSeats}\n\n`;
-        }
-        
-        const summary = `📈 <b>Загальна статистика:</b>
-🎯 Всього заходів: ${totalEvents}
-👤 Всього реєстрацій: ${totalRegistrations}
-`;
-        
-        await bot.sendMessage(chatId, summary + "\n" + eventDetails, {
+        const snapshot = await statistics.buildStatisticsSnapshotForSelection('current-week');
+        const message = statistics.formatStatisticsSnapshot(snapshot);
+
+        await statisticsReport.appendStatisticsReportRow(snapshot.period, snapshot);
+
+        await bot.sendMessage(chatId, message, {
             parse_mode: 'HTML',
             reply_markup: ADMIN_MENU_KEYBOARD
         });

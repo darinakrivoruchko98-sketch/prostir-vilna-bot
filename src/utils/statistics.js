@@ -66,13 +66,20 @@ function isSpecialNeeds(value) {
     return normalized.includes('інвал') || normalized.includes('істотні проблеми') || normalized.includes('суттєві проблеми');
 }
 
+function formatDateParts(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
 function getDateOnly(value) {
     if (!value) return null;
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
         return null;
     }
-    return date.toISOString().slice(0, 10);
+    return formatDateParts(date);
 }
 
 function getWeekRange(referenceDate = new Date()) {
@@ -84,8 +91,8 @@ function getWeekRange(referenceDate = new Date()) {
     const sunday = new Date(monday);
     sunday.setDate(monday.getDate() + 6);
     return {
-        startDate: monday.toISOString().slice(0, 10),
-        endDate: sunday.toISOString().slice(0, 10)
+        startDate: formatDateParts(monday),
+        endDate: formatDateParts(sunday)
     };
 }
 
@@ -93,13 +100,50 @@ function getMonthRange(referenceDate = new Date()) {
     const start = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1);
     const end = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0);
     return {
-        startDate: start.toISOString().slice(0, 10),
-        endDate: end.toISOString().slice(0, 10)
+        startDate: formatDateParts(start),
+        endDate: formatDateParts(end)
+    };
+}
+
+function getDayRange(referenceDate = new Date()) {
+    const date = new Date(referenceDate);
+    return {
+        startDate: formatDateParts(date),
+        endDate: formatDateParts(date)
     };
 }
 
 function getPeriodDefinition(selection, referenceDate = new Date()) {
     const normalizedSelection = String(selection || '').trim().toLowerCase();
+
+    if (normalizedSelection === 'previous-day') {
+        const previousDayDate = new Date(referenceDate);
+        previousDayDate.setDate(previousDayDate.getDate() - 1);
+        const dayRange = getDayRange(previousDayDate);
+        return {
+            type: 'day',
+            kind: 'previous-day',
+            key: `day:${dayRange.startDate}`,
+            label: dayRange.startDate,
+            startDate: dayRange.startDate,
+            endDate: dayRange.endDate,
+            displayLabel: `📅 Попередній день (${dayRange.startDate})`
+        };
+    }
+
+    if (normalizedSelection === 'current-day' || normalizedSelection === 'day') {
+        const dayRange = getDayRange(referenceDate);
+        return {
+            type: 'day',
+            kind: 'current-day',
+            key: `day:${dayRange.startDate}`,
+            label: dayRange.startDate,
+            startDate: dayRange.startDate,
+            endDate: dayRange.endDate,
+            displayLabel: `📅 Поточний день (${dayRange.startDate})`
+        };
+    }
+
     if (normalizedSelection === 'previous-week') {
         const previousWeekDate = new Date(referenceDate);
         previousWeekDate.setDate(previousWeekDate.getDate() - 7);
@@ -157,8 +201,8 @@ function getPeriodDefinition(selection, referenceDate = new Date()) {
 
 function getPeriodLabel(period) {
     if (!period) return 'Статистика';
-    if (period.type === 'week') {
-        return `${period.startDate} – ${period.endDate}`;
+    if (period.type === 'day') {
+        return period.startDate || 'Статистика';
     }
     return `${period.startDate} – ${period.endDate}`;
 }
@@ -184,7 +228,8 @@ function resolveStatisticsSelectionFromText(text) {
 }
 
 function buildStatisticsSnapshotForPeriod(period, registrations) {
-    const seenIdentities = new Set();
+    const seenProfiles = new Set();
+    const seenEventProfiles = new Set();
     const statusBuckets = {
         'ВПО': 0,
         'Не ВПО, постраждали від війни': 0,
@@ -199,10 +244,10 @@ function buildStatisticsSnapshotForPeriod(period, registrations) {
     const eventRegistrationTotals = {};
 
     for (const registration of registrations || []) {
-        const profile = registration && registration.profile ? registration.profile : {};
-        const profileChatId = String(profile.chatId || '').trim();
-        const profilePhone = String(profile.phone || '').trim();
-        const profileName = String(profile.name || '').trim();
+        const profile = registration && registration.profile ? registration.profile : null;
+        const profileChatId = String(profile && profile.chatId ? profile.chatId : '').trim();
+        const profilePhone = String(profile && profile.phone ? profile.phone : '').trim();
+        const profileName = String(profile && profile.name ? profile.name : '').trim();
         const identityKey = profileChatId || profilePhone || profileName;
         const eventKey = registration && (registration.eventKey || registration.eventName || registration.eventDate)
             ? (registration.eventKey || `${String(registration.eventName || '').trim().toLowerCase()}_${String(registration.eventDate || '').trim()}`)
@@ -214,25 +259,32 @@ function buildStatisticsSnapshotForPeriod(period, registrations) {
                 ? Number(registration.scheduleRegistrationCount)
                 : null;
             if (scheduleRegistrationCount !== null && scheduleRegistrationCount >= 0) {
-                existingEventEntry.registrationCount = scheduleRegistrationCount;
+                existingEventEntry.registrationCount = Math.max(existingEventEntry.registrationCount, scheduleRegistrationCount);
                 existingEventEntry.source = 'schedule';
-            } else if (registration.scheduleRegistrationCount === undefined) {
-                existingEventEntry.registrationCount = Math.max(existingEventEntry.registrationCount, 0);
             }
             eventRegistrationTotals[eventKey] = existingEventEntry;
         }
 
-        if (!identityKey || seenIdentities.has(identityKey)) {
+        if (!profile || !identityKey) {
             continue;
         }
-        seenIdentities.add(identityKey);
+
+        if (identityKey) {
+            seenProfiles.add(identityKey);
+        }
+
+        const eventIdentityKey = eventKey ? `${eventKey}:${identityKey}` : identityKey;
+        if (seenEventProfiles.has(eventIdentityKey)) {
+            continue;
+        }
+        seenEventProfiles.add(eventIdentityKey);
 
         const normalizedStatus = normalizeRegistrationStatus(profile.status || '');
         if (normalizedStatus) {
             statusBuckets[normalizedStatus] = (statusBuckets[normalizedStatus] || 0) + 1;
         }
 
-        const age = calculateAgeAtDate(profile.birth || '', period.endDate || period.startDate || new Date().toISOString().slice(0, 10));
+        const age = calculateAgeAtDate(profile.birth || '', period.endDate || period.startDate || formatDateParts(new Date()));
         const ageGroup = getAgeGroup(age);
         if (ageGroup) {
             ageBuckets[ageGroup] = (ageBuckets[ageGroup] || 0) + 1;
@@ -243,9 +295,12 @@ function buildStatisticsSnapshotForPeriod(period, registrations) {
         }
     }
 
+    const totalRegistered = Object.values(eventRegistrationTotals).reduce((sum, entry) => sum + (Number(entry && entry.registrationCount) || 0), 0);
+
     return {
         period,
-        totalUniquePeople: seenIdentities.size,
+        totalUniquePeople: seenProfiles.size,
+        totalRegistered,
         status: statusBuckets,
         ageGroups: ageBuckets,
         specialNeeds: specialNeedsCount,
@@ -307,15 +362,16 @@ async function readSheetRows(spreadsheetId, range) {
 }
 
 async function collectStatisticsRegistrationsForPeriod(period, options = {}) {
-    const spreadsheetId = options.spreadsheetId || config.PERSONAL_DATA_SPREADSHEET_ID;
+    const personalSpreadsheetId = options.personalSpreadsheetId || options.spreadsheetId || config.PERSONAL_DATA_SPREADSHEET_ID;
+    const scheduleSpreadsheetId = options.scheduleSpreadsheetId || config.SPREADSHEET_ID || personalSpreadsheetId;
     const personalSheetName = options.personalSheetName || config.PERSONAL_DATA_SHEET_NAME || 'Зареєстровані';
     const scheduleSheetName = options.scheduleSheetName || config.SCHEDULE_SHEET_NAME || 'Розклад';
-    if (!state.sheetsClient || !spreadsheetId) {
+    if (!state.sheetsClient || !personalSpreadsheetId) {
         return [];
     }
 
-    const profileRows = await readSheetRows(spreadsheetId, `${personalSheetName}!A:M`);
-    const registrationRows = await readSheetRows(spreadsheetId, `${personalSheetName}!A:E`);
+    const profileRows = await readSheetRows(personalSpreadsheetId, `${personalSheetName}!A:M`);
+    const registrationRows = await readSheetRows(personalSpreadsheetId, `${personalSheetName}!A:E`);
     const parsedProfiles = (profileRows || []).slice(1).map((row) => parsePersonalDataRow(row));
     const profileByPhone = new Map();
     const profileByName = new Map();
@@ -336,7 +392,36 @@ async function collectStatisticsRegistrationsForPeriod(period, options = {}) {
         }
     }
 
-    const registrations = [];
+    const scheduleEntries = [];
+    try {
+        const scheduleRows = await readSheetRows(scheduleSpreadsheetId, `${scheduleSheetName}!A:E`);
+        for (const row of (scheduleRows || []).slice(1) || []) {
+            const parsedEvent = require('../events/parser').parseEventFromRow(row, null).event;
+            if (!parsedEvent) {
+                continue;
+            }
+            const eventDate = parsedEvent.date ? formatDateParts(parsedEvent.date) : '';
+            const startDate = period && period.startDate ? period.startDate : null;
+            const endDate = period && period.endDate ? period.endDate : null;
+            if (startDate && endDate && (eventDate < startDate || eventDate > endDate)) {
+                continue;
+            }
+            const eventKey = `${String(parsedEvent.name || '').trim().toLowerCase()}_${eventDate}`;
+            const registrationCount = Number.isFinite(parsedEvent.registrations) ? parsedEvent.registrations : 0;
+            scheduleEntries.push({
+                eventName: parsedEvent.name,
+                eventDate,
+                eventKey,
+                scheduleRegistrationCount: registrationCount,
+                profile: null
+            });
+        }
+    } catch (error) {
+        // Ignore schedule read failures and rely on the fallback total from any matched rows.
+    }
+
+    const matchedRegistrations = [];
+    const seenRegistrationKeys = new Set();
     for (const row of registrationRows.slice(1) || []) {
         const timestamp = row[0] || '';
         const registrationDate = getDateOnly(timestamp);
@@ -368,62 +453,27 @@ async function collectStatisticsRegistrationsForPeriod(period, options = {}) {
             continue;
         }
 
-        registrations.push({
+        const eventName = String(row[3] || '').trim();
+        const eventDate = String(row[4] || '').trim();
+        const eventKey = eventName && eventDate ? `${String(eventName).trim().toLowerCase()}_${eventDate}` : null;
+        const identityKey = String(matchedProfile.chatId || matchedProfile.phone || matchedProfile.name || '').trim();
+        const registrationKey = `${identityKey}:${eventKey || registrationDate}`;
+        if (!identityKey || seenRegistrationKeys.has(registrationKey)) {
+            continue;
+        }
+        seenRegistrationKeys.add(registrationKey);
+
+        matchedRegistrations.push({
             registrationDate,
-            profile: matchedProfile
+            profile: matchedProfile,
+            eventName,
+            eventDate,
+            eventKey,
+            scheduleRegistrationCount: null
         });
     }
 
-    try {
-        const scheduleRows = await readSheetRows(spreadsheetId, `${scheduleSheetName}!A:E`);
-        const eventsByKey = new Map();
-        for (const row of (scheduleRows || []).slice(1) || []) {
-            const parsedEvent = require('../events/parser').parseEventFromRow(row, null).event;
-            if (!parsedEvent) {
-                continue;
-            }
-            const eventKey = `${String(parsedEvent.name || '').trim().toLowerCase()}_${String(parsedEvent.date ? parsedEvent.date.toISOString().slice(0, 10) : '').trim()}`;
-            const registrationCount = Number.isFinite(parsedEvent.registrations) ? parsedEvent.registrations : 0;
-            eventsByKey.set(eventKey, {
-                eventName: parsedEvent.name,
-                eventDate: parsedEvent.date ? parsedEvent.date.toISOString().slice(0, 10) : '',
-                registrationCount,
-                eventKey
-            });
-        }
-
-        const resolvedRegistrations = [];
-        const seenRegistrationKeys = new Set();
-        for (const registration of registrations) {
-            const profile = registration.profile || {};
-            const identityKey = String(profile.chatId || profile.phone || profile.name || '').trim();
-            const registrationKey = `${identityKey}:${registration.registrationDate}`;
-            if (!identityKey || seenRegistrationKeys.has(registrationKey)) {
-                continue;
-            }
-            seenRegistrationKeys.add(registrationKey);
-
-            const eventName = String(registration.eventName || '').trim();
-            const eventDate = String(registration.eventDate || '').trim();
-            const eventKey = eventName && eventDate
-                ? `${String(eventName).trim().toLowerCase()}_${eventDate}`
-                : null;
-            const eventData = eventKey ? eventsByKey.get(eventKey) : null;
-
-            if (eventData) {
-                registration.eventName = eventData.eventName;
-                registration.eventDate = eventData.eventDate;
-                registration.eventKey = eventData.eventKey;
-                registration.scheduleRegistrationCount = eventData.registrationCount;
-            }
-
-            resolvedRegistrations.push(registration);
-        }
-
-        return resolvedRegistrations;
-    } catch (error) {
-        return registrations;
-    }
+    return [...scheduleEntries, ...matchedRegistrations];
 }
 
 async function buildStatisticsSnapshotForSelection(selection, referenceDate = new Date(), historyPath = DEFAULT_HISTORY_PATH) {
@@ -488,5 +538,11 @@ module.exports = {
     buildStatisticsSnapshotForSelection,
     collectStatisticsRegistrationsForPeriod,
     formatStatisticsSnapshot,
-    DEFAULT_HISTORY_PATH
+    DEFAULT_HISTORY_PATH,
+    getDayRange,
+    buildStatisticsSnapshotsForPeriods: (referenceDate = new Date()) => [
+        { selection: 'current-day', period: getPeriodDefinition('current-day', referenceDate) },
+        { selection: 'current-week', period: getPeriodDefinition('current-week', referenceDate) },
+        { selection: 'current-month', period: getPeriodDefinition('current-month', referenceDate) }
+    ]
 };

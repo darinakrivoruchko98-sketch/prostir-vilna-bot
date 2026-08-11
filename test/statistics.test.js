@@ -111,15 +111,16 @@ test('statistics selection helpers return the expected period options', () => {
 
 test('collectStatisticsRegistrationsForPeriod matches profiles by phone or name when chatId is missing', async () => {
     const originalSheetsClient = state.sheetsClient;
-    const originalSpreadsheetId = require('../src/config').PERSONAL_DATA_SPREADSHEET_ID;
+    const originalPersonalSpreadsheetId = require('../src/config').PERSONAL_DATA_SPREADSHEET_ID;
+    const originalScheduleSpreadsheetId = require('../src/config').SPREADSHEET_ID;
     const originalSheetName = require('../src/config').PERSONAL_DATA_SHEET_NAME;
     const originalScheduleSheetName = require('../src/config').SCHEDULE_SHEET_NAME;
 
     state.sheetsClient = {
         spreadsheets: {
             values: {
-                get: async ({ range }) => {
-                    if (range === 'Зареєстровані!A:M') {
+                get: async ({ range, spreadsheetId }) => {
+                    if (spreadsheetId === 'personal-spreadsheet-123' && range === 'Зареєстровані!A:M') {
                         return {
                             data: {
                                 values: [
@@ -130,7 +131,7 @@ test('collectStatisticsRegistrationsForPeriod matches profiles by phone or name 
                         };
                     }
 
-                    if (range === 'Зареєстровані!A:E') {
+                    if (spreadsheetId === 'personal-spreadsheet-123' && range === 'Зареєстровані!A:E') {
                         return {
                             data: {
                                 values: [
@@ -141,7 +142,7 @@ test('collectStatisticsRegistrationsForPeriod matches profiles by phone or name 
                         };
                     }
 
-                    if (range === 'Розклад!A:E') {
+                    if (spreadsheetId === 'schedule-spreadsheet-456' && range === 'Розклад!A:E') {
                         return { data: { values: [] } };
                     }
 
@@ -150,14 +151,16 @@ test('collectStatisticsRegistrationsForPeriod matches profiles by phone or name 
             }
         }
     };
-    require('../src/config').PERSONAL_DATA_SPREADSHEET_ID = 'spreadsheet-123';
+    require('../src/config').PERSONAL_DATA_SPREADSHEET_ID = 'personal-spreadsheet-123';
+    require('../src/config').SPREADSHEET_ID = 'schedule-spreadsheet-456';
     require('../src/config').PERSONAL_DATA_SHEET_NAME = 'Зареєстровані';
     require('../src/config').SCHEDULE_SHEET_NAME = 'Розклад';
 
     try {
         const period = { startDate: '2026-08-10', endDate: '2026-08-16' };
         const registrations = await collectStatisticsRegistrationsForPeriod(period, {
-            spreadsheetId: 'spreadsheet-123',
+            personalSpreadsheetId: 'personal-spreadsheet-123',
+            scheduleSpreadsheetId: 'schedule-spreadsheet-456',
             personalSheetName: 'Зареєстровані',
             scheduleSheetName: 'Розклад'
         });
@@ -166,7 +169,8 @@ test('collectStatisticsRegistrationsForPeriod matches profiles by phone or name 
         assert.equal(registrations[0].profile.name, 'Аліса Коваль');
     } finally {
         state.sheetsClient = originalSheetsClient;
-        require('../src/config').PERSONAL_DATA_SPREADSHEET_ID = originalSpreadsheetId;
+        require('../src/config').PERSONAL_DATA_SPREADSHEET_ID = originalPersonalSpreadsheetId;
+        require('../src/config').SPREADSHEET_ID = originalScheduleSpreadsheetId;
         require('../src/config').PERSONAL_DATA_SHEET_NAME = originalSheetName;
         require('../src/config').SCHEDULE_SHEET_NAME = originalScheduleSheetName;
     }

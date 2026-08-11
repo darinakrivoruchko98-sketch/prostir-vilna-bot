@@ -707,6 +707,43 @@ async function appendEventToSheet(date, time, title, capacity) {
     console.error(`   ❌ Не знайдено аркуш для запису розкладу (${config.SCHEDULE_SHEET_CANDIDATES.join(', ')})`);
 }
 
+async function getScheduleEventSeatState(event) {
+    if (!state.sheetsClient || !config.SPREADSHEET_ID || !event) {
+        return null;
+    }
+
+    for (const scheduleSheet of config.SCHEDULE_SHEET_CANDIDATES) {
+        try {
+            const resp = await retryRequest(() => state.sheetsClient.spreadsheets.values.get({
+                spreadsheetId: config.SPREADSHEET_ID,
+                range: `${scheduleSheet}!A:E`
+            }));
+            const rows = resp.data.values || [];
+            for (let i = 0; i < rows.length; i++) {
+                const parsed = parseEventFromRow(rows[i], null).event;
+                if (!parsed) continue;
+
+                const sameTitle = normalizeTitle(parsed.name) === normalizeTitle(event.name || '');
+                const sameMinute = Math.abs(parsed.date.getTime() - (event.date ? event.date.getTime() : 0)) < 60 * 1000;
+                if (sameTitle && sameMinute) {
+                    const row = rows[i] || [];
+                    const currCap = parseInt(row[3] || row[0] || '0', 10);
+                    const currReg = parseInt(row[4] || row[1] || '0', 10);
+                    const seatsLeft = Math.max(0, currCap - currReg);
+                    return { seatsLeft, capacity: currCap, registrations: currReg, sheet: scheduleSheet, rowIndex: i };
+                }
+            }
+        } catch (error) {
+            const msg = (error && error.message) ? String(error.message).toLowerCase() : '';
+            if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                continue;
+            }
+        }
+    }
+
+    return null;
+}
+
 async function incrementSheetRegistration(event, fallbackRegistrant) {
     if (!state.sheetsClient || !config.SPREADSHEET_ID) return;
 
