@@ -24,6 +24,7 @@ const {
 const { appendStatisticsReportRow } = require('./src/utils/statistics-report');
 const { isAdminUserId } = require('./src/utils/admin-access');
 const scheduleSheetUtils = require('./src/sheets/schedule');
+const registrationSheetUtils = require('./src/sheets/registration');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
 const PORT = process.env.PORT || 8080;
@@ -222,7 +223,6 @@ async function performUndoForChat(chatId, fallbackEventId = '') {
     const a = entry && entry.action ? entry.action : null;
     try {
         if (a && a.type === 'register') {
-            // attempt to unregister the user from the event
             const evId = a.eventId;
             const res = await unregisterFromEvent(chatId, evId);
             if (res && res.status === 'ok') {
@@ -241,16 +241,26 @@ async function performUndoForChat(chatId, fallbackEventId = '') {
             return { ok: false, reason: 'unreserve-failed' };
         }
 
-        // Fallback for callback button: try by explicit eventId even without recent action.
         const explicitEventId = String(fallbackEventId || '').trim();
         if (explicitEventId) {
-            let res = await unregisterFromEvent(chatId, explicitEventId);
-            if (!res || res.status !== 'ok') {
-                res = await unregisterFromReserve(chatId, explicitEventId);
+            const hasRegistration = Array.isArray(userEventRegistrations[chatId])
+                && userEventRegistrations[chatId].some((item) => String(item && item.eventId || '') === explicitEventId);
+            if (hasRegistration) {
+                const res = await unregisterFromEvent(chatId, explicitEventId);
+                if (res && res.status === 'ok') {
+                    recentActions.delete(String(chatId));
+                    return { ok: true };
+                }
             }
-            if (res && res.status === 'ok') {
-                recentActions.delete(String(chatId));
-                return { ok: true };
+
+            const hasReserve = Array.isArray(userEventReserveRegistrations[chatId])
+                && userEventReserveRegistrations[chatId].some((item) => String(item && item.eventId || '') === explicitEventId);
+            if (hasReserve) {
+                const res = await unregisterFromReserve(chatId, explicitEventId);
+                if (res && res.status === 'ok') {
+                    recentActions.delete(String(chatId));
+                    return { ok: true };
+                }
             }
         }
     } catch (err) {
@@ -6252,9 +6262,12 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
     }
     
     // Перевіряємо дублікати в пам'яті (не в таблиці)
-    if (!skipReminders && evObj && userEventRegistrations[chatId]) {
-        const alreadyAdded = userEventRegistrations[chatId].some(r => r.eventId === eventId);
-        if (alreadyAdded) {
+    if (!skipReminders && evObj) {
+        const hasRegistration = Array.isArray(userEventRegistrations[chatId])
+            && userEventRegistrations[chatId].some((entry) => String(entry && entry.eventId || '') === String(eventId));
+        const hasReserve = Array.isArray(userEventReserveRegistrations[chatId])
+            && userEventReserveRegistrations[chatId].some((entry) => String(entry && entry.eventId || '') === String(eventId));
+        if (hasRegistration || hasReserve) {
             return { status: 'already-registered' };
         }
     }
@@ -6472,32 +6485,17 @@ async function unregisterFromEvent(chatId, eventId) {
         return { status: 'not-found' };
     }
 
-    // Видаляємо з пам'яті користувача (включно з можливими дублями того ж запису)
     const registration = userEventRegistrations[chatId][regIndex];
-    const targetPhoneKey = normalizeRegistrantPhone(registration && registration.registrantPhone);
-    const targetNameKey = normalizeRegistrantName(registration && registration.registrantName);
-    const canMatchByIdentity = Boolean(targetPhoneKey || targetNameKey);
-    let removedFallbackByIndex = false;
-    userEventRegistrations[chatId] = userEventRegistrations[chatId].filter((entry, index) => {
-        if (!entry || entry.eventId !== eventId) {
-            return true;
+    const removalResult = registrationSheetUtils.removeRegistrationEntry(
+        userEventRegistrations[chatId],
+        eventId,
+        {
+            userId: String(chatId || ''),
+            name: registration && registration.registrantName,
+            phone: registration && registration.registrantPhone
         }
-
-        if (!canMatchByIdentity) {
-            if (!removedFallbackByIndex && index === regIndex) {
-                removedFallbackByIndex = true;
-                return false;
-            }
-            return true;
-        }
-
-        const entryPhoneKey = normalizeRegistrantPhone(entry.registrantPhone);
-        const entryNameKey = normalizeRegistrantName(entry.registrantName);
-        const samePhone = targetPhoneKey && entryPhoneKey && targetPhoneKey === entryPhoneKey;
-        const sameName = targetNameKey && entryNameKey && targetNameKey === entryNameKey;
-
-        return !(samePhone || sameName);
-    });
+    );
+    userEventRegistrations[chatId] = removalResult.entries;
     removeFeedbackCandidate(chatId, registration.eventDate, registration.eventName);
 
     // Очищаємо пустий масив
@@ -6506,8 +6504,7 @@ async function unregisterFromEvent(chatId, eventId) {
     }
     saveReminderStateToDisk();
 
-    // Оновлюємо лічильник в пам'яті (seats = місткість, не чіпаємо)
-    const event = events.find(e => e.id === eventId);
+    const event = events.find((entry) => entry.id === eventId);
     if (event) {
         event.registrations = Math.max(0, (event.registrations || 1) - 1);
 
@@ -6517,6 +6514,7 @@ async function unregisterFromEvent(chatId, eventId) {
             registration.registrantName,
             registration.registrantPhone
         );
+        await registrationSheetUtils.removeEventRegistration(users[chatId], event, registrantProfile).catch(() => false);
         await decrementSheetRegistration(event, registrantProfile);
         await promoteFirstReserveRegistrantToRegistration(event);
         console.log(`📝 Користувач ${chatId} відписаний від "${registration.eventName}" (місць +1)`);
@@ -6701,31 +6699,23 @@ async function ensureRegistrationSheetExists() {
 }
 
 async function appendEventRegistration(eventId, userId, registrantInfo) {
-    if (!sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID || !REGISTRATIONS_SHEET_NAME) {
-        return false;
-    }
+    const user = users[userId] || {};
+    const event = events.find((entry) => entry.id === eventId) || {
+        id: eventId,
+        name: registrantInfo && registrantInfo.eventName ? registrantInfo.eventName : '',
+        date: registrantInfo && registrantInfo.eventDate ? registrantInfo.eventDate : null
+    };
 
-    const resolvedName = String((registrantInfo && registrantInfo.name) || '').trim();
-    const resolvedPhone = String((registrantInfo && registrantInfo.phone) || '').trim();
-    const resolvedEventName = String((registrantInfo && registrantInfo.eventName) || (registrantInfo && registrantInfo.event && registrantInfo.event.name) || '').trim();
-    const resolvedEventDate = registrantInfo && registrantInfo.eventDate
-        ? formatSheetDate(registrantInfo.eventDate)
-        : '';
-
-    if (!resolvedName && !resolvedPhone && !resolvedEventName) {
-        return false;
-    }
+    const payload = {
+        userId: String(userId || ''),
+        name: registrantInfo && registrantInfo.name ? registrantInfo.name : user.name,
+        phone: registrantInfo && registrantInfo.phone ? registrantInfo.phone : user.phone,
+        eventName: registrantInfo && registrantInfo.eventName ? registrantInfo.eventName : event.name,
+        eventDate: registrantInfo && registrantInfo.eventDate ? registrantInfo.eventDate : event.date
+    };
 
     try {
-        await ensureRegistrationSheetExists();
-        await sheetsClient.spreadsheets.values.append({
-            spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-            range: `${REGISTRATIONS_SHEET_NAME}!A:E`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: {
-                values: [[new Date().toISOString(), resolvedName, resolvedPhone, resolvedEventName, resolvedEventDate]]
-            }
-        });
+        await registrationSheetUtils.appendEventRegistration(user, event, payload);
         return true;
     } catch (error) {
         console.error('❌ Не вдалося додати реєстрацію в лист "Зареєстровані":', error && error.message ? error.message : error);
