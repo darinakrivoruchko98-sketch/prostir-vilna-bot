@@ -364,7 +364,7 @@ async function collectStatisticsRegistrationsForPeriod(period, options = {}) {
             matchedProfile = profileByName.get(name) || null;
         }
 
-        if (!matchedProfile || !matchedProfile.chatId) {
+        if (!matchedProfile) {
             continue;
         }
 
