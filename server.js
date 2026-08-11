@@ -14,6 +14,7 @@ const { hasCompleteRegistrationProfile } = require('./src/utils/profile');
 const { shouldSkipAiIntentDetection } = require('./src/utils/intent-detection');
 const { createNotificationDeduper } = require('./src/utils/notification-dedup');
 const { clearFeedbackFlowState } = require('./src/utils/feedback-state');
+const { normalizeSendOptions } = require('./src/utils/telegram-reply-markup');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
 const PORT = process.env.PORT || 8080;
@@ -98,6 +99,20 @@ app.use(express.json());
 
 // Telegram бот з polling режимом
 const bot = new TelegramBot(TOKEN, { polling: true });
+const originalSendMessage = bot.sendMessage.bind(bot);
+bot.sendMessage = function (...args) {
+    if (args.length === 0) {
+        return originalSendMessage(...args);
+    }
+
+    const [chatId, text, options, ...rest] = args;
+    if (args.length >= 2 && (options === undefined || options === null || typeof options === 'object')) {
+        const normalizedOptions = normalizeSendOptions(options);
+        return originalSendMessage(chatId, text, normalizedOptions, ...rest);
+    }
+
+    return originalSendMessage(...args);
+};
 let stoppingBecauseOfPollingConflict = false;
 
 async function configureBotCommandMenus() {
