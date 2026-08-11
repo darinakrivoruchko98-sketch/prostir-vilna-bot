@@ -1,9 +1,15 @@
 const state = require('../state');
 const config = require('../config');
-const { retryRequest } = require('../sheets/schedule');
 
 function getReportSheetName() {
     return process.env.STATISTICS_REPORT_SHEET_NAME || 'Звіт';
+}
+
+function getStatisticsReportTarget() {
+    return {
+        spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
+        sheetName: getReportSheetName()
+    };
 }
 
 function buildReportRow(period, snapshot) {
@@ -23,15 +29,61 @@ function buildReportRow(period, snapshot) {
     ];
 }
 
-async function appendStatisticsReportRow(period, snapshot) {
-    if (!state.sheetsClient || !config.PERSONAL_DATA_SPREADSHEET_ID) {
+async function ensureStatisticsReportSheet(spreadsheetId, sheetName) {
+    if (!state.sheetsClient || !spreadsheetId || !sheetName) {
         return false;
     }
 
-    const sheetName = getReportSheetName();
     try {
+        const response = await state.sheetsClient.spreadsheets.get({ spreadsheetId });
+        const existingSheets = response && response.data && Array.isArray(response.data.sheets) ? response.data.sheets : [];
+        const sheetExists = existingSheets.some((sheet) => {
+            const title = sheet && sheet.properties && sheet.properties.title;
+            return title === sheetName;
+        });
+
+        if (sheetExists) {
+            return true;
+        }
+
+        await state.sheetsClient.spreadsheets.batchUpdate({
+            spreadsheetId,
+            requestBody: {
+                requests: [{
+                    addSheet: {
+                        properties: {
+                            title: sheetName,
+                            gridProperties: {
+                                rowCount: 1000,
+                                columnCount: 13
+                            }
+                        }
+                    }
+                }]
+            }
+        });
+
+        return true;
+    } catch (error) {
+        return false;
+    }
+}
+
+async function appendStatisticsReportRow(period, snapshot) {
+    const target = getStatisticsReportTarget();
+    if (!state.sheetsClient || !target.spreadsheetId || !target.sheetName) {
+        return false;
+    }
+
+    const sheetName = target.sheetName;
+    try {
+        const sheetReady = await ensureStatisticsReportSheet(target.spreadsheetId, sheetName);
+        if (!sheetReady) {
+            return false;
+        }
+
         await state.sheetsClient.spreadsheets.values.append({
-            spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
+            spreadsheetId: target.spreadsheetId,
             range: `${sheetName}!A:M`,
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: [buildReportRow(period, snapshot)] }
@@ -45,5 +97,7 @@ async function appendStatisticsReportRow(period, snapshot) {
 module.exports = {
     appendStatisticsReportRow,
     buildReportRow,
-    getReportSheetName
+    ensureStatisticsReportSheet,
+    getReportSheetName,
+    getStatisticsReportTarget
 };
