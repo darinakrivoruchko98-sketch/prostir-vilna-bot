@@ -196,6 +196,7 @@ function buildStatisticsSnapshotForPeriod(period, registrations) {
         '60+ років': 0
     };
     let specialNeedsCount = 0;
+    const eventRegistrationTotals = {};
 
     for (const registration of registrations || []) {
         const profile = registration && registration.profile ? registration.profile : {};
@@ -203,6 +204,24 @@ function buildStatisticsSnapshotForPeriod(period, registrations) {
         const profilePhone = String(profile.phone || '').trim();
         const profileName = String(profile.name || '').trim();
         const identityKey = profileChatId || profilePhone || profileName;
+        const eventKey = registration && (registration.eventKey || registration.eventName || registration.eventDate)
+            ? (registration.eventKey || `${String(registration.eventName || '').trim().toLowerCase()}_${String(registration.eventDate || '').trim()}`)
+            : null;
+
+        if (eventKey) {
+            const existingEventEntry = eventRegistrationTotals[eventKey] || { registrationCount: 0, source: 'schedule' };
+            const scheduleRegistrationCount = Number.isFinite(Number(registration.scheduleRegistrationCount))
+                ? Number(registration.scheduleRegistrationCount)
+                : null;
+            if (scheduleRegistrationCount !== null && scheduleRegistrationCount >= 0) {
+                existingEventEntry.registrationCount = scheduleRegistrationCount;
+                existingEventEntry.source = 'schedule';
+            } else if (registration.scheduleRegistrationCount === undefined) {
+                existingEventEntry.registrationCount = Math.max(existingEventEntry.registrationCount, 0);
+            }
+            eventRegistrationTotals[eventKey] = existingEventEntry;
+        }
+
         if (!identityKey || seenIdentities.has(identityKey)) {
             continue;
         }
@@ -229,7 +248,8 @@ function buildStatisticsSnapshotForPeriod(period, registrations) {
         totalUniquePeople: seenIdentities.size,
         status: statusBuckets,
         ageGroups: ageBuckets,
-        specialNeeds: specialNeedsCount
+        specialNeeds: specialNeedsCount,
+        eventRegistrationTotals
     };
 }
 
@@ -288,25 +308,31 @@ async function readSheetRows(spreadsheetId, range) {
 
 async function collectStatisticsRegistrationsForPeriod(period, options = {}) {
     const spreadsheetId = options.spreadsheetId || config.PERSONAL_DATA_SPREADSHEET_ID;
-    const sheetName = options.sheetName || config.PERSONAL_DATA_SHEET_NAME || 'Зареєстровані';
+    const personalSheetName = options.personalSheetName || config.PERSONAL_DATA_SHEET_NAME || 'Зареєстровані';
+    const scheduleSheetName = options.scheduleSheetName || config.SCHEDULE_SHEET_NAME || 'Розклад';
     if (!state.sheetsClient || !spreadsheetId) {
         return [];
     }
 
-    const profileRows = await readSheetRows(spreadsheetId, `${sheetName}!A:M`);
-    const registrationRows = await readSheetRows(spreadsheetId, `${sheetName}!A:E`);
+    const profileRows = await readSheetRows(spreadsheetId, `${personalSheetName}!A:M`);
+    const registrationRows = await readSheetRows(spreadsheetId, `${personalSheetName}!A:E`);
     const parsedProfiles = (profileRows || []).slice(1).map((row) => parsePersonalDataRow(row));
     const profileByPhone = new Map();
     const profileByName = new Map();
+    const profileByChatId = new Map();
 
     for (const profile of parsedProfiles) {
         const normalizedPhone = String(profile.phone || '').replace(/\D/g, '');
         const normalizedName = normalizeText(profile.name || '');
+        const normalizedChatId = String(profile.chatId || '').trim();
         if (normalizedPhone) {
             profileByPhone.set(normalizedPhone, profile);
         }
         if (normalizedName) {
             profileByName.set(normalizedName, profile);
+        }
+        if (normalizedChatId) {
+            profileByChatId.set(normalizedChatId, profile);
         }
     }
 
@@ -326,8 +352,12 @@ async function collectStatisticsRegistrationsForPeriod(period, options = {}) {
 
         const phone = String(row[2] || '').replace(/\D/g, '');
         const name = normalizeText(row[1] || '');
+        const chatId = String(row[4] || '').trim();
         let matchedProfile = null;
-        if (phone) {
+        if (chatId) {
+            matchedProfile = profileByChatId.get(chatId) || null;
+        }
+        if (!matchedProfile && phone) {
             matchedProfile = profileByPhone.get(phone) || null;
         }
         if (!matchedProfile && name) {
@@ -344,7 +374,56 @@ async function collectStatisticsRegistrationsForPeriod(period, options = {}) {
         });
     }
 
-    return registrations;
+    try {
+        const scheduleRows = await readSheetRows(spreadsheetId, `${scheduleSheetName}!A:E`);
+        const eventsByKey = new Map();
+        for (const row of (scheduleRows || []).slice(1) || []) {
+            const parsedEvent = require('../events/parser').parseEventFromRow(row, null).event;
+            if (!parsedEvent) {
+                continue;
+            }
+            const eventKey = `${String(parsedEvent.name || '').trim().toLowerCase()}_${String(parsedEvent.date ? parsedEvent.date.toISOString().slice(0, 10) : '').trim()}`;
+            const registrationCount = Number.isFinite(parsedEvent.registrations) ? parsedEvent.registrations : 0;
+            eventsByKey.set(eventKey, {
+                eventName: parsedEvent.name,
+                eventDate: parsedEvent.date ? parsedEvent.date.toISOString().slice(0, 10) : '',
+                registrationCount,
+                eventKey
+            });
+        }
+
+        const resolvedRegistrations = [];
+        const seenRegistrationKeys = new Set();
+        for (const registration of registrations) {
+            const profile = registration.profile || {};
+            const identityKey = String(profile.chatId || profile.phone || profile.name || '').trim();
+            const registrationKey = `${identityKey}:${registration.registrationDate}`;
+            if (!identityKey || seenRegistrationKeys.has(registrationKey)) {
+                continue;
+            }
+            seenRegistrationKeys.add(registrationKey);
+
+            const eventName = String(registration.eventName || '').trim();
+            const eventDate = String(registration.eventDate || '').trim();
+            const eventKey = eventName && eventDate
+                ? `${String(eventName).trim().toLowerCase()}_${eventDate}`
+                : null;
+            const eventData = eventKey ? eventsByKey.get(eventKey) : null;
+
+            if (eventData) {
+                registration.eventName = eventData.eventName;
+                registration.eventDate = eventData.eventDate;
+                registration.eventKey = eventData.eventKey;
+                registration.scheduleRegistrationCount = eventData.registrationCount;
+            }
+
+            resolvedRegistrations.push(registration);
+        }
+
+        return resolvedRegistrations;
+    } catch (error) {
+        return registrations;
+    }
 }
 
 async function buildStatisticsSnapshotForSelection(selection, referenceDate = new Date(), historyPath = DEFAULT_HISTORY_PATH) {

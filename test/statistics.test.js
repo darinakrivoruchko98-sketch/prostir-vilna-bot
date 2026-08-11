@@ -67,6 +67,37 @@ test('buildStatisticsSnapshotForPeriod deduplicates by chat id and aggregates ca
     assert.equal(snapshot.specialNeeds, 2);
 });
 
+test('buildStatisticsSnapshotForPeriod preserves event registration counts from the schedule data', () => {
+    const period = {
+        type: 'week',
+        startDate: '2026-08-10',
+        endDate: '2026-08-16'
+    };
+
+    const registrations = [
+        {
+            registrationDate: '2026-08-12T10:00:00.000Z',
+            profile: { birth: '2000-04-01', status: 'ВПО', health: 'Ні, немає істотних проблем зі здоров\'ям', chatId: '10' },
+            eventName: 'Майстерня',
+            eventDate: '2026-08-12',
+            scheduleRegistrationCount: 12
+        },
+        {
+            registrationDate: '2026-08-13T10:00:00.000Z',
+            profile: { birth: '2010-04-01', status: 'Не ВПО, що постраждали від війни', health: 'Інвалідність', chatId: '11' },
+            eventName: 'Майстерня',
+            eventDate: '2026-08-12',
+            scheduleRegistrationCount: 12
+        }
+    ];
+
+    const snapshot = buildStatisticsSnapshotForPeriod(period, registrations);
+
+    assert.equal(snapshot.totalUniquePeople, 2);
+    assert.equal(snapshot.eventRegistrationTotals['майстерня_2026-08-12'].registrationCount, 12);
+    assert.equal(snapshot.eventRegistrationTotals['майстерня_2026-08-12'].source, 'schedule');
+});
+
 test('statistics selection helpers return the expected period options', () => {
     const buttons = getStatisticsSelectionButtons();
     assert.ok(buttons.some((button) => button.text === '📊 Поточний тиждень'));

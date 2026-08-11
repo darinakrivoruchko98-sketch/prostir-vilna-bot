@@ -21,6 +21,7 @@ const {
     getStatisticsSelectionButtons,
     resolveStatisticsSelectionFromText
 } = require('./src/utils/statistics');
+const { appendStatisticsReportRow } = require('./src/utils/statistics-report');
 const { isAdminUserId } = require('./src/utils/admin-access');
 
 const TOKEN = process.env.TOKEN || process.env.TELEGRAM_BOT_TOKEN || config.TOKEN;
@@ -10278,6 +10279,7 @@ bot.on('message', async (msg) => {
         try {
             const snapshot = await buildStatisticsSnapshotForSelection(selection, new Date());
             const statsMessage = formatStatisticsSnapshot(snapshot);
+            await appendStatisticsReportRow(snapshot.period, snapshot);
             await bot.sendMessage(chatId, statsMessage, {
                 parse_mode: 'HTML',
                 reply_markup: {
