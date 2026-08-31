@@ -3532,7 +3532,7 @@ function buildRegistrantsNoteFromList(registrationsCount, registrants, eventId =
     });
 
     const content = people.length === 0 ? header : `${header}\n\n${people.join('\n')}`;
-    return content;
+    return ensureScheduleNoteEventIdTag(content, eventId);
 }
 
 function getEventIdentityKey(event) {
@@ -3923,7 +3923,7 @@ function buildReserveNoteFromList(reserveCount, reservists, eventId = '') {
     });
 
     const content = people.length === 0 ? header : `${header}\n\n${people.join('\n')}`;
-    return content;
+    return ensureScheduleNoteEventIdTag(content, eventId);
 }
 
 async function updateSheetReserveCount(event) {
