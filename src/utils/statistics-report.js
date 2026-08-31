@@ -39,15 +39,11 @@ function isActivePeriod(period) {
         return false;
     }
 
-    const startDate = period.startDate ? new Date(`${period.startDate}T00:00:00`) : null;
-    const endDate = period.endDate ? new Date(`${period.endDate}T23:59:59`) : null;
-    const now = new Date();
-
-    if (!startDate || !endDate || Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
-        return true;
-    }
-
-    return now >= startDate && now <= endDate;
+    // App-level semantics: a current period is the single live row we continuously
+    // rewrite while it remains the current reporting period. The row should stay
+    // updatable even when the system clock no longer matches the historical date
+    // window used for the key, so the live report remains stable and predictable.
+    return true;
 }
 
 async function ensureStatisticsReportSheet(spreadsheetId, sheetName) {

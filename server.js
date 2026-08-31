@@ -404,6 +404,38 @@ let seenChatIds = new Set();
 let dailyFeedbackCandidatesByDate = {};
 let feedbackRequestStatusByDate = {};
 const pendingManualNoteConfirmationTimers = new Map();
+const SHEET_LOOKUP_CACHE_TTL_MS = Number(process.env.SHEET_LOOKUP_CACHE_TTL_MS || 30000);
+const sheetLookupCache = new Map();
+
+function getCachedSheetLookup(cacheKey, fn) {
+    const existing = sheetLookupCache.get(cacheKey);
+    if (existing && existing.expiresAt > Date.now()) {
+        return existing.value;
+    }
+    const valuePromise = Promise.resolve().then(fn);
+    sheetLookupCache.set(cacheKey, { value: valuePromise, expiresAt: Date.now() + SHEET_LOOKUP_CACHE_TTL_MS });
+    return valuePromise;
+}
+
+async function withGoogleSheetsRetry(operation, { label = 'Google Sheets request', attempts = 4 } = {}) {
+    let lastError;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+        try {
+            return await operation();
+        } catch (error) {
+            lastError = error;
+            const msg = String((error && error.message) || error || '').toLowerCase();
+            const isTemporaryQuota = msg.includes('quota') || msg.includes('rate limit') || msg.includes('too many requests') || msg.includes('read requests');
+            if (!isTemporaryQuota || attempt === attempts - 1) {
+                throw error;
+            }
+            const waitMs = 1500 * (attempt + 1);
+            logger.warn(`${label} hit quota, retrying in ${waitMs}ms`, { attempt: attempt + 1, message: msg });
+            await new Promise((resolve) => setTimeout(resolve, waitMs));
+        }
+    }
+    throw lastError;
+}
 
 function createDefaultReminderSettings(enabled = true) {
     return {
@@ -5992,50 +6024,61 @@ async function findUserByChatIdInSheet(chatIdStr) {
         return null;
     }
 
-    const rangesToTry = [];
-    if (PERSONAL_DATA_SHEET_NAME) {
-        rangesToTry.push(`${PERSONAL_DATA_SHEET_NAME}!A:M`);
-        rangesToTry.push(`'${PERSONAL_DATA_SHEET_NAME}'!A:M`);
-    }
-    rangesToTry.push('Зареєстровані!A:M');
-    rangesToTry.push("'Зареєстровані'!A:M");
-    rangesToTry.push('A:M');
-
     const normalizeChatIdValue = (value) => String(value || '')
         .trim()
         .replace(/^'/, '')
         .replace(/\.0+$/, '');
     const targetChatId = normalizeChatIdValue(chatIdStr);
-
-    for (const range of rangesToTry) {
-        try {
-            const resp = await sheetsClient.spreadsheets.values.get({
-                spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range
-            });
-
-            const rows = resp.data.values || [];
-            for (let i = rows.length - 1; i >= 0; i--) {
-                const row = rows[i] || [];
-                const restored = parsePersonalDataRow(row);
-                const directChatId = normalizeChatIdValue(restored.chatId || '');
-                const fallbackChatId = normalizeChatIdValue(row[12] || row[11] || row[10] || '');
-                const legacyChatId = normalizeChatIdValue(row[6] || '');
-
-                if (directChatId === targetChatId || fallbackChatId === targetChatId || legacyChatId === targetChatId) {
-                    return restored;
-                }
-            }
-        } catch (e) {
-            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-            if (msg.includes('unable to parse range') || msg.includes('not found')) {
-                continue;
-            }
-            break;
-        }
+    const cacheKey = `chat:${PERSONAL_DATA_SPREADSHEET_ID}:${targetChatId}`;
+    const cached = sheetLookupCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.value;
     }
 
-    return null;
+    const lookup = async () => {
+        const rangesToTry = [];
+        if (PERSONAL_DATA_SHEET_NAME) {
+            rangesToTry.push(`${PERSONAL_DATA_SHEET_NAME}!A:M`);
+            rangesToTry.push(`'${PERSONAL_DATA_SHEET_NAME}'!A:M`);
+        }
+        rangesToTry.push('Зареєстровані!A:M');
+        rangesToTry.push("'Зареєстровані'!A:M");
+        rangesToTry.push('A:M');
+
+        for (const range of rangesToTry) {
+            try {
+                const resp = await withGoogleSheetsRetry(() => sheetsClient.spreadsheets.values.get({
+                    spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                    range
+                }), { label: `findUserByChatIdInSheet:${targetChatId}` });
+
+                const rows = resp.data.values || [];
+                for (let i = rows.length - 1; i >= 0; i--) {
+                    const row = rows[i] || [];
+                    const restored = parsePersonalDataRow(row);
+                    const directChatId = normalizeChatIdValue(restored.chatId || '');
+                    const fallbackChatId = normalizeChatIdValue(row[12] || row[11] || row[10] || '');
+                    const legacyChatId = normalizeChatIdValue(row[6] || '');
+
+                    if (directChatId === targetChatId || fallbackChatId === targetChatId || legacyChatId === targetChatId) {
+                        return restored;
+                    }
+                }
+            } catch (e) {
+                const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+                if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                    continue;
+                }
+                throw e;
+            }
+        }
+
+        return null;
+    };
+
+    const result = await lookup();
+    sheetLookupCache.set(cacheKey, { value: result, expiresAt: Date.now() + SHEET_LOOKUP_CACHE_TTL_MS });
+    return result;
 }
 
 // Завантажує профіль користувача по телефону
@@ -6047,32 +6090,44 @@ async function loadKnownUserByPhone(phone) {
         return null;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:L`, 'A:L'];
-    for (const range of rangesToTry) {
-        try {
-            const resp = await sheetsClient.spreadsheets.values.get({
-                spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range
-            });
-            const rows = resp.data.values || [];
-            for (let i = rows.length - 1; i >= 0; i--) {
-                const row = rows[i] || [];
-                const restored = parsePersonalDataRow(row);
-                if (!restored.phone) continue;
-                if (!restored.phone.includes(phoneStr) && phoneStr !== restored.phone) continue;
-
-                return restored;
-            }
-        } catch (e) {
-            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-            if (msg.includes('unable to parse range') || msg.includes('not found')) {
-                continue;
-            }
-            break;
-        }
+    const cacheKey = `phone:${PERSONAL_DATA_SPREADSHEET_ID}:${phoneStr}`;
+    const cached = sheetLookupCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.value;
     }
 
-    return null;
+    const lookup = async () => {
+        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:L`, 'A:L'];
+        for (const range of rangesToTry) {
+            try {
+                const resp = await withGoogleSheetsRetry(() => sheetsClient.spreadsheets.values.get({
+                    spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                    range
+                }), { label: `loadKnownUserByPhone:${phoneStr}` });
+                const rows = resp.data.values || [];
+                for (let i = rows.length - 1; i >= 0; i--) {
+                    const row = rows[i] || [];
+                    const restored = parsePersonalDataRow(row);
+                    if (!restored.phone) continue;
+                    if (!restored.phone.includes(phoneStr) && phoneStr !== restored.phone) continue;
+
+                    return restored;
+                }
+            } catch (e) {
+                const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+                if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                    continue;
+                }
+                throw e;
+            }
+        }
+
+        return null;
+    };
+
+    const result = await lookup();
+    sheetLookupCache.set(cacheKey, { value: result, expiresAt: Date.now() + SHEET_LOOKUP_CACHE_TTL_MS });
+    return result;
 }
 
 // Завантажує профіль користувача по username
@@ -6084,33 +6139,45 @@ async function loadKnownUserByUsername(username) {
         return null;
     }
 
-    const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:L`, 'A:L'];
-    for (const range of rangesToTry) {
-        try {
-            const resp = await sheetsClient.spreadsheets.values.get({
-                spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                range
-            });
-            const rows = resp.data.values || [];
-            for (let i = rows.length - 1; i >= 0; i--) {
-                const row = rows[i] || [];
-                const restored = parsePersonalDataRow(row);
-                const normalizedUsername = String(restored.username || '').toLowerCase().replace(/^@/, '');
-                const fallbackUsername = String(row[0] || '').trim().toLowerCase().replace(/^@/, '');
-                if (normalizedUsername !== usernameStr && fallbackUsername !== usernameStr) continue;
-
-                return restored;
-            }
-        } catch (e) {
-            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-            if (msg.includes('unable to parse range') || msg.includes('not found')) {
-                continue;
-            }
-            break;
-        }
+    const cacheKey = `username:${PERSONAL_DATA_SPREADSHEET_ID}:${usernameStr}`;
+    const cached = sheetLookupCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.value;
     }
 
-    return null;
+    const lookup = async () => {
+        const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:L`, 'A:L'];
+        for (const range of rangesToTry) {
+            try {
+                const resp = await withGoogleSheetsRetry(() => sheetsClient.spreadsheets.values.get({
+                    spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                    range
+                }), { label: `loadKnownUserByUsername:${usernameStr}` });
+                const rows = resp.data.values || [];
+                for (let i = rows.length - 1; i >= 0; i--) {
+                    const row = rows[i] || [];
+                    const restored = parsePersonalDataRow(row);
+                    const normalizedUsername = String(restored.username || '').toLowerCase().replace(/^@/, '');
+                    const fallbackUsername = String(row[0] || '').trim().toLowerCase().replace(/^@/, '');
+                    if (normalizedUsername !== usernameStr && fallbackUsername !== usernameStr) continue;
+
+                    return restored;
+                }
+            } catch (e) {
+                const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+                if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                    continue;
+                }
+                throw e;
+            }
+        }
+
+        return null;
+    };
+
+    const result = await lookup();
+    sheetLookupCache.set(cacheKey, { value: result, expiresAt: Date.now() + SHEET_LOOKUP_CACHE_TTL_MS });
+    return result;
 }
 
 // Показує форму реєстрації для кількох заходів
