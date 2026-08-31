@@ -6546,13 +6546,33 @@ async function unregisterFromEvent(chatId, eventId) {
         return { status: 'not-registered' };
     }
 
-    // Шукаємо реєстрацію
-    const regIndex = userEventRegistrations[chatId].findIndex(r => r.eventId === eventId);
+    const regIndex = userEventRegistrations[chatId].findIndex((r) => r.eventId === eventId);
     if (regIndex === -1) {
         return { status: 'not-found' };
     }
 
     const registration = userEventRegistrations[chatId][regIndex];
+    const event = events.find((entry) => entry.id === eventId);
+    if (!event) {
+        return { status: 'failed', eventName: registration.eventName, mode: 'registration' };
+    }
+
+    const registrantProfile = await resolveRegistrantProfile(
+        chatId,
+        users[chatId],
+        registration.registrantName,
+        registration.registrantPhone
+    );
+
+    const removedFromPersonalSheet = await registrationSheetUtils.removeEventRegistration(users[chatId], event, registrantProfile).catch(() => false);
+    const scheduleResult = await decrementSheetRegistration(event, registrantProfile);
+    const scheduleSucceeded = scheduleResult && scheduleResult.status === 'ok';
+
+    if (!removedFromPersonalSheet || !scheduleSucceeded) {
+        console.warn(`⚠️ Не вдалося повністю відписати користувача ${chatId} від ${registration.eventName}: personalSheet=${removedFromPersonalSheet}, schedule=${scheduleSucceeded}`);
+        return { status: 'failed', eventName: registration.eventName, mode: 'registration' };
+    }
+
     const removalResult = registrationSheetUtils.removeRegistrationEntry(
         userEventRegistrations[chatId],
         eventId,
@@ -6565,27 +6585,14 @@ async function unregisterFromEvent(chatId, eventId) {
     userEventRegistrations[chatId] = removalResult.entries;
     removeFeedbackCandidate(chatId, registration.eventDate, registration.eventName);
 
-    // Очищаємо пустий масив
     if (userEventRegistrations[chatId].length === 0) {
         delete userEventRegistrations[chatId];
     }
     saveReminderStateToDisk();
 
-    const event = events.find((entry) => entry.id === eventId);
-    if (event) {
-        event.registrations = Math.max(0, (event.registrations || 1) - 1);
-
-        const registrantProfile = await resolveRegistrantProfile(
-            chatId,
-            users[chatId],
-            registration.registrantName,
-            registration.registrantPhone
-        );
-        await registrationSheetUtils.removeEventRegistration(users[chatId], event, registrantProfile).catch(() => false);
-        await decrementSheetRegistration(event, registrantProfile);
-        await promoteFirstReserveRegistrantToRegistration(event);
-        console.log(`📝 Користувач ${chatId} відписаний від "${registration.eventName}" (місць +1)`);
-    }
+    event.registrations = Math.max(0, (event.registrations || 1) - 1);
+    await promoteFirstReserveRegistrantToRegistration(event);
+    console.log(`📝 Користувач ${chatId} відписаний від "${registration.eventName}" (місць +1)`);
 
     return { status: 'ok', eventName: registration.eventName, mode: 'registration' };
 }
@@ -6601,13 +6608,6 @@ async function unregisterFromReserve(chatId, eventId) {
     }
 
     const registration = userEventReserveRegistrations[chatId][regIndex];
-    userEventReserveRegistrations[chatId].splice(regIndex, 1);
-
-    if (userEventReserveRegistrations[chatId].length === 0) {
-        delete userEventReserveRegistrations[chatId];
-    }
-    saveReminderStateToDisk();
-
     const event = events.find((eventItem) => eventItem.id === eventId);
     if (event) {
         const removed = await removeRegistrantFromReserve(event, {
@@ -6616,10 +6616,16 @@ async function unregisterFromReserve(chatId, eventId) {
             phone: String(registration.registrantPhone || '').trim()
         });
         if (!removed) {
-            return { status: 'not-found' };
+            return { status: 'failed', eventName: registration.eventName, mode: 'reserve' };
         }
         console.log(`🕓 Користувач ${chatId} видалений з резерву "${registration.eventName}"`);
     }
+
+    userEventReserveRegistrations[chatId].splice(regIndex, 1);
+    if (userEventReserveRegistrations[chatId].length === 0) {
+        delete userEventReserveRegistrations[chatId];
+    }
+    saveReminderStateToDisk();
 
     return { status: 'ok', eventName: registration.eventName, mode: 'reserve' };
 }
@@ -6635,26 +6641,27 @@ async function unregisterFriendFromEvent(chatId, registrationKey) {
     }
 
     const registration = friendEventRegistrations[chatId][regIndex];
-    friendEventRegistrations[chatId].splice(regIndex, 1);
-
-    if (friendEventRegistrations[chatId].length === 0) {
-        delete friendEventRegistrations[chatId];
-    }
-    saveReminderStateToDisk();
-
     const event = events.find((eventItem) => eventItem.id === registration.eventId);
     if (event) {
         event.registrations = Math.max(0, (event.registrations || 1) - 1);
-        // event.seats = місткість (константа), не змінюємо
 
-        await decrementSheetRegistration(event, {
+        const scheduleResult = await decrementSheetRegistration(event, {
             userId: String(chatId || ''),
             name: String(registration.registrantName || '').trim(),
             phone: String(registration.registrantPhone || '').trim()
         });
+        if (!scheduleResult || scheduleResult.status !== 'ok') {
+            return { status: 'failed', eventName: registration.eventName, registrantName: registration.registrantName };
+        }
         await promoteFirstReserveRegistrantToRegistration(event);
         console.log(`👭 Подругу відписано від "${registration.eventName}" (chatId=${chatId})`);
     }
+
+    friendEventRegistrations[chatId].splice(regIndex, 1);
+    if (friendEventRegistrations[chatId].length === 0) {
+        delete friendEventRegistrations[chatId];
+    }
+    saveReminderStateToDisk();
 
     return {
         status: 'ok',
