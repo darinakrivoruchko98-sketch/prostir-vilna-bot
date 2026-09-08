@@ -6508,26 +6508,12 @@ async function registerForSelectedEventUnlocked(chatId, user, providedName, prov
 
     // Оновлюємо лічильник у розкладі та зберігаємо реєстрацію у листі "Зареєстровані"
     if (evObj) {
-<<<<<<< HEAD
         evObj.registrations = (evObj.registrations || 0) + 1;
         try {
             await incrementSheetRegistrationUnlocked(evObj, registrantProfile);
         } catch (error) {
             evObj.registrations = Math.max(0, evObj.registrations - 1);
             throw error;
-=======
-        await appendEventRegistration(eventId, chatId, {
-            name: registrantProfile.name,
-            phone: registrantProfile.phone,
-            eventName: evObj.name,
-            eventDate: evObj.date
-        });
-        await incrementSheetRegistration(evObj, registrantProfile);
-        if (Number.isFinite(evObj.registrations)) {
-            evObj.registrations = Number(evObj.registrations) + 1;
-        } else {
-            evObj.registrations = 1;
->>>>>>> fbbd79c (Fix friday afisha day parsing)
         }
     }
 
@@ -6777,7 +6763,6 @@ async function unregisterFromEventUnlocked(chatId, eventId) {
         console.log(`📝 Користувач ${chatId} відписаний від "${registration.eventName}" (місць +1)`);
     }
 
-<<<<<<< HEAD
     const targetPhoneKey = normalizeRegistrantPhone(registration && registration.registrantPhone);
     const targetNameKey = normalizeRegistrantName(registration && registration.registrantName);
     const canMatchByIdentity = Boolean(targetPhoneKey || targetNameKey);
@@ -6799,15 +6784,6 @@ async function unregisterFromEventUnlocked(chatId, eventId) {
     removeFeedbackCandidate(chatId, registration.eventDate, registration.eventName);
     if (userEventRegistrations[chatId].length === 0) delete userEventRegistrations[chatId];
     saveReminderStateToDisk();
-=======
-    if (Number.isFinite(event.registrations)) {
-        event.registrations = Math.max(0, Number(event.registrations) - 1);
-    } else {
-        event.registrations = 0;
-    }
-    await promoteFirstReserveRegistrantToRegistration(event);
-    console.log(`📝 Користувач ${chatId} відписаний від "${registration.eventName}" (місць +1)`);
->>>>>>> fbbd79c (Fix friday afisha day parsing)
 
     return { status: 'ok', eventName: registration.eventName, mode: 'registration' };
 }
