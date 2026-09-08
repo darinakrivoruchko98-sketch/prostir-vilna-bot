@@ -26,7 +26,6 @@ const {
 const { appendStatisticsReportRow } = require('./src/utils/statistics-report');
 const { isAdminUserId } = require('./src/utils/admin-access');
 const { buildAgendaEventSummary } = require('./src/utils/event-display');
-const { withCache, invalidateCache } = require('./src/sheets/cache');
 const scheduleSheetUtils = require('./src/sheets/schedule');
 const registrationSheetUtils = require('./src/sheets/registration');
 
