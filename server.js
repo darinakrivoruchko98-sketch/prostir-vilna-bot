@@ -23,6 +23,7 @@ const {
 } = require('./src/utils/statistics');
 const { appendStatisticsReportRow } = require('./src/utils/statistics-report');
 const { isAdminUserId } = require('./src/utils/admin-access');
+const { buildAgendaEventSummary } = require('./src/utils/event-display');
 const scheduleSheetUtils = require('./src/sheets/schedule');
 const registrationSheetUtils = require('./src/sheets/registration');
 
@@ -2867,48 +2868,19 @@ function getEventsForDay(dayNum) {
 }
 
 function formatSeatsCount(count) {
-    const normalizedCount = Math.abs(Number(count));
-    const lastTwoDigits = normalizedCount % 100;
-    const lastDigit = normalizedCount % 10;
-
-    let seatWord = 'місць';
-    if (lastTwoDigits < 11 || lastTwoDigits > 14) {
-        if (lastDigit === 1) {
-            seatWord = 'місце';
-        } else if (lastDigit >= 2 && lastDigit <= 4) {
-            seatWord = 'місця';
-        }
-    }
-
-    return `${count} ${seatWord}`;
+    return require('./src/utils/event-display').formatSeatsCount(count);
 }
 
 function formatPeopleCount(count) {
-    const normalizedCount = Math.abs(Number(count));
-    const lastTwoDigits = normalizedCount % 100;
-    const lastDigit = normalizedCount % 10;
-
-    let peopleWord = 'людей';
-    if (lastTwoDigits < 11 || lastTwoDigits > 14) {
-        if (lastDigit === 1) {
-            peopleWord = 'людина';
-        } else if (lastDigit >= 2 && lastDigit <= 4) {
-            peopleWord = 'людини';
-        }
-    }
-
-    return `${count} ${peopleWord}`;
+    return require('./src/utils/event-display').formatPeopleCount(count);
 }
 
 // Форматує блок інформації про захід для повідомлення
 function formatEventDetails(event) {
-    const time = String(event.date.getHours()).padStart(2,'0')+":"+
-                 String(event.date.getMinutes()).padStart(2,'0');
-    const seatsLeft = event.seats - (event.registrations || 0);
-    const registrationsCount = Math.max(0, Number(event.registrations) || 0);
-    const reserveCount = Math.max(0, Number(event.reserveCount) || 0);
-    const seatsLabel = seatsLeft > 0 ? formatSeatsCount(seatsLeft) : "❌ закрито";
-    return `Назва: ${event.name}\nЧас: ${time}\nМісць залишилось: ${seatsLabel}\nЗареєстровано: ${formatPeopleCount(registrationsCount)}\nРезерв: ${formatPeopleCount(reserveCount)}`;
+    const seatsLeft = Number.isFinite(Number(event && event.seats)) ? Number(event.seats) : 0;
+    const registrationsCount = Math.max(0, Number(event && event.registrations) || 0);
+    const reserveCount = Math.max(0, Number(event && event.reserveCount) || 0);
+    return `Назва: ${event && event.name ? event.name : ''}\nЧас: ${event && event.date instanceof Date ? String(event.date.getHours()).padStart(2,'0')+":"+String(event.date.getMinutes()).padStart(2,'0') : ''}\nМісць залишилось: ${seatsLeft > 0 ? formatSeatsCount(seatsLeft) : '❌ закрито'}\nЗареєстровано: ${formatPeopleCount(registrationsCount)}\nРезерв: ${formatPeopleCount(reserveCount)}`;
 }
 
 function resolveAfishaEventIdFromButtonText(user, text) {
@@ -3185,27 +3157,21 @@ async function showDayAgenda(chatId, dayName) {
         return;
     }
 
-    let msg = `📅 Заходи на ${dateHeaderLabel}:\n\n`;
-    for (const ev of dayEventsForDisplay) {
+    const eventSummaries = await Promise.all(dayEventsForDisplay.map(async (ev) => {
         const seatsLeft = await getSeatsLeft(ev.id);
-        const time = String(ev.date.getHours()).padStart(2,'0') + ":" + String(ev.date.getMinutes()).padStart(2,'0');
-        const seatsLabel = seatsLeft > 0 ? `💺 ${formatSeatsCount(seatsLeft)}` : `❌ закрито`;
-        const registrationsLabel = `👥 Зареєстровано: ${formatPeopleCount(Math.max(0, Number(ev.registrations) || 0))}`;
-        const reserveLabel = `🕓 Резерв: ${formatPeopleCount(Math.max(0, Number(ev.reserveCount) || 0))}`;
-        msg += `Назва: ${ev.name}\nЧас: ${time}\nМісць залишилось: ${seatsLabel}\n${registrationsLabel}\n${reserveLabel}\n\n`;
+        return { event: ev, summary: buildAgendaEventSummary(ev, seatsLeft) };
+    }));
+
+    let msg = `📅 Заходи на ${dateHeaderLabel}:\n\n`;
+    for (const { summary } of eventSummaries) {
+        msg += `${summary.messageLines.join('\n')}\n\n`;
     }
 
     const buttons = [];
     const eventButtonMap = {};
-    for (const ev of dayEventsForDisplay) {
-        const seatsLeft = await getSeatsLeft(ev.id);
-        const time = String(ev.date.getHours()).padStart(2,'0') + ":" + String(ev.date.getMinutes()).padStart(2,'0');
-        const seatsLabel = seatsLeft > 0 ? `💺 ${formatSeatsCount(seatsLeft)}` : `❌ закрито`;
-        const registrationsLabel = `👥 ${formatPeopleCount(Math.max(0, Number(ev.registrations) || 0))}`;
-        const reserveLabel = `🕓 ${formatPeopleCount(Math.max(0, Number(ev.reserveCount) || 0))}`;
-        const buttonText = `${ev.name} | ${time} | ${seatsLabel} | ${registrationsLabel} | ${reserveLabel}`;
-        buttons.push([{ text: buttonText }]);
-        eventButtonMap[buttonText] = ev.id;
+    for (const { event, summary } of eventSummaries) {
+        buttons.push([{ text: summary.buttonText }]);
+        eventButtonMap[summary.buttonText] = event.id;
     }
     buttons.push([{ text: NAVIGATION_BUTTONS.backToDays }]);
 
@@ -3472,18 +3438,24 @@ async function withRegistrationLock(eventId, operation) {
 
 async function incrementSheetRegistrationUnlocked(event, fallbackRegistrant) {
     if (!event || !sheetsClient || !SPREADSHEET_ID) {
+        console.warn('[registration] skipping sheet increment: missing event, sheets client, or spreadsheet id');
         return;
     }
+
+    const eventLabel = event.name || event.id || 'unknown event';
+    console.log(`[registration] start increment for event "${eventLabel}"`);
 
     const match = await findScheduleRowByEvent(event);
     if (!match) {
-        console.warn(`⚠️ Не знайдено рядок у розкладі для оновлення нотатки: ${event.name}`);
+        console.warn(`[registration] cannot find schedule row for event "${eventLabel}"`);
         return;
     }
 
-    const registrationsCount = Number.isFinite(event.registrations) ? event.registrations : 0;
-    const totalSeats = Number.isFinite(event.seats) ? Math.max(0, event.seats) : 0;
-    const remainingSeats = Math.max(0, totalSeats - registrationsCount);
+    console.log(`[registration] found schedule row for event "${eventLabel}"`, {
+        sheet: match.scheduleSheet,
+        rowIndex: match.rowIndex + 1
+    });
+
     let previousValues = ['', ''];
     let previousNote = '';
 
@@ -3494,14 +3466,29 @@ async function incrementSheetRegistrationUnlocked(event, fallbackRegistrant) {
         });
         previousValues = (previousResponse.data.values || [])[0] || previousValues;
         previousNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex);
+
+        const currentRemaining = Number(previousValues[0] ?? 0) || 0;
+        const currentRegistrations = Number(previousValues[1] ?? 0) || 0;
+        const nextRemaining = Math.max(0, currentRemaining - 1);
+        const nextRegistrations = currentRegistrations + 1;
+
+        console.log(`[registration] current D/E values for row ${match.rowIndex + 1}:`, {
+            currentRemaining,
+            currentRegistrations,
+            nextRemaining,
+            nextRegistrations
+        });
+
         await sheetsClient.spreadsheets.values.update({
             spreadsheetId: SPREADSHEET_ID,
             range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`,
             valueInputOption: 'USER_ENTERED',
             requestBody: {
-                values: [[nextRemaining, nextRegistrations]]
+                values: [[String(nextRemaining), String(nextRegistrations)]]
             }
         });
+        console.log(`[registration] successfully wrote D/E values to ${match.scheduleSheet}:${match.rowIndex + 1}`);
+
         await updateScheduleRegistrationNote({
             scheduleSheet: match.scheduleSheet,
             rowIndex: match.rowIndex,
@@ -3509,16 +3496,17 @@ async function incrementSheetRegistrationUnlocked(event, fallbackRegistrant) {
             fallbackRegistrant,
             eventId: event.id
         });
+        console.log(`[registration] updated schedule note for event "${eventLabel}"`);
 
         if (Number.isFinite(event.registrations)) {
             event.registrations = nextRegistrations;
         }
         if (Number.isFinite(event.seats)) {
-            event.seats = nextCapacity;
+            event.seats = nextRemaining;
         }
     } catch (error) {
         await restoreScheduleRegistrationState(match, previousValues, previousNote);
-        console.error('❌ Не вдалося атомарно оновити реєстрацію у розкладі:', error && error.message ? error.message : error);
+        console.error(`[registration] failed to update Google Sheets for event "${eventLabel}"`, error && error.message ? error.message : error);
         throw error;
     }
 }
@@ -3806,14 +3794,20 @@ async function findScheduleRowByEventByNoteTag(event) {
 
 async function findScheduleRowByEvent(event) {
     if (!event || !event.date || !SPREADSHEET_ID || !sheetsClient) {
+        console.warn('[registration] cannot search schedule row: missing event/date/spreadsheet/sheets client');
         return null;
     }
 
+    const eventLabel = event.name || event.id || 'unknown event';
+    console.log(`[registration] searching schedule row for event "${eventLabel}"`);
+
     const markerMatch = await findScheduleRowByEventByNoteTag(event);
     if (markerMatch) {
+        console.log(`[registration] matched schedule row by note tag for event "${eventLabel}"`, markerMatch);
         return markerMatch;
     }
 
+    const eventDate = event.date instanceof Date ? event.date : new Date(event.date);
     for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
         try {
             const resp = await sheetsClient.spreadsheets.values.get({
@@ -3833,8 +3827,12 @@ async function findScheduleRowByEvent(event) {
 
                 const parsedEvent = parsed.event;
                 const sameTitle = normalizeTitle(parsedEvent.name) === normalizeTitle(event.name);
-                const sameTime = parsedEvent.date.getTime() === event.date.getTime();
+                const sameTime = parsedEvent.date.getTime() === eventDate.getTime();
                 if (sameTitle && sameTime) {
+                    console.log(`[registration] matched schedule row by content for event "${eventLabel}"`, {
+                        sheet: scheduleSheet,
+                        rowIndex: rowIndex + 1
+                    });
                     return { scheduleSheet, rowIndex };
                 }
             }
@@ -3847,6 +3845,7 @@ async function findScheduleRowByEvent(event) {
         }
     }
 
+    console.warn(`[registration] schedule row not found for event "${eventLabel}"`);
     return null;
 }
 
@@ -4708,11 +4707,20 @@ async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, exis
 
 async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registrationsCount, fallbackRegistrant, removeRegistrant, eventId }) {
     if (!scheduleSheet || rowIndex < 0 || !SPREADSHEET_ID || !sheetsClient) {
+        console.warn('[registration-note] skipping note update: missing schedule sheet, row index, spreadsheet, or sheets client');
         return;
     }
 
+    console.log(`[registration-note] updating note for ${scheduleSheet}:${rowIndex + 1}`, {
+        registrationsCount,
+        hasFallback: Boolean(fallbackRegistrant),
+        hasRemove: Boolean(removeRegistrant),
+        eventId
+    });
+
     const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, scheduleSheet);
     if (sheetId === null || typeof sheetId === 'undefined') {
+        console.warn(`[registration-note] cannot resolve sheetId for ${scheduleSheet}`);
         return;
     }
 
@@ -4720,7 +4728,6 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
     let registrants = parseRegistrantsFromNote(existingNote);
 
     if (removeRegistrant) {
-        // При відписці: парсимо, видаляємо, перебудовуємо
         const removeNameKey = normalizeRegistrantName(removeRegistrant.name);
         const removePhoneKey = normalizeRegistrantPhone(removeRegistrant.phone);
         const removeUserId = normalizeRegistrantUserId(removeRegistrant.userId);
@@ -4728,11 +4735,10 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
             registrants = registrants.filter((item) => !isSameRegistrant(item, removeNameKey, removePhoneKey, removeUserId));
         }
     } else if (fallbackRegistrant) {
-        // При реєстрації: додаємо у нормалізований список і перебудовуємо всю нотатку.
-        // Це прибирає зайві порожні рядки й службові фрагменти.
         const candidateName = String((fallbackRegistrant && fallbackRegistrant.name) || '').trim();
         const candidatePhone = String((fallbackRegistrant && fallbackRegistrant.phone) || '').trim();
         if (!candidateName && !candidatePhone) {
+            console.warn('[registration-note] skipping note update: no name/phone in fallback registrant');
             return;
         }
         const candidateUserId = normalizeRegistrantUserId(fallbackRegistrant && fallbackRegistrant.userId);
@@ -4747,7 +4753,8 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
             });
         }
     } else {
-        return; // Нічого робити
+        console.warn('[registration-note] skipping note update: no fallback or remove registrant provided');
+        return;
     }
 
     const normalizedRegistrants = registrants.filter((item) => {
@@ -4761,6 +4768,11 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
         normalizedRegistrants,
         eventId
     );
+
+    console.log(`[registration-note] writing note to ${scheduleSheet}:${rowIndex + 1}`, {
+        registrantCount: normalizedRegistrants.length,
+        noteLength: nextNote.length
+    });
 
     await sheetsClient.spreadsheets.batchUpdate({
         spreadsheetId: SPREADSHEET_ID,
@@ -4784,6 +4796,7 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
             ]
         }
     });
+    console.log(`[registration-note] note update complete for ${scheduleSheet}:${rowIndex + 1}`);
 }
 
 function getLocalDateKey(date) {
