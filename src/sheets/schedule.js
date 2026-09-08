@@ -32,6 +32,23 @@ async function retryRequest(fn, opts = {}) {
 
 // Recent actions for undo (keyed by actor chatId)
 const recentActions = new Map();
+const registrationLocks = new Map();
+
+async function withRegistrationLock(eventId, operation) {
+    const key = String(eventId || '');
+    const previous = registrationLocks.get(key) || Promise.resolve();
+    let release;
+    const current = new Promise((resolve) => { release = resolve; });
+    registrationLocks.set(key, current);
+    await previous;
+    try {
+        return await operation();
+    } finally {
+        release();
+        if (registrationLocks.get(key) === current) registrationLocks.delete(key);
+    }
+}
+
 function recordRecentAction(actorId, action) {
     if (!actorId) return;
     recentActions.set(String(actorId), { action, ts: Date.now() });
@@ -175,6 +192,47 @@ function formatRegistrantLine(item, index) {
     return `${index + 1}. ${name} — ${phone}`;
 }
 
+function registrantIdentityKey(item) {
+    const userId = String((item && item.userId) || '').trim();
+    const name = normalizeRegistrantName(item && item.name);
+    const phone = normalizeRegistrantPhone(item && item.phone);
+
+    if (userId) return `u:${userId}`;
+    if (name && phone) return `np:${name}|${phone}`;
+    if (phone) return `p:${phone}`;
+    if (name) return `n:${name}`;
+    return '';
+}
+
+function isServiceLikeRegistrant(item) {
+    const name = String((item && item.name) || '').trim();
+    return /^EVENT_ID\s*:/i.test(name);
+}
+
+function sanitizeAndDedupeRegistrants(list) {
+    const result = [];
+    const seen = new Set();
+
+    for (const raw of Array.isArray(list) ? list : []) {
+        const item = {
+            userId: String((raw && raw.userId) || '').trim(),
+            name: String((raw && raw.name) || '').trim(),
+            phone: String((raw && raw.phone) || '').trim()
+        };
+
+        if (!(item.userId || item.name || item.phone)) continue;
+        if (isServiceLikeRegistrant(item)) continue;
+
+        const key = registrantIdentityKey(item);
+        if (key && seen.has(key)) continue;
+
+        if (key) seen.add(key);
+        result.push(item);
+    }
+
+    return result;
+}
+
 function parseScheduleNoteSections(noteText) {
     const sections = {
         registered: [],
@@ -188,6 +246,7 @@ function parseScheduleNoteSections(noteText) {
         const line = String(rawLine || '').trim();
         if (!line) continue;
         if (/^EVENT_ID\s*:/i.test(line)) continue;
+        if (/^\d+\.\s*EVENT_ID\s*:/i.test(line)) continue;
         if (/^Зареєстровано\s*:/i.test(line)) {
             currentSection = 'registered';
             continue;
@@ -198,7 +257,7 @@ function parseScheduleNoteSections(noteText) {
         }
         if (/^Список порожній$/i.test(line)) continue;
 
-        const match = line.match(/^\s*\d+\.\s*(.*?)\s*—\s*(.*?)\s*$/);
+        const match = line.match(/^\s*\d+\.\s*(.*?)\s*[—-]\s*(.*?)\s*$/);
         if (!match) continue;
 
         const rawName = String(match[1] || '').trim();
@@ -222,8 +281,15 @@ function parseScheduleNoteSections(noteText) {
 
 function buildScheduleNoteText({ registered = [], reserve = [], registrationsCount = 0, eventId = '' } = {}) {
     const safeRegisteredCount = Number.isFinite(Number(registrationsCount)) ? Number(registrationsCount) : 0;
-    const registeredLines = registered.map((item, index) => formatRegistrantLine(item, index));
-    const reserveLines = reserve.map((item, index) => formatRegistrantLine(item, index));
+    const cleanRegistered = sanitizeAndDedupeRegistrants(registered);
+    const registeredKeys = new Set(cleanRegistered.map((item) => registrantIdentityKey(item)).filter(Boolean));
+    const cleanReserve = sanitizeAndDedupeRegistrants(reserve).filter((item) => {
+        const key = registrantIdentityKey(item);
+        return !(key && registeredKeys.has(key));
+    });
+
+    const registeredLines = cleanRegistered.map((item, index) => formatRegistrantLine(item, index));
+    const reserveLines = cleanReserve.map((item, index) => formatRegistrantLine(item, index));
 
     const parts = [];
     if (registeredLines.length === 0) {
@@ -236,7 +302,8 @@ function buildScheduleNoteText({ registered = [], reserve = [], registrationsCou
         parts.push(`Резерв: ${reserveLines.length}\n\n${reserveLines.join('\n')}`);
     }
 
-    return ensureScheduleNoteEventIdTag(parts.join('\n\n'), eventId);
+    const noteText = parts.join('\n\n').trim();
+    return ensureScheduleNoteEventIdTag(noteText, eventId);
 }
 
 const SCHEDULE_NOTE_EVENT_ID_TAG = 'EVENT_ID:';
@@ -748,7 +815,7 @@ async function getScheduleEventSeatState(event) {
     return null;
 }
 
-async function incrementSheetRegistration(event, fallbackRegistrant) {
+async function incrementSheetRegistrationUnlocked(event, fallbackRegistrant) {
     if (!state.sheetsClient || !config.SPREADSHEET_ID) return;
 
     const markerMatch = await findScheduleRowByEventByNoteTag(event);
@@ -837,6 +904,7 @@ async function incrementSheetRegistration(event, fallbackRegistrant) {
                     });
                 } catch (noteErr) {
                     logger.error('Failed to update registration note', noteErr && noteErr.message ? noteErr.message : noteErr);
+                    throw noteErr;
                 }
 
                 event.seats = newCap;
@@ -955,6 +1023,7 @@ async function removeRegistrantFromReserve(event, registrantProfile) {
         return false;
     }
 
+
     const reservists = await getEffectiveReserveRegistrants(match.scheduleSheet, match.rowIndex);
     const targetName = normalizeRegistrantName(registrantProfile.name || '');
     const targetPhone = normalizeRegistrantPhone(registrantProfile.phone || '');
@@ -1051,11 +1120,16 @@ async function promoteFirstReserveRegistrantToRegistration(event) {
     return true;
 }
 
+async function incrementSheetRegistration(event, fallbackRegistrant) {
+    return withRegistrationLock(event && event.id, () => incrementSheetRegistrationUnlocked(event, fallbackRegistrant));
+}
+
 module.exports = {
     appendEventToSheet,
     appendEventReservation,
     buildScheduleNoteText,
     decrementSheetRegistration,
+    extractScheduleNoteEventId,
     incrementSheetRegistration,
     isRegistrantAlreadyInEventNote,
     parseScheduleNoteSections,

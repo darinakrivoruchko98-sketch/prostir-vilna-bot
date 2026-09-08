@@ -23,6 +23,7 @@ const SOCIAL_CONSULTATIONS_SHEET_NAME = process.env.SOCIAL_CONSULTATIONS_SHEET_N
 const PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME = process.env.PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME || "Псих";
 const SOCIAL_SPECIALIST_CHAT_ID = process.env.SOCIAL_SPECIALIST_CHAT_ID || "";
 const PSYCHOLOGIST_CHAT_ID = process.env.PSYCHOLOGIST_CHAT_ID || "";
+const CONFIG_BUILD_MARKER = process.env.CONFIG_BUILD_MARKER || 'config-appeals-global-2026-07-23-01';
 const SCHEDULE_SHEET_CANDIDATES = [SCHEDULE_SHEET_NAME, "Заходи"];
 
 // Таблиця розкладу: https://docs.google.com/spreadsheets/d/1jTTWx_74ua3iMK1nGih7trPeNVQnO59Kp4HQ5TPQgQ8/edit
@@ -38,6 +39,7 @@ console.log("📋 Таблиця розкладу:", SPREADSHEET_ID);
 console.log("📄 Аркуш розкладу:", SCHEDULE_SHEET_NAME);
 console.log("👤 Таблиця персональних даних:", PERSONAL_DATA_SPREADSHEET_ID);
 console.log("📄 Аркуш персональних даних:", PERSONAL_DATA_SHEET_NAME);
+console.log(`🏷️ Config build marker: ${CONFIG_BUILD_MARKER}`);
 console.log(`[CONFIGBOOT] APPEALS_GROUP_ID=${APPEALS_GROUP_ID}`);
 
 if (!TOKEN) {

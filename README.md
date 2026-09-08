@@ -27,6 +27,8 @@ BOT_SHORT_DESCRIPTION=Чат-бот Простору Вільна: анонси,
 AI_API_KEY=sk-...
 AI_MODEL=gpt-4o-mini
 AI_API_URL=https://api.openai.com/v1/chat/completions
+POLLING_CONFLICT_RETRY_MS=15000
+EXIT_ON_POLLING_CONFLICT=false
 GOOGLE_CLIENT_EMAIL=your-service-account@project-id.iam.gserviceaccount.com
 GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
 ```
@@ -86,6 +88,8 @@ BOT_SHORT_DESCRIPTION=Чат-бот Простору Вільна: анонси,
 AI_API_KEY=sk-...
 AI_MODEL=gpt-4o-mini
 AI_API_URL=https://api.openai.com/v1/chat/completions
+POLLING_CONFLICT_RETRY_MS=15000
+EXIT_ON_POLLING_CONFLICT=false
 GOOGLE_CLIENT_EMAIL=your-service-account@project-id.iam.gserviceaccount.com
 GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
 ```

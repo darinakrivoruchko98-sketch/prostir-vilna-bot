@@ -2,6 +2,24 @@ const state = require('../state');
 const config = require('../config');
 const { withCache, invalidateCache } = require('./cache');
 
+function buildRegistrationValues(chatId, user) {
+    return [
+        user.username || '',
+        user.name || '',
+        user.phone || '',
+        user.birth || '',
+        user.status || '',
+        user.childrenCount || '',
+        user.health || '',
+        user.evacuationStatus || '',
+        user.shellingImpact || '',
+        user.employment || '',
+        user.beneficiaryCategory || '',
+        user.gzn || '',
+        String(chatId)
+    ];
+}
+
 function normalizeIdentityValue(value) {
     return String(value || '')
         .trim()
@@ -94,25 +112,11 @@ async function appendRegistrationRow(chatId, user) {
     // K: Категорія
     // L: ГЗН
     // M: Чат ID
-    const values = [
-        user.username || '',
-        user.name || '',
-        user.phone || '',
-        user.birth || '',
-        user.status || '',
-        user.childrenCount || '',
-        user.health || '',
-        user.evacuationStatus || '',
-        user.shellingImpact || '',
-        user.employment || '',
-        user.beneficiaryCategory || '',
-        user.gzn || '',
-        String(chatId)
-    ];
+    const values = buildRegistrationValues(chatId, user);
 
     console.log(`appendRegistrationRow -> writing to ${config.PERSONAL_DATA_SHEET_NAME}:`, values);
 
-    const maxTries = 3;
+    const maxTries = 2;
     let lastErr = null;
 
     for (let attempt = 1; attempt <= maxTries; attempt++) {
@@ -123,7 +127,8 @@ async function appendRegistrationRow(chatId, user) {
         }
 
         try {
-            console.log(`\n📝 Спроба ${attempt}/${maxTries}: Читання листа "${config.PERSONAL_DATA_SHEET_NAME}"...`);
+            const sheetName = config.PERSONAL_DATA_SHEET_NAME || '';
+            console.log(`\n📝 Спроба ${attempt}/${maxTries}: Читання листа "${sheetName}"...`);
             const sheetTitles = await withCache('personal-data', `titles:${config.PERSONAL_DATA_SPREADSHEET_ID}`, 60000, async () => {
                 const metaResp = await state.sheetsClient.spreadsheets.get({
                     spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID
@@ -131,13 +136,13 @@ async function appendRegistrationRow(chatId, user) {
                 return (metaResp.data.sheets || []).map((sheet) => sheet.properties && sheet.properties.title ? sheet.properties.title : '');
             });
             console.log(`📋 Доступні листи: ${sheetTitles.join(', ') || '(немає)'}`);
-            if (!sheetTitles.includes(config.PERSONAL_DATA_SHEET_NAME)) {
-                throw new Error(`Лист "${config.PERSONAL_DATA_SHEET_NAME}" не знайдено. Доступні листи: ${sheetTitles.join(', ') || '(немає)'}`);
+            if (sheetName && !sheetTitles.includes(sheetName)) {
+                throw new Error(`Лист "${sheetName}" не знайдено. Доступні листи: ${sheetTitles.join(', ') || '(немає)'}`);
             }
-            const rows = await withCache('personal-data', `rows:${config.PERSONAL_DATA_SPREADSHEET_ID}:${config.PERSONAL_DATA_SHEET_NAME}:A:M`, 10000, async () => {
+            const rows = await withCache('personal-data', `rows:${config.PERSONAL_DATA_SPREADSHEET_ID}:${sheetName || 'default'}:A:M`, 10000, async () => {
                 const existingResp = await state.sheetsClient.spreadsheets.values.get({
                     spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                    range: `${config.PERSONAL_DATA_SHEET_NAME}!A:M`
+                    range: sheetName ? `${sheetName}!A:M` : 'A:M'
                 });
                 return existingResp.data.values || [];
             });
@@ -149,15 +154,16 @@ async function appendRegistrationRow(chatId, user) {
             const valuesToWrite = mergeWithExistingRow(rowSnapshot, values);
             console.log(`📝 ${existingRowNumber ? 'Оновлення' : 'Запис'} рядка ${targetRow}`);
 
+            const range = sheetName ? `${sheetName}!A${targetRow}:M${targetRow}` : `A${targetRow}:M${targetRow}`;
             await state.sheetsClient.spreadsheets.values.update({
                 spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
-                range: `${config.PERSONAL_DATA_SHEET_NAME}!A${targetRow}:M${targetRow}`,
+                range,
                 valueInputOption: 'RAW',
                 requestBody: { values: [valuesToWrite] }
             });
             invalidateCache('personal-data');
             invalidateCache('schedule');
-            console.log(`✅ Записано в таблицю ${config.PERSONAL_DATA_SHEET_NAME} (рядок ${targetRow}) ✅\n`);
+            console.log(`✅ Записано в таблицю ${sheetName || 'sheet'} (рядок ${targetRow}) ✅\n`);
             return;
         } catch (e) {
             lastErr = e;
@@ -280,7 +286,6 @@ function parsePersonalDataRow(row) {
 async function findUserByChatId(chatId) {
     if (!state.sheetsClient || !config.PERSONAL_DATA_SPREADSHEET_ID) return null;
 
-    // Use cache to avoid repeated reads for the same chatId
     const cacheKey = `findUserByChatId:${chatId}`;
     return await withCache('personal-data', cacheKey, 60000, async () => {
         const ranges = [];
@@ -325,22 +330,24 @@ async function findUserByChatId(chatId) {
 }
 
 async function resolveKnownUser(chatId, knownUsers, lookupUser) {
-    // Check memory cache first
-    if (knownUsers && knownUsers[chatId]) {
-        return knownUsers[chatId];
+    if (!chatId) return null;
+
+    const cached = knownUsers && knownUsers[chatId];
+    if (cached) {
+        return cached;
     }
-    
-    // Fetch from Sheets, which now has its own cache
+
     const fetched = await lookupUser(chatId);
     if (fetched && knownUsers) {
         knownUsers[chatId] = fetched;
     }
-    
+
     return fetched;
 }
 
 module.exports = {
     appendRegistrationRow,
+    buildRegistrationValues,
     findUserByChatId,
     resolveKnownUser,
     parsePersonalDataRow,

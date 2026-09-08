@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "bootstrap.js",
   "scripts": {
-    "start": "node bootstrap.js"
+    "start": "node bootstrap.js",
+    "test": "node --test"
   },
   "dependencies": {
     "dotenv": "^17.3.1",

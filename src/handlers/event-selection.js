@@ -2,7 +2,8 @@ const state = require('../state');
 const { getAllEvents } = require('../events/store');
 const { findEventByButtonText } = require('../events/parser');
 const { registerAndSyncToSheets, getSeatsLeft } = require('../sheets/registration');
-const { findUserByChatId } = require('../sheets/personal-data');
+const { appendEventRegistration } = require('../sheets/registration');
+const { findUserByChatId, resolveKnownUser } = require('../sheets/personal-data');
 const { appendEventReservation, incrementSheetRegistration, isRegistrantAlreadyInEventNote } = require('../sheets/schedule');
 const { formatEventDate, formatShortDate, formatTime } = require('../utils/date');
 const { pluralizeEvents } = require('../utils/text');
@@ -164,14 +165,7 @@ async function handleRegister(bot, chatId, user) {
     if (!eventId || !eventName) return;
 
     // Спочатку перевіряємо, чи користувач вже зареєстрований
-    let userFound = state.knownUsers && state.knownUsers[chatId];
-    
-    if (!userFound) {
-        userFound = await findUserByChatId(chatId);
-        if (userFound) {
-            state.knownUsers[chatId] = userFound;
-        }
-    }
+    const userFound = await resolveKnownUser(chatId, state.knownUsers, findUserByChatId);
 
     // Якщо користувач знайдений у базі, зберігаємо його дані
     if (userFound) {

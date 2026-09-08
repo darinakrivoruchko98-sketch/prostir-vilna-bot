@@ -1,4 +1,4 @@
-process.env.TZ = process.env.TZ || 'Europe/Kyiv';
+ process.env.TZ = process.env.TZ || 'Europe/Kyiv';
 
 const config = require('./src/config');
 require('dotenv').config();
@@ -35,8 +35,9 @@ globalThis.APPEALS_GROUP_ID = APPEALS_GROUP_ID;
 const AI_API_KEY = process.env.AI_API_KEY || process.env.OPENAI_API_KEY || '';
 const AI_API_URL = process.env.AI_API_URL || 'https://api.openai.com/v1/chat/completions';
 const AI_MODEL = process.env.AI_MODEL || 'gpt-4o-mini';
-const AI_HTTP_TIMEOUT_MS = Number(process.env.AI_HTTP_TIMEOUT_MS || 12000);
+const AI_HTTP_TIMEOUT_MS = Number(process.env.AI_HTTP_TIMEOUT_MS || 3500);
 const AI_ENABLED = Boolean(AI_API_KEY);
+const BUILD_MARKER = process.env.BUILD_MARKER || 'appeals-fix-2026-07-23-01';
 const BROADCAST_OWNER_CHAT_ID = Number(String(process.env.BROADCAST_OWNER_CHAT_ID || process.env.DARYNA_CHAT_ID || config.DARYNA_CHAT_ID || '375328037').trim());
 const BROADCAST_ALL_TRIGGER_REGEX = /❗️?|‼️/;
 const BROADCAST_TARGETED_TRIGGER_REGEX = /❕/;
@@ -61,7 +62,8 @@ const REMINDER_24H_HOURS_MAX = 24;
 const REMINDER_1H_MINUTES_MIN = 1;
 const REMINDER_1H_MINUTES_MAX = 60;
 const PENDING_REGISTRATION_REMINDER_TIMEOUT_MS = 5 * 60 * 1000;
-const REGISTRATION_NOTIFICATION_COOLDOWN_MS = Number(process.env.REGISTRATION_NOTIFICATION_COOLDOWN_MS || 30000);
+const EXIT_ON_POLLING_CONFLICT = String(process.env.EXIT_ON_POLLING_CONFLICT || '').trim().toLowerCase() === 'true';
+const POLLING_CONFLICT_RETRY_MS = Number(process.env.POLLING_CONFLICT_RETRY_MS || 15000);
 // Таблиця для розкладу та реєстрацій на заходи
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || config.SPREADSHEET_ID;
 const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || config.SCHEDULE_SHEET_NAME;
@@ -96,7 +98,7 @@ console.log("🗂️ Аркуш консультацій (Соц):", SOCIAL_CONS
 console.log("🗂️ Аркуш консультацій (Псих):", PSYCHOLOGICAL_CONSULTATIONS_SHEET_NAME);
 console.log("🕐 Часова зона бота:", APP_TIME_ZONE);
 console.log(`🧠 AI режим: ${AI_ENABLED ? `увімкнено (${AI_MODEL})` : 'вимкнено (не задано AI_API_KEY)'}`);
-console.log(`[BOOTCHECK] APPEALS_GROUP_ID=${APPEALS_GROUP_ID}`);
+console.log(`🏷️ Build marker: ${BUILD_MARKER}`);
 
 if (!TOKEN) {
     console.error("TOKEN не встановлено");
@@ -124,6 +126,7 @@ bot.sendMessage = function (...args) {
     return originalSendMessage(...args);
 };
 let stoppingBecauseOfPollingConflict = false;
+let pollingConflictRecoveryTimer = null;
 
 async function configureBotCommandMenus() {
     try {
@@ -164,20 +167,39 @@ bot.on('polling_error', async (error) => {
     // Конфлікт - інший інстанс працює
     if (isConflict) {
         console.error('❌ ETELEGRAM 409 Conflict: знайдено інший активний інстанс бота з тим самим токеном.');
+        console.error('ℹ️ Перевірте, що запущений лише один процес бота (Railway service/локальний nohup/PM2).');
+        console.error('ℹ️ Якщо був перехід з webhook на polling, видаліть webhook командою deleteWebhook перед стартом polling.');
 
-        if (stoppingBecauseOfPollingConflict) {
+        if (stoppingBecauseOfPollingConflict || pollingConflictRecoveryTimer) {
             return;
         }
 
         stoppingBecauseOfPollingConflict = true;
         try {
             await bot.stopPolling();
-            console.error('🛑 Поточний інстанс зупинено, щоб уникнути дублювання/хаотичних кроків.');
+            console.error('🛑 Polling тимчасово зупинено через конфлікт.');
         } catch (stopErr) {
             console.error('⚠️ Не вдалося коректно зупинити polling:', stopErr);
         }
 
-        process.exit(1);
+        if (EXIT_ON_POLLING_CONFLICT) {
+            console.error('⛔ EXIT_ON_POLLING_CONFLICT=true, завершуємо процес.');
+            process.exit(1);
+            return;
+        }
+
+        console.warn(`↻ Повторна спроба запуску polling через ${POLLING_CONFLICT_RETRY_MS} мс...`);
+        pollingConflictRecoveryTimer = setTimeout(async () => {
+            try {
+                await bot.startPolling();
+                console.log('✅ Polling успішно відновлено після 409 Conflict.');
+            } catch (startErr) {
+                console.error('❌ Не вдалося відновити polling після 409 Conflict:', startErr && startErr.message ? startErr.message : startErr);
+            } finally {
+                stoppingBecauseOfPollingConflict = false;
+                pollingConflictRecoveryTimer = null;
+            }
+        }, Math.max(1000, POLLING_CONFLICT_RETRY_MS));
         return;
     }
 
@@ -222,6 +244,18 @@ async function performUndoForChat(chatId, fallbackEventId = '') {
     const entry = recentActions.get(String(chatId));
     const a = entry && entry.action ? entry.action : null;
     try {
+        const explicitEventId = String(fallbackEventId || '').trim();
+        if (explicitEventId) {
+            let res = await unregisterFromEvent(chatId, explicitEventId);
+            if (!res || res.status !== 'ok') {
+                res = await unregisterFromReserve(chatId, explicitEventId);
+            }
+            if (res && res.status === 'ok') {
+                recentActions.delete(String(chatId));
+                return { ok: true };
+            }
+        }
+
         if (a && a.type === 'register') {
             const evId = a.eventId;
             const res = await unregisterFromEvent(chatId, evId);
@@ -241,28 +275,6 @@ async function performUndoForChat(chatId, fallbackEventId = '') {
             return { ok: false, reason: 'unreserve-failed' };
         }
 
-        const explicitEventId = String(fallbackEventId || '').trim();
-        if (explicitEventId) {
-            const hasRegistration = Array.isArray(userEventRegistrations[chatId])
-                && userEventRegistrations[chatId].some((item) => String(item && item.eventId || '') === explicitEventId);
-            if (hasRegistration) {
-                const res = await unregisterFromEvent(chatId, explicitEventId);
-                if (res && res.status === 'ok') {
-                    recentActions.delete(String(chatId));
-                    return { ok: true };
-                }
-            }
-
-            const hasReserve = Array.isArray(userEventReserveRegistrations[chatId])
-                && userEventReserveRegistrations[chatId].some((item) => String(item && item.eventId || '') === explicitEventId);
-            if (hasReserve) {
-                const res = await unregisterFromReserve(chatId, explicitEventId);
-                if (res && res.status === 'ok') {
-                    recentActions.delete(String(chatId));
-                    return { ok: true };
-                }
-            }
-        }
     } catch (err) {
         logger.error('Undo action failed', err && err.message ? err.message : err);
         return { ok: false, reason: 'error' };
@@ -273,18 +285,17 @@ async function performUndoForChat(chatId, fallbackEventId = '') {
 bot.on('callback_query', async (callbackQuery) => {
     try {
         const data = String(callbackQuery.data || '');
+        if (!data.startsWith('UNDO_REGISTER:')) {
+            return;
+        }
         const chatId = callbackQuery.from && callbackQuery.from.id;
-        if (data.startsWith('UNDO_REGISTER:')) {
-            const eventId = data.split(':')[1];
-            await bot.answerCallbackQuery(callbackQuery.id, { text: 'Виконується відміна...' });
-            const undoRes = await performUndoForChat(chatId, eventId);
-            if (undoRes.ok) {
-                await bot.sendMessage(chatId, '✅ Реєстрацію скасовано.');
-            } else {
-                await bot.sendMessage(chatId, '❌ Не вдалося скасувати реєстрацію.');
-            }
+        const eventId = data.slice('UNDO_REGISTER:'.length).trim();
+        await bot.answerCallbackQuery(callbackQuery.id, { text: 'Виконується відміна...' });
+        const undoRes = await performUndoForChat(chatId, eventId);
+        if (undoRes.ok) {
+            await bot.sendMessage(chatId, '✅ Реєстрацію скасовано.');
         } else {
-            await bot.answerCallbackQuery(callbackQuery.id, { text: 'Невідома дія' });
+            await bot.sendMessage(chatId, '❌ Не вдалося скасувати реєстрацію.');
         }
     } catch (err) {
         logger.error('callback_query handler error', err && err.message ? err.message : err);
@@ -317,6 +328,10 @@ app.get('/health', (req, res) => {
     });
 });
 
+const effectiveAppealsGroupId = typeof APPEALS_GROUP_ID !== 'undefined'
+    ? APPEALS_GROUP_ID
+    : Number(process.env.APPEALS_GROUP_ID || config.APPEALS_GROUP_ID || '-1003802751255');
+
 // Запускаємо Express сервер ПЕРШИМ
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Сервер запущено на порті ${PORT}`);
@@ -325,7 +340,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n📋 КОНФІГУРАЦІЯ ГРУП:`);
     console.log(`   GROUP_ID: ${GROUP_ID}`);
     console.log(`   CHAT_ID: ${CHAT_ID}`);
-    console.log(`   APPEALS_GROUP_ID: ${APPEALS_GROUP_ID} (type: ${typeof APPEALS_GROUP_ID})`);
+    console.log(`   APPEALS_GROUP_ID: ${effectiveAppealsGroupId} (type: ${typeof effectiveAppealsGroupId})`);
 });
 
 // Логування налаштованих груп для налагодження
@@ -349,8 +364,8 @@ if (typeof CHAT_ID !== 'undefined') {
     console.log("⚠️ CHAT_ID змінна не визначена (можна додати у .env або через export)");
 }
 
-if (APPEALS_GROUP_ID) {
-    console.log(`📬 APPEALS_GROUP_ID встановлено: ${APPEALS_GROUP_ID} (група "Відгуки")`);
+if (effectiveAppealsGroupId) {
+    console.log(`📬 APPEALS_GROUP_ID встановлено: ${effectiveAppealsGroupId} (група "Відгуки")`);
 } else {
     console.log("⚠️ APPEALS_GROUP_ID не встановлено");
 }
@@ -617,6 +632,7 @@ function mergeReminderDuplicates(registrations, isFriend = false) {
 
     for (const raw of registrations) {
         if (!raw) continue;
+
         const eventId = String(raw.eventId || '').trim();
         const registrantName = String(raw.registrantName || '').trim();
         const registrantPhone = String(raw.registrantPhone || '').trim();
@@ -663,7 +679,6 @@ function mergeReminderDuplicates(registrations, isFriend = false) {
 
     return Array.from(merged.values());
 }
-
 function resolveCurrentEventForReminderRegistration(registration, eventsById, fallbackEvents) {
     if (!registration) {
         return null;
@@ -987,6 +1002,28 @@ function rebuildFeedbackCandidatesFromActiveRegistrations() {
     }
 }
 
+function backfillFeedbackCandidatesForDate(dateKey) {
+    const normalizedDateKey = String(dateKey || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDateKey)) {
+        return;
+    }
+
+    for (const [chatId, registrations] of Object.entries(userEventRegistrations || {})) {
+        for (const registration of registrations || []) {
+            if (!registration || !registration.eventDate || !registration.eventName) {
+                continue;
+            }
+
+            const registrationDateKey = formatDateKeyInAppTimeZone(registration.eventDate);
+            if (registrationDateKey !== normalizedDateKey) {
+                continue;
+            }
+
+            recordFeedbackCandidate(chatId, registration.eventDate, registration.eventName);
+        }
+    }
+}
+
 function getCurrentTimePartsInAppTimeZone(dateInput = new Date()) {
     const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
     const parts = new Intl.DateTimeFormat('en-GB', {
@@ -1012,7 +1049,10 @@ function loadReminderStateFromDisk() {
         const meta = parsed && typeof parsed === 'object' ? parsed[REMINDERS_STATE_META_KEY] : null;
         const restored = {};
         const restoredFriendRegistrations = {};
+        const restoredReserves = {};
+        const restoredFriendReserves = {};
         const now = new Date();
+        const todayKey = formatDateKeyInAppTimeZone(now);
 
         if (meta && typeof meta === 'object') {
             dailyFeedbackCandidatesByDate = meta.dailyFeedbackCandidatesByDate || {};
@@ -1035,12 +1075,40 @@ function loadReminderStateFromDisk() {
             const rawFriendRegistrations = Array.isArray(entry && entry.friendRegistrations)
                 ? entry.friendRegistrations
                 : [];
+            const rawReserves = Array.isArray(entry && entry.reserves)
+                ? entry.reserves
+                : [];
+            const rawFriendReserves = Array.isArray(entry && entry.friendReserves)
+                ? entry.friendReserves
+                : [];
             const normalized = rawRegistrations
                 .map(normalizeReminderRegistration)
-                .filter((item) => item && item.eventDate > now);
+                .filter((item) => {
+                    if (!item || !item.eventDate) {
+                        return false;
+                    }
+                    if (item.eventDate > now) {
+                        return true;
+                    }
+                    return formatDateKeyInAppTimeZone(item.eventDate) === todayKey;
+                });
             const normalizedFriendRegistrations = rawFriendRegistrations
                 .map(normalizeFriendRegistration)
-                .filter((item) => item && item.eventDate > now);
+                .filter((item) => {
+                    if (!item || !item.eventDate) {
+                        return false;
+                    }
+                    if (item.eventDate > now) {
+                        return true;
+                    }
+                    return formatDateKeyInAppTimeZone(item.eventDate) === todayKey;
+                });
+            const normalizedReserves = rawReserves
+                .map(normalizeReminderRegistration)
+                .filter((item) => item && item.eventDate && (item.eventDate > now || formatDateKeyInAppTimeZone(item.eventDate) === todayKey));
+            const normalizedFriendReserves = rawFriendReserves
+                .map(normalizeFriendRegistration)
+                .filter((item) => item && item.eventDate && (item.eventDate > now || formatDateKeyInAppTimeZone(item.eventDate) === todayKey));
 
             if (!users[chatId]) {
                 users[chatId] = { step: 0 };
@@ -1061,15 +1129,23 @@ function loadReminderStateFromDisk() {
             if (normalizedFriendRegistrations.length > 0) {
                 restoredFriendRegistrations[String(chatId)] = normalizedFriendRegistrations;
             }
+            if (normalizedReserves.length > 0) {
+                restoredReserves[String(chatId)] = normalizedReserves;
+            }
+            if (normalizedFriendReserves.length > 0) {
+                restoredFriendReserves[String(chatId)] = normalizedFriendReserves;
+            }
         }
 
         userEventRegistrations = restored;
         friendEventRegistrations = restoredFriendRegistrations;
+        userEventReserveRegistrations = restoredReserves;
+        friendEventReserveRegistrations = restoredFriendReserves;
         rebuildFeedbackCandidatesFromActiveRegistrations();
         schedulePendingManualNoteConfirmations();
         const restoredCount = Object.values(userEventRegistrations).reduce((sum, items) => sum + items.length, 0);
         const restoredFriendCount = Object.values(friendEventRegistrations).reduce((sum, items) => sum + items.length, 0);
-        console.log(`♻️ Відновлено ${restoredCount} реєстрацій нагадувань та ${restoredFriendCount} реєстрацій подруг з ${REMINDERS_STATE_PATH}`);
+        console.log(`♻️ Відновлено ${restoredCount} реєстрацій, ${restoredFriendCount} реєстрацій подруг і резерви з ${REMINDERS_STATE_PATH}`);
     } catch (error) {
         console.error(`❌ Не вдалося відновити стан нагадувань (${REMINDERS_STATE_PATH}):`, error && error.message ? error.message : error);
     }
@@ -1123,7 +1199,14 @@ async function showReminderSettingsMenu(chatId, noticeText = '') {
 async function showUserRemindersOverview(chatId, user) {
     await restoreUserRegistrationsFromSheet(chatId, user);
     const reminderSettings = getReminderSettingsForChat(chatId);
-    const userRegistrations = userEventRegistrations[chatId] || [];
+    const now = new Date();
+    const userRegistrations = (userEventRegistrations[chatId] || []).filter((registration) => {
+        if (!registration || !registration.eventDate) return false;
+        const eventDate = registration.eventDate instanceof Date
+            ? registration.eventDate
+            : new Date(registration.eventDate);
+        return !Number.isNaN(eventDate.getTime()) && eventDate > now;
+    });
 
     if (userRegistrations.length === 0) {
         await bot.sendMessage(chatId,
@@ -1144,23 +1227,28 @@ async function showUserRemindersOverview(chatId, user) {
         return;
     }
 
-    const sortedEvents = [...userRegistrations].sort((a, b) => a.eventDate - b.eventDate);
+    const sortedEvents = [...userRegistrations].sort((a, b) => {
+        const leftDate = a.eventDate instanceof Date ? a.eventDate : new Date(a.eventDate);
+        const rightDate = b.eventDate instanceof Date ? b.eventDate : new Date(b.eventDate);
+        return leftDate - rightDate;
+    });
     let message = "📅 <b>Ваші майбутні заходи:</b>\n\n";
 
     sortedEvents.forEach((reg, index) => {
-        const dateStr = reg.eventDate.toLocaleDateString('uk-UA', {
+        const eventDate = reg.eventDate instanceof Date ? reg.eventDate : new Date(reg.eventDate);
+        const dateStr = eventDate.toLocaleDateString('uk-UA', {
             weekday: 'long',
             day: 'numeric',
             month: 'long',
             timeZone: APP_TIME_ZONE
         });
-        const timeStr = reg.eventDate.toLocaleTimeString('uk-UA', {
+        const timeStr = eventDate.toLocaleTimeString('uk-UA', {
             hour: '2-digit',
             minute: '2-digit',
             timeZone: APP_TIME_ZONE
         });
 
-        const timeUntilEvent = reg.eventDate - new Date();
+        const timeUntilEvent = eventDate - now;
         const hoursUntilEvent = Math.floor(timeUntilEvent / (1000 * 60 * 60));
         const daysUntilEvent = Math.floor(hoursUntilEvent / 24);
 
@@ -1239,6 +1327,8 @@ function saveReminderStateToDisk() {
         const chatIds = new Set([
             ...Object.keys(userEventRegistrations || {}),
             ...Object.keys(friendEventRegistrations || {}),
+            ...Object.keys(userEventReserveRegistrations || {}),
+            ...Object.keys(friendEventReserveRegistrations || {}),
             ...Object.keys(users || {})
         ]);
 
@@ -1248,6 +1338,12 @@ function saveReminderStateToDisk() {
                 : [];
             const friendRegistrations = Array.isArray(friendEventRegistrations[chatId])
                 ? friendEventRegistrations[chatId]
+                : [];
+            const reserves = Array.isArray(userEventReserveRegistrations[chatId])
+                ? userEventReserveRegistrations[chatId]
+                : [];
+            const friendReserves = Array.isArray(friendEventReserveRegistrations[chatId])
+                ? friendEventReserveRegistrations[chatId]
                 : [];
             const serializedRegistrations = registrations
                 .map((registration) => {
@@ -1311,19 +1407,49 @@ function saveReminderStateToDisk() {
                     };
                 })
                 .filter(Boolean);
+            const serializeReserve = (registration) => {
+                if (!registration || !registration.eventDate) return null;
+                const date = registration.eventDate instanceof Date ? registration.eventDate : new Date(registration.eventDate);
+                if (Number.isNaN(date.getTime())) return null;
+                return {
+                    eventId: String(registration.eventId || ''),
+                    eventName: String(registration.eventName || ''),
+                    eventDate: date.toISOString(),
+                    registrantName: String(registration.registrantName || ''),
+                    registrantPhone: String(registration.registrantPhone || '')
+                };
+            };
+            const serializeFriendReserve = (registration) => {
+                const serialized = serializeReserve(registration);
+                if (!serialized) return null;
+                return {
+                    ...serialized,
+                    registrationKey: String(registration.registrationKey || buildFriendRegistrationKey(
+                        registration.eventId,
+                        registration.registrantName,
+                        registration.registrantPhone
+                    ))
+                };
+            };
+            const serializedReserves = reserves.map(serializeReserve).filter(Boolean);
+            const serializedFriendReserves = friendReserves.map(serializeFriendReserve).filter(Boolean);
 
             const userSettings = users[chatId]
                 ? normalizeReminderSettings(users[chatId])
                 : createDefaultReminderSettings();
             const shouldPersistSettings = users[chatId] && hasCustomReminderSettings(userSettings);
 
-            if (serializedRegistrations.length === 0 && serializedFriendRegistrations.length === 0 && !shouldPersistSettings) {
+            if (serializedRegistrations.length === 0 && serializedFriendRegistrations.length === 0
+                && serializedReserves.length === 0 && serializedFriendReserves.length === 0
+                && !shouldPersistSettings) {
                 continue;
             }
 
             payload[chatId] = {
                 registrations: serializedRegistrations,
                 friendRegistrations: serializedFriendRegistrations,
+                reserves: serializedReserves,
+                friendReserves: serializedFriendReserves,
                 settings: serializeReminderSettings(userSettings)
             };
         }
@@ -1363,7 +1489,7 @@ function normalizeText(text) {
 
 function normalizeCommandText(text) {
     return normalizeText(String(text || ''))
-        .replace(/[^ -\p{L}\p{N}'\s]/gu, ' ')
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
         .toLowerCase()
         .replace(/\s+/g, ' ')
         .trim();
@@ -2114,6 +2240,7 @@ function scheduleManualNoteConfirmation(chatId, registration, delayMs = MANUAL_N
             await sendManualRegistrationConfirmation(chatKey, target);
             target.manualRegistrationConfirmed = true;
             saveReminderStateToDisk();
+            console.log(`✅ Надіслано підтвердження ручної реєстрації з нотатки для ${chatKey} (${target.eventName})`);
         } catch (error) {
             console.error(`❌ Не вдалося надіслати підтвердження ручної реєстрації для ${chatKey}:`, error && error.message ? error.message : error);
         }
@@ -2156,6 +2283,8 @@ async function syncManualRegistrationsFromScheduleNotes() {
 
     const now = new Date();
     let hasReminderChanges = false;
+    let addedRegistrations = 0;
+    let queuedConfirmations = 0;
     const resolveCache = new Map();
 
     for (const event of getAllEvents()) {
@@ -2164,7 +2293,11 @@ async function syncManualRegistrationsFromScheduleNotes() {
         }
 
         const eventKey = getEventIdentityKey(event);
-        const noteText = eventKey ? noteIndex.get(eventKey) : '';
+        if (!eventKey) {
+            continue;
+        }
+
+        const noteText = noteIndex.get(eventKey);
         if (!noteText) {
             continue;
         }
@@ -2191,6 +2324,7 @@ async function syncManualRegistrationsFromScheduleNotes() {
                 continue;
             }
 
+            const detectedAtIso = new Date().toISOString();
             const registration = {
                 eventId: event.id,
                 eventName: event.name,
@@ -2200,14 +2334,18 @@ async function syncManualRegistrationsFromScheduleNotes() {
                 reminded24h: false,
                 reminded1h: false,
                 manualRegistrationSource: 'sheet-note',
-                manualRegistrationDetectedAt: new Date().toISOString(),
+                manualRegistrationDetectedAt: detectedAtIso,
                 manualRegistrationConfirmed: false
             };
 
             userEventRegistrations[recipientChatId].push(registration);
             recordFeedbackCandidate(recipientChatId, event.date, event.name);
             hasReminderChanges = true;
-            scheduleManualNoteConfirmation(recipientChatId, registration, MANUAL_NOTE_CONFIRMATION_DELAY_MS);
+            addedRegistrations += 1;
+
+            if (scheduleManualNoteConfirmation(recipientChatId, registration, MANUAL_NOTE_CONFIRMATION_DELAY_MS)) {
+                queuedConfirmations += 1;
+            }
         }
     }
 
@@ -2216,6 +2354,10 @@ async function syncManualRegistrationsFromScheduleNotes() {
     }
 
     schedulePendingManualNoteConfirmations();
+
+    if (addedRegistrations > 0 || queuedConfirmations > 0) {
+        console.log(`ℹ️ Синхронізація нотаток: додано ${addedRegistrations} реєстрацій, заплановано ${queuedConfirmations} підтверджень`);
+    }
 }
 
 async function notifyRegistrantAboutRegistration(registrarChatId, event, registrantProfile, options = {}) {
@@ -2346,7 +2488,6 @@ async function notifyUsersAboutEditedEvents(editedEvents) {
         }
     }
 }
-
 function formatCancelledEventDateTime(eventDate) {
     return {
         date: eventDate.toLocaleDateString('uk-UA', {
@@ -2678,10 +2819,7 @@ async function checkAndSendDailyFeedbackRequests() {
     }
 
     const dateKey = formatDateKeyInAppTimeZone(now);
-    if (!dailyFeedbackCandidatesByDate[dateKey]) {
-        rebuildFeedbackCandidatesFromActiveRegistrations();
-    }
-
+    backfillFeedbackCandidatesForDate(dateKey);
     const todayCandidates = dailyFeedbackCandidatesByDate[dateKey] || {};
     const chatIds = Object.keys(todayCandidates);
     if (chatIds.length === 0) {
@@ -2716,11 +2854,11 @@ async function checkAndSendDailyFeedbackRequests() {
         console.log(`📝 Надіслано ${sentCount} запитів на відгук за ${dateKey}`);
     }
 }
-
 // Фільтрує заходи за номером дня (0-6)
 function getEventsForDay(dayNum) {
     const allEvents = getAllEvents();
-    const dayEvents = allEvents.filter(e => e.date.getDay() === dayNum);
+    const now = new Date();
+    const dayEvents = allEvents.filter(e => e && e.date instanceof Date && e.date > now && e.date.getDay() === dayNum);
     console.log(`📊 getEventsForDay(${dayNum}): знайдено ${dayEvents.length} заходів з ${allEvents.length}`);
     if (dayEvents.length > 0) {
         dayEvents.forEach(e => console.log(`   - ${e.name} на ${e.date}`));
@@ -2911,9 +3049,12 @@ function parseAfishaDaySelection(value) {
 function buildAfishaDaysKeyboardData() {
     const seenDates = new Set();
     const uniqueDates = [];
+    const now = new Date();
+    const { afterNextWeekStart } = getAfishaTwoWeekBounds(now);
 
     for (const eventItem of getAllEvents()) {
-        if (!eventItem || !(eventItem.date instanceof Date) || Number.isNaN(eventItem.date.getTime())) {
+        if (!eventItem || !(eventItem.date instanceof Date) || Number.isNaN(eventItem.date.getTime())
+            || eventItem.date <= now || eventItem.date >= afterNextWeekStart) {
             continue;
         }
         const eventDateOnly = new Date(eventItem.date);
@@ -3011,7 +3152,7 @@ async function showDayAgenda(chatId, dayName) {
         const nextDay = new Date(specificDate);
         nextDay.setDate(nextDay.getDate() + 1);
         dayEventsForDisplay = getAllEvents()
-            .filter((e) => e.date >= specificDate && e.date < nextDay)
+            .filter((e) => e.date > new Date() && e.date >= specificDate && e.date < nextDay)
             .sort((a, b) => a.date - b.date);
         dateHeaderLabel = formatSheetDate(specificDate);
     } else {
@@ -3312,7 +3453,24 @@ function parseEventFromRow(row, currentDateContext) {
     };
 }
 
-async function incrementSheetRegistration(event, fallbackRegistrant) {
+const registrationLocks = new Map();
+
+async function withRegistrationLock(eventId, operation) {
+    const key = String(eventId || '');
+    const previous = registrationLocks.get(key) || Promise.resolve();
+    let release;
+    const current = new Promise((resolve) => { release = resolve; });
+    registrationLocks.set(key, current);
+    await previous;
+    try {
+        return await operation();
+    } finally {
+        release();
+        if (registrationLocks.get(key) === current) registrationLocks.delete(key);
+    }
+}
+
+async function incrementSheetRegistrationUnlocked(event, fallbackRegistrant) {
     if (!event || !sheetsClient || !SPREADSHEET_ID) {
         return;
     }
@@ -3323,18 +3481,19 @@ async function incrementSheetRegistration(event, fallbackRegistrant) {
         return;
     }
 
+    const registrationsCount = Number.isFinite(event.registrations) ? event.registrations : 0;
+    const totalSeats = Number.isFinite(event.seats) ? Math.max(0, event.seats) : 0;
+    const remainingSeats = Math.max(0, totalSeats - registrationsCount);
+    let previousValues = ['', ''];
+    let previousNote = '';
+
     try {
-        const currentResp = await sheetsClient.spreadsheets.values.get({
+        const previousResponse = await sheetsClient.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID,
             range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`
         });
-        const currentRow = (currentResp.data.values || [])[0] || [];
-        const currentRemaining = parseInt(currentRow[0] || '0', 10);
-        const currentRegistrations = parseInt(currentRow[1] || '0', 10);
-        const nextRegistrations = currentRegistrations + 1;
-        const nextRemaining = Math.max(0, currentRemaining - 1);
-        const nextCapacity = nextRemaining + nextRegistrations;
-
+        previousValues = (previousResponse.data.values || [])[0] || previousValues;
+        previousNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex);
         await sheetsClient.spreadsheets.values.update({
             spreadsheetId: SPREADSHEET_ID,
             range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`,
@@ -3343,7 +3502,6 @@ async function incrementSheetRegistration(event, fallbackRegistrant) {
                 values: [[nextRemaining, nextRegistrations]]
             }
         });
-
         await updateScheduleRegistrationNote({
             scheduleSheet: match.scheduleSheet,
             rowIndex: match.rowIndex,
@@ -3359,24 +3517,75 @@ async function incrementSheetRegistration(event, fallbackRegistrant) {
             event.seats = nextCapacity;
         }
     } catch (error) {
-        console.error('❌ Не вдалося оновити місця/реєстрації у розкладі:', error && error.message ? error.message : error);
+        await restoreScheduleRegistrationState(match, previousValues, previousNote);
+        console.error('❌ Не вдалося атомарно оновити реєстрацію у розкладі:', error && error.message ? error.message : error);
+        throw error;
+    }
+}
+
+async function incrementSheetRegistration(event, fallbackRegistrant) {
+    return withRegistrationLock(event && event.id, () => incrementSheetRegistrationUnlocked(event, fallbackRegistrant));
+}
+
+async function decrementSheetRegistrationUnlocked(event, registrantProfile) {
+    if (!event || !sheetsClient || !SPREADSHEET_ID) {
+        return;
+    }
+
+    const match = await findScheduleRowByEvent(event);
+    if (!match) {
+        return;
+    }
+
+    const registrationsCount = Number.isFinite(event.registrations) ? event.registrations : 0;
+    const totalSeats = Number.isFinite(event.seats) ? Math.max(0, event.seats) : 0;
+    const remainingSeats = Math.max(0, totalSeats - registrationsCount);
+    let previousValues = ['', ''];
+    let previousNote = '';
+
+    try {
+        const previousResponse = await sheetsClient.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`
+        });
+        previousValues = (previousResponse.data.values || [])[0] || previousValues;
+        previousNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex);
+        await sheetsClient.spreadsheets.values.update({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`,
+            valueInputOption: 'RAW',
+            requestBody: {
+                values: [[remainingSeats, registrationsCount]]
+            }
+        });
+        await updateScheduleRegistrationNote({
+            scheduleSheet: match.scheduleSheet,
+            rowIndex: match.rowIndex,
+            registrationsCount,
+            removeRegistrant: registrantProfile,
+            eventId: event.id
+        });
+    } catch (error) {
+        await restoreScheduleRegistrationState(match, previousValues, previousNote);
+        console.error('❌ Не вдалося атомарно оновити відписку у розкладі:', error && error.message ? error.message : error);
+        throw error;
     }
 }
 
 async function decrementSheetRegistration(event, registrantProfile) {
-    const result = await scheduleSheetUtils.decrementSheetRegistration(event, registrantProfile);
-    if (result && result.status === 'ok' && Number.isFinite(event.registrations)) {
-        event.registrations = Math.max(0, Number(event.registrations) || 0);
-    }
-    if (result && result.status === 'ok' && Number.isFinite(event.seats)) {
-        event.seats = Math.max(0, Number(event.seats) || 0);
-    }
-    return result;
+    return withRegistrationLock(event && event.id, () => decrementSheetRegistrationUnlocked(event, registrantProfile));
 }
+
+const sheetIdCache = new Map();
 
 async function getSheetIdByTitle(spreadsheetId, sheetTitle) {
     if (!spreadsheetId || !sheetTitle || !sheetsClient) {
         return null;
+    }
+
+    const cacheKey = `${spreadsheetId}:${sheetTitle}`;
+    if (sheetIdCache.has(cacheKey)) {
+        return sheetIdCache.get(cacheKey);
     }
 
     try {
@@ -3385,15 +3594,170 @@ async function getSheetIdByTitle(spreadsheetId, sheetTitle) {
             fields: 'sheets(properties(sheetId,title))'
         });
         const sheet = (metadata.data.sheets || []).find((item) => item && item.properties && item.properties.title === sheetTitle);
-        return sheet && sheet.properties ? sheet.properties.sheetId : null;
+        const sheetId = sheet && sheet.properties ? sheet.properties.sheetId : null;
+        if (sheetId !== null && sheetId !== undefined) {
+            sheetIdCache.set(cacheKey, sheetId);
+        }
+        return sheetId;
     } catch (error) {
         console.error(`❌ Не вдалося отримати sheetId для листа "${sheetTitle}":`, error && error.message ? error.message : error);
         return null;
     }
 }
 
+async function restoreScheduleRegistrationState(match, previousValues, previousNote) {
+    if (!match || !stateHasSheetsClient()) return;
+
+    try {
+        await sheetsClient.spreadsheets.values.update({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`,
+            valueInputOption: 'RAW',
+            requestBody: { values: [[previousValues[0] || '', previousValues[1] || '']] }
+        });
+    } catch (restoreError) {
+        console.error('❌ Не вдалося відновити D/E після часткового запису:', restoreError && restoreError.message ? restoreError.message : restoreError);
+    }
+
+    try {
+        const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, match.scheduleSheet);
+        if (sheetId === null || sheetId === undefined) return;
+        await sheetsClient.spreadsheets.batchUpdate({
+            spreadsheetId: SPREADSHEET_ID,
+            requestBody: {
+                requests: [{
+                    repeatCell: {
+                        range: {
+                            sheetId,
+                            startRowIndex: match.rowIndex,
+                            endRowIndex: match.rowIndex + 1,
+                            startColumnIndex: 4,
+                            endColumnIndex: 5
+                        },
+                        cell: { note: previousNote || '' },
+                        fields: 'note'
+                    }
+                }]
+            }
+        });
+    } catch (restoreError) {
+        console.error('❌ Не вдалося відновити нотатку після часткового запису:', restoreError && restoreError.message ? restoreError.message : restoreError);
+    }
+}
+
+async function restoreScheduleReserveState(match, previousCount, previousNote) {
+    if (!match || !stateHasSheetsClient()) return;
+
+    try {
+        await sheetsClient.spreadsheets.values.update({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `${match.scheduleSheet}!F${match.rowIndex + 1}:F${match.rowIndex + 1}`,
+            valueInputOption: 'RAW',
+            requestBody: { values: [[previousCount || '']] }
+        });
+    } catch (restoreError) {
+        console.error('❌ Не вдалося відновити лічильник резерву:', restoreError && restoreError.message ? restoreError.message : restoreError);
+    }
+
+    try {
+        const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, match.scheduleSheet);
+        if (sheetId === null || sheetId === undefined) return;
+        await sheetsClient.spreadsheets.batchUpdate({
+            spreadsheetId: SPREADSHEET_ID,
+            requestBody: {
+                requests: [{
+                    repeatCell: {
+                        range: {
+                            sheetId,
+                            startRowIndex: match.rowIndex,
+                            endRowIndex: match.rowIndex + 1,
+                            startColumnIndex: 5,
+                            endColumnIndex: 6
+                        },
+                        cell: { note: previousNote || '' },
+                        fields: 'note'
+                    }
+                }]
+            }
+        });
+    } catch (restoreError) {
+        console.error('❌ Не вдалося відновити нотатку резерву:', restoreError && restoreError.message ? restoreError.message : restoreError);
+    }
+}
+
+function stateHasSheetsClient() {
+    return Boolean(sheetsClient && SPREADSHEET_ID);
+}
+
 function parseRegistrantsFromNote(noteText) {
-    return parseRegistrantsFromNoteText(noteText);
+    const text = String(noteText || '').trim();
+    if (!text) return [];
+
+    const registrants = [];
+    const seen = new Set();
+    let currentSection = 'registered';
+    const lines = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    for (const line of lines) {
+        if (/^зареєстровано\s*:/i.test(line)) {
+            currentSection = 'registered';
+            continue;
+        }
+
+        if (/^резерв\s*:/i.test(line)) {
+            currentSection = 'reserve';
+            continue;
+        }
+
+        if (currentSection !== 'registered') {
+            continue;
+        }
+
+        if (/^список\s+порожній$/i.test(line)
+            || /^EVENT_ID\s*:/i.test(line)
+            || /^\d+[.)-]?\s*EVENT_ID\s*:/i.test(line)) {
+            continue;
+        }
+
+        const cleaned = line
+            .replace(/^[-*•]\s*/, '')
+            .replace(/^\d+[.)-]?\s*/, '')
+            .trim();
+
+        if (!cleaned) continue;
+        if (/^EVENT_ID\s*:/i.test(cleaned)) continue;
+
+        let name = '';
+        let phone = '';
+
+        const structuredMatch = cleaned.match(/^(.*?)\s*(?:\||[—-])\s*(.+)$/);
+        if (structuredMatch) {
+            name = String(structuredMatch[1] || '').trim();
+            phone = String(structuredMatch[2] || '').trim();
+        } else {
+            const phoneMatch = cleaned.match(/(\+?\d[\d\s()\-]{6,})$/);
+            if (phoneMatch) {
+                phone = String(phoneMatch[1] || '').trim();
+                name = cleaned.slice(0, cleaned.length - phone.length).replace(/[,:;\-\s]+$/, '').trim();
+            }
+        }
+
+        if (!name && !phone) {
+            continue;
+        }
+
+        const key = `${normalizeRegistrantName(name)}|${normalizeRegistrantPhone(phone)}`;
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        registrants.push({ name, phone });
+    }
+
+    return registrants;
 }
 
 async function findScheduleRowByEventByNoteTag(event) {
@@ -3980,6 +4344,7 @@ async function updateSheetReserveCount(event) {
         });
     } catch (error) {
         console.error('❌ Не вдалося оновити кількість резерву у розкладі:', error && error.message ? error.message : error);
+        throw error;
     }
 }
 
@@ -4111,7 +4476,7 @@ async function isRegistrantAlreadyInEventReserveNote(event, registrantProfile) {
     });
 }
 
-async function addRegistrantToReserve(event, registrantProfile) {
+async function addRegistrantToReserveUnlocked(event, registrantProfile) {
     if (!event || !registrantProfile) {
         return false;
     }
@@ -4126,33 +4491,113 @@ async function addRegistrantToReserve(event, registrantProfile) {
         return false;
     }
 
-    event.reserveCount = Math.max(0, Number(event.reserveCount) || 0) + 1;
-    await updateSheetReserveCount(event);
-    await updateScheduleReserveNote({
-        scheduleSheet: match.scheduleSheet,
-        rowIndex: match.rowIndex,
-        reserveCount: event.reserveCount,
-        addRegistrant: {
-            name: registrantProfile.name,
-            phone: registrantProfile.phone,
-            userId: registrantProfile.userId || registrantProfile.chatId
-        },
-        eventId: event.id
+    const previousReserveCount = Number(event.reserveCount) || 0;
+    const previousReserveResponse = await sheetsClient.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${match.scheduleSheet}!F${match.rowIndex + 1}:F${match.rowIndex + 1}`
     });
+    const previousSheetReserveCount = ((previousReserveResponse.data.values || [])[0] || [])[0] || '';
+    const previousReserveNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex, 'F');
+    event.reserveCount = previousReserveCount + 1;
+    try {
+        await updateSheetReserveCount(event);
+        await updateScheduleReserveNote({
+            scheduleSheet: match.scheduleSheet,
+            rowIndex: match.rowIndex,
+            reserveCount: event.reserveCount,
+            addRegistrant: {
+                name: registrantProfile.name,
+                phone: registrantProfile.phone,
+                userId: registrantProfile.userId || registrantProfile.chatId
+            },
+            eventId: event.id
+        });
+    } catch (error) {
+        event.reserveCount = previousReserveCount;
+        await restoreScheduleReserveState(match, previousSheetReserveCount, previousReserveNote);
+        throw error;
+    }
 
     return true;
 }
 
-async function removeRegistrantFromReserve(event, registrantProfile) {
-    return scheduleSheetUtils.removeRegistrantFromReserve(event, registrantProfile);
+async function removeRegistrantFromReserveUnlocked(event, registrantProfile) {
+    if (!event || !registrantProfile) {
+        return false;
+    }
+
+    const match = await findScheduleRowByEvent(event);
+    if (!match) {
+        return false;
+    }
+
+    const reservists = await getEffectiveReserveRegistrants(match.scheduleSheet, match.rowIndex);
+
+    const targetName = normalizeRegistrantName(registrantProfile.name || '');
+    const targetPhone = normalizeRegistrantPhone(registrantProfile.phone || '');
+    const targetUserId = normalizeRegistrantUserId(registrantProfile.userId || registrantProfile.chatId || '');
+
+    const remaining = reservists.filter((item) => {
+        const sameName = normalizeRegistrantName(item.name) === targetName;
+        const samePhone = normalizeRegistrantPhone(item.phone) === targetPhone;
+        const sameUserId = normalizeRegistrantUserId(item.userId) === targetUserId;
+
+        if (targetName && targetPhone) {
+            return !(sameName && samePhone);
+        }
+        if (targetUserId) {
+            return !sameUserId;
+        }
+        if (targetName) {
+            return !sameName;
+        }
+        if (targetPhone) {
+            return !samePhone;
+        }
+        return true;
+    });
+
+    if (remaining.length === reservists.length) {
+        return false;
+    }
+
+    const previousReserveCount = Number(event.reserveCount) || 0;
+    const previousReserveResponse = await sheetsClient.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: `${match.scheduleSheet}!F${match.rowIndex + 1}:F${match.rowIndex + 1}`
+    });
+    const previousSheetReserveCount = ((previousReserveResponse.data.values || [])[0] || [])[0] || '';
+    const previousReserveNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex, 'F');
+    event.reserveCount = remaining.length;
+    try {
+        await updateSheetReserveCount(event);
+        await updateScheduleReserveNote({
+            scheduleSheet: match.scheduleSheet,
+            rowIndex,
+            reserveCount: event.reserveCount,
+            removeRegistrant: {
+                name: registrantProfile.name,
+                phone: registrantProfile.phone,
+                userId: registrantProfile.userId || registrantProfile.chatId
+            },
+            eventId: event.id
+        });
+    } catch (error) {
+        event.reserveCount = previousReserveCount;
+        await restoreScheduleReserveState(match, previousSheetReserveCount, previousReserveNote);
+        throw error;
+    }
+
+    return true;
 }
 
-async function promoteFirstReserveRegistrantToRegistration(event) {
+async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {
     if (!event || !sheetsClient || !SPREADSHEET_ID) {
         return false;
     }
 
-    const seatsLeft = Math.max(0, (Number(event.seats) || 0) - (Number(event.registrations) || 0));
+    // event.seats stores the number of currently available seats.
+    const seatsLeft = Math.max(0, Number(event.seats) || 0);
     if (seatsLeft <= 0) {
         return false;
     }
@@ -4175,6 +4620,13 @@ async function promoteFirstReserveRegistrantToRegistration(event) {
         return false;
     }
 
+    event.registrations = Math.max(0, Number(event.registrations) || 0) + 1;
+    await incrementSheetRegistrationUnlocked(event, {
+        name: promoted.name,
+        phone: promoted.phone,
+        userId: promoted.userId
+    });
+
     if (Number.isFinite(promotedChatId) && promotedChatId > 0) {
         if (!userEventRegistrations[promotedChatId]) {
             userEventRegistrations[promotedChatId] = [];
@@ -4191,6 +4643,7 @@ async function promoteFirstReserveRegistrantToRegistration(event) {
                 reminded24h: false,
                 reminded1h: false
             });
+            recordFeedbackCandidate(promotedChatId, event.date, event.name);
             saveReminderStateToDisk();
         }
 
@@ -4198,6 +4651,19 @@ async function promoteFirstReserveRegistrantToRegistration(event) {
         userEventReserveRegistrations[promotedChatId] = reserveForUser.filter((entry) => entry.eventId !== event.id);
         if (userEventReserveRegistrations[promotedChatId].length === 0) {
             delete userEventReserveRegistrations[promotedChatId];
+        }
+        saveReminderStateToDisk();
+
+        try {
+            await bot.sendMessage(promotedChatId,
+                `✅ Ви були в резерві на захід "${event.name}".\n\nЗвільнилося місце, вас додано до списку зареєстрованих.`, {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(promotedChatId),
+                    resize_keyboard: true
+                }
+            });
+        } catch (error) {
+            console.error(`❌ Не вдалося надіслати повідомлення про переведення з резерву (chatId=${promotedChatId}):`, error && error.message ? error.message : error);
         }
     }
 
@@ -4215,6 +4681,10 @@ async function promoteReserveRegistrantsForAvailableSeats(event) {
     }
 
     return promotedAny;
+}
+
+async function promoteFirstReserveRegistrantToRegistration(event) {
+    return withRegistrationLock(event && event.id, () => promoteFirstReserveRegistrantToRegistrationUnlocked(event));
 }
 
 async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, existingNote) {
@@ -5761,324 +6231,55 @@ async function loadKnownUserByChatId(chatId, options = {}) {
     return null;
 }
 
-function getPeriodRange(referenceDate = new Date()) {
-    const startOfDay = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
-    const endOfDay = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate(), 23, 59, 59, 999);
-
-    const startOfWeek = new Date(startOfDay);
-    startOfWeek.setDate(startOfDay.getDate() - ((startOfDay.getDay() + 6) % 7));
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(startOfWeek.getDate() + 6);
-    endOfWeek.setHours(23, 59, 59, 999);
-
-    const startOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1);
-    const endOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth() + 1, 0, 23, 59, 59, 999);
-
-    return {
-        day: { start: startOfDay, end: endOfDay },
-        week: { start: startOfWeek, end: endOfWeek },
-        month: { start: startOfMonth, end: endOfMonth }
-    };
-}
-
-function getPeriodLabel(periodName, referenceDate = new Date()) {
-    const dayNames = ['Неділя', 'Понеділок', 'Вівторок', 'Середа', 'Четвер', 'Пʼятниця', 'Субота'];
-    const monthNames = ['січня', 'лютого', 'березня', 'квітня', 'травня', 'червня', 'липня', 'серпня', 'вересня', 'жовтня', 'листопада', 'грудня'];
-
-    if (periodName === 'day') {
-        const dayName = dayNames[referenceDate.getDay()];
-        return `${dayName}, ${referenceDate.getDate()} ${monthNames[referenceDate.getMonth()]} ${referenceDate.getFullYear()}`;
-    }
-
-    if (periodName === 'week') {
-        const range = getPeriodRange(referenceDate).week;
-        return `${range.start.getDate()} ${monthNames[range.start.getMonth()]} – ${range.end.getDate()} ${monthNames[range.end.getMonth()]} ${range.end.getFullYear()}`;
-    }
-
-    return `${monthNames[referenceDate.getMonth()]} ${referenceDate.getFullYear()}`;
-}
-
-async function findProfileByNameOrPhone(registrant) {
-    if (!registrant) {
-        return null;
-    }
-
-    const phone = String(registrant.phone || '').replace(/\D/g, '');
-    const identifier = String(registrant.identifier || registrant.chatId || registrant.userId || '').replace(/\D/g, '');
-    const name = String(registrant.name || '').trim();
-
-    if (identifier && sheetsClient && PERSONAL_DATA_SPREADSHEET_ID) {
-        const chatProfile = await loadKnownUserByChatId(identifier);
-        if (chatProfile) {
-            return chatProfile;
-        }
-    }
-
-    if (phone && sheetsClient && PERSONAL_DATA_SPREADSHEET_ID) {
-        const phoneProfile = await loadKnownUserByPhone(phone);
-        if (phoneProfile) {
-            return phoneProfile;
-        }
-    }
-
-    if (identifier && sheetsClient && PERSONAL_DATA_SPREADSHEET_ID) {
-        const phoneProfile = await loadKnownUserByPhone(identifier);
-        if (phoneProfile) {
-            return phoneProfile;
-        }
-    }
-
-    if (name && sheetsClient && PERSONAL_DATA_SPREADSHEET_ID) {
-        try {
-            const rangesToTry = [`${PERSONAL_DATA_SHEET_NAME}!A:M`, 'A:M'];
-            for (const range of rangesToTry) {
-                const resp = await sheetsClient.spreadsheets.values.get({
-                    spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                    range
-                });
-                const rows = resp.data.values || [];
-                const normalizedName = name.toLowerCase();
-
-                for (let i = rows.length - 1; i >= 0; i--) {
-                    const row = rows[i] || [];
-                    const rowName = String(row[1] || '').trim().toLowerCase();
-                    if (!rowName) continue;
-                    if (rowName === normalizedName || rowName.includes(normalizedName) || normalizedName.includes(rowName)) {
-                        return parsePersonalDataRow(row);
-                    }
-                }
-            }
-        } catch (e) {
-            console.warn('Не вдалося знайти профіль за імʼям:', e && e.message ? e.message : e);
-        }
-    }
-
-    return {
-        name,
-        phone,
-        birth: '',
-        status: '',
-        health: ''
-    };
-}
-
-async function collectBeneficiaryRecordsForPeriod(startDate, endDate) {
-    if (!Array.isArray(events) || events.length === 0) {
-        try {
-            await loadEventsFromSheet();
-        } catch (error) {
-            console.warn('⚠️ Не вдалося перезавантажити заходи для підсумку бенефіціарок:', error && error.message ? error.message : error);
-        }
-    }
-
-    if (!Array.isArray(events) || events.length === 0) {
-        return [];
-    }
-
-    const noteIndex = await buildScheduleEventNoteIndex();
-    const records = [];
-    const seen = new Set();
-
-    for (const event of events) {
-        const eventDate = event && event.date instanceof Date ? event.date : null;
-        if (!eventDate) continue;
-        if (eventDate < startDate || eventDate > endDate) continue;
-
-        const eventKey = getEventIdentityKey(event);
-        const noteText = noteIndex.get(eventKey) || '';
-        const registrants = parseRegistrantsFromNote(noteText);
-
-        if (!Array.isArray(registrants) || registrants.length === 0) {
-            continue;
-        }
-
-        for (const registrant of registrants) {
-            const profile = await findProfileByNameOrPhone(registrant);
-            const name = String(profile && profile.name ? profile.name : registrant.name || '').trim();
-            const phone = String(profile && profile.phone ? profile.phone : registrant.phone || '').trim();
-            const identifier = String(registrant.identifier || '').trim();
-            const key = `${name}|${phone}|${identifier}`.toLowerCase();
-            if (!name && !phone && !identifier) continue;
-            if (seen.has(key)) continue;
-            seen.add(key);
-
-            records.push({
-                name,
-                phone,
-                identifier,
-                birth: profile && profile.birth ? profile.birth : '',
-                status: profile && profile.status ? profile.status : '',
-                health: profile && profile.health ? profile.health : ''
-            });
-        }
-    }
-
-    return records;
-}
-
-function buildSummaryMessage(records, periodName, referenceDate = new Date()) {
-    const summary = buildBeneficiarySummary(records, referenceDate);
-    const sectionTitle = periodName === 'day'
-        ? '📅 За день'
-        : periodName === 'week'
-            ? '📆 За тиждень'
-            : '🗓️ За місяць';
-    const periodLabel = getPeriodLabel(periodName, referenceDate);
-
-    const lines = [];
-    lines.push(`<b>${sectionTitle}</b>`);
-    lines.push(`Період: ${periodLabel}`);
-    lines.push(`• ВПО: ${summary.counts.vpo}`);
-    lines.push(`• Не ВПО, що постраждали від війни: ${summary.counts.nonVpoDamaged}`);
-    lines.push(`• Не ВПО, що не постраждали від війни: ${summary.counts.nonVpoSafe}`);
-    lines.push(`• До 18 років: ${summary.counts.under18}`);
-    lines.push(`• 18–59 років: ${summary.counts.age18to59}`);
-    lines.push(`• 60+ років: ${summary.counts.age60plus}`);
-    lines.push(`• Інвалідність / істотні проблеми зі здоровʼям: ${summary.counts.healthIssues}`);
-
-    if (summary.items.length > 0) {
-        lines.push('');
-        lines.push('<b>Список бенефіціарок:</b>');
-        summary.items.forEach((item) => {
-            const ageText = Number.isFinite(item.age) ? `${item.age} р.` : 'н/д';
-            const statusText = item.status || '—';
-            const healthText = item.health || '—';
-            lines.push(`• ${item.name || 'Без імені'} — ${ageText}; ${statusText}; ${healthText}`);
-        });
-    } else {
-        lines.push('');
-        lines.push('Нічого не знайдено у нотатках за цей період.');
-    }
-
-    return lines.join('\n');
-}
-
-function ensureBeneficiarySummaryStorageDir() {
-    const dir = path.dirname(BENEFICIARY_SUMMARY_STORAGE_PATH);
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
-}
-
-function deleteExpiredBeneficiarySummaryStorage(referenceDate = new Date()) {
-    if (!fs.existsSync(BENEFICIARY_SUMMARY_STORAGE_PATH)) {
-        return;
-    }
-
-    try {
-        const raw = fs.readFileSync(BENEFICIARY_SUMMARY_STORAGE_PATH, 'utf8');
-        const parsed = raw ? JSON.parse(raw) : null;
-        if (!parsed || !parsed.generatedAt) {
-            fs.unlinkSync(BENEFICIARY_SUMMARY_STORAGE_PATH);
-            return;
-        }
-
-        const generated = new Date(parsed.generatedAt);
-        if (Number.isNaN(generated.getTime())) {
-            fs.unlinkSync(BENEFICIARY_SUMMARY_STORAGE_PATH);
-            return;
-        }
-
-        const nextMonthEnd = new Date(generated.getFullYear(), generated.getMonth() + 2, 0, 23, 59, 59, 999);
-        if (referenceDate > nextMonthEnd) {
-            fs.unlinkSync(BENEFICIARY_SUMMARY_STORAGE_PATH);
-        }
-    } catch (error) {
-        console.warn('Не вдалося очистити файл підсумків бенефіціарок:', error && error.message ? error.message : error);
-    }
-}
-
-function saveBeneficiarySummaryToStorage(text, referenceDate = new Date()) {
-    ensureBeneficiarySummaryStorageDir();
-    const payload = {
-        generatedAt: referenceDate.toISOString(),
-        text
-    };
-    fs.writeFileSync(BENEFICIARY_SUMMARY_STORAGE_PATH, JSON.stringify(payload, null, 2), 'utf8');
-}
-
-async function sendBeneficiarySummary(bot, chatId, referenceDate = new Date()) {
-    const periods = getPeriodRange(referenceDate);
-    const dayRecords = await collectBeneficiaryRecordsForPeriod(periods.day.start, periods.day.end);
-    const weekRecords = await collectBeneficiaryRecordsForPeriod(periods.week.start, periods.week.end);
-    const monthRecords = await collectBeneficiaryRecordsForPeriod(periods.month.start, periods.month.end);
-
-    const message = [
-        '🧮 <b>Підсумок бенефіціарок</b>',
-        '',
-        buildSummaryMessage(dayRecords, 'day', referenceDate),
-        '',
-        buildSummaryMessage(weekRecords, 'week', referenceDate),
-        '',
-        buildSummaryMessage(monthRecords, 'month', referenceDate),
-        '',
-        'ℹ️ Цей підсумок збережено локально до кінця наступного місяця.'
-    ].join('\n');
-
-    saveBeneficiarySummaryToStorage(message, referenceDate);
-    await bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
-}
-
 async function findUserByChatIdInSheet(chatIdStr) {
     if (!sheetsClient || !PERSONAL_DATA_SPREADSHEET_ID || !chatIdStr) {
         return null;
     }
+
+    const rangesToTry = [];
+    if (PERSONAL_DATA_SHEET_NAME) {
+        rangesToTry.push(`${PERSONAL_DATA_SHEET_NAME}!A:M`);
+        rangesToTry.push(`'${PERSONAL_DATA_SHEET_NAME}'!A:M`);
+    }
+    rangesToTry.push('Зареєстровані!A:M');
+    rangesToTry.push("'Зареєстровані'!A:M");
+    rangesToTry.push('A:M');
 
     const normalizeChatIdValue = (value) => String(value || '')
         .trim()
         .replace(/^'/, '')
         .replace(/\.0+$/, '');
     const targetChatId = normalizeChatIdValue(chatIdStr);
-    const cacheKey = `chat:${PERSONAL_DATA_SPREADSHEET_ID}:${targetChatId}`;
-    const cached = sheetLookupCache.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-        return cached.value;
+
+    for (const range of rangesToTry) {
+        try {
+            const resp = await sheetsClient.spreadsheets.values.get({
+                spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
+                range
+            });
+
+            const rows = resp.data.values || [];
+            for (let i = rows.length - 1; i >= 0; i--) {
+                const row = rows[i] || [];
+                const restored = parsePersonalDataRow(row);
+                const directChatId = normalizeChatIdValue(restored.chatId || '');
+                const fallbackChatId = normalizeChatIdValue(row[12] || row[11] || row[10] || '');
+                const legacyChatId = normalizeChatIdValue(row[6] || '');
+
+                if (directChatId === targetChatId || fallbackChatId === targetChatId || legacyChatId === targetChatId) {
+                    return restored;
+                }
+            }
+        } catch (e) {
+            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
+            if (msg.includes('unable to parse range') || msg.includes('not found')) {
+                continue;
+            }
+            break;
+        }
     }
 
-    const lookup = async () => {
-        const rangesToTry = [];
-        if (PERSONAL_DATA_SHEET_NAME) {
-            rangesToTry.push(`${PERSONAL_DATA_SHEET_NAME}!A:M`);
-            rangesToTry.push(`'${PERSONAL_DATA_SHEET_NAME}'!A:M`);
-        }
-        rangesToTry.push('Зареєстровані!A:M');
-        rangesToTry.push("'Зареєстровані'!A:M");
-        rangesToTry.push('A:M');
-
-        for (const range of rangesToTry) {
-            try {
-                const resp = await withGoogleSheetsRetry(() => sheetsClient.spreadsheets.values.get({
-                    spreadsheetId: PERSONAL_DATA_SPREADSHEET_ID,
-                    range
-                }), { label: `findUserByChatIdInSheet:${targetChatId}` });
-
-                const rows = resp.data.values || [];
-                for (let i = rows.length - 1; i >= 0; i--) {
-                    const row = rows[i] || [];
-                    const restored = parsePersonalDataRow(row);
-                    const directChatId = normalizeChatIdValue(restored.chatId || '');
-                    const fallbackChatId = normalizeChatIdValue(row[12] || row[11] || row[10] || '');
-                    const legacyChatId = normalizeChatIdValue(row[6] || '');
-
-                    if (directChatId === targetChatId || fallbackChatId === targetChatId || legacyChatId === targetChatId) {
-                        return restored;
-                    }
-                }
-            } catch (e) {
-                const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-                if (msg.includes('unable to parse range') || msg.includes('not found')) {
-                    continue;
-                }
-                throw e;
-            }
-        }
-
-        return null;
-    };
-
-    const result = await lookup();
-    sheetLookupCache.set(cacheKey, { value: result, expiresAt: Date.now() + SHEET_LOOKUP_CACHE_TTL_MS });
-    return result;
+    return null;
 }
 
 // Завантажує профіль користувача по телефону
@@ -6294,7 +6495,7 @@ function showAfishaRegistrationForm(chatId, user) {
     });
 }
 
-async function registerForSelectedEvent(chatId, user, providedName, providedPhone, options = {}) {
+async function registerForSelectedEventUnlocked(chatId, user, providedName, providedPhone, options = {}) {
     const eventId = user.selectedEventId;
     const eventName = user.selectedEventName;
     if (!eventId || !eventName) {
@@ -6310,7 +6511,7 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
     const seatsLeft = await getSeatsLeft(eventId);
     if (seatsLeft <= 0) {
         if (reserveMode) {
-            return await registerForSelectedEventReserve(chatId, user, providedName, providedPhone, options);
+            return await registerForSelectedEventReserveUnlocked(chatId, user, providedName, providedPhone, options);
         }
         return { status: 'no-seats' };
     }
@@ -6348,14 +6549,13 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
 
     // Оновлюємо лічильник у розкладі та зберігаємо реєстрацію у листі "Зареєстровані"
     if (evObj) {
-        await appendEventRegistration(eventId, chatId, {
-            name: registrantProfile.name,
-            phone: registrantProfile.phone,
-            eventName: evObj.name,
-            eventDate: evObj.date
-        });
-        await incrementSheetRegistration(evObj, registrantProfile);
         evObj.registrations = (evObj.registrations || 0) + 1;
+        try {
+            await incrementSheetRegistrationUnlocked(evObj, registrantProfile);
+        } catch (error) {
+            evObj.registrations = Math.max(0, evObj.registrations - 1);
+            throw error;
+        }
     }
 
     if (user.step === 7) {
@@ -6448,7 +6648,7 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
     return { status: 'ok' };
 }
 
-async function registerForSelectedEventReserve(chatId, user, providedName, providedPhone, options = {}) {
+async function registerForSelectedEventReserveUnlocked(chatId, user, providedName, providedPhone, options = {}) {
     const eventId = user.selectedEventId;
     const eventName = user.selectedEventName;
     if (!eventId || !eventName) {
@@ -6477,7 +6677,7 @@ async function registerForSelectedEventReserve(chatId, user, providedName, provi
         return { status: 'already-reserved' };
     }
 
-    const added = await addRegistrantToReserve(event, registrantProfile);
+    const added = await addRegistrantToReserveUnlocked(event, registrantProfile);
     if (!added) {
         return { status: 'already-reserved' };
     }
@@ -6517,6 +6717,7 @@ async function registerForSelectedEventReserve(chatId, user, providedName, provi
         }
     }
 
+    saveReminderStateToDisk();
     await notifyRegistrantAboutRegistration(chatId, event, registrantProfile, { reserveMode: true });
 
     delete user.selectedEventName;
@@ -6528,6 +6729,24 @@ async function registerForSelectedEventReserve(chatId, user, providedName, provi
     return { status: 'reserved' };
 }
 
+async function registerForSelectedEvent(chatId, user, providedName, providedPhone, options = {}) {
+    const eventId = user && user.selectedEventId;
+    return withRegistrationLock(eventId, () => registerForSelectedEventUnlocked(chatId, user, providedName, providedPhone, options));
+}
+
+async function registerForSelectedEventReserve(chatId, user, providedName, providedPhone, options = {}) {
+    const eventId = user && user.selectedEventId;
+    return withRegistrationLock(eventId, () => registerForSelectedEventReserveUnlocked(chatId, user, providedName, providedPhone, options));
+}
+
+async function addRegistrantToReserve(event, registrantProfile) {
+    return withRegistrationLock(event && event.id, () => addRegistrantToReserveUnlocked(event, registrantProfile));
+}
+
+async function removeRegistrantFromReserve(event, registrantProfile) {
+    return withRegistrationLock(event && event.id, () => removeRegistrantFromReserveUnlocked(event, registrantProfile));
+}
+
 // додаткові допоміжні функції для реєстрацій на заходи
 async function getSeatRegistrations(eventId) {
     const event = events.find(e => e.id === eventId);
@@ -6537,11 +6756,23 @@ async function getSeatRegistrations(eventId) {
 
 // повертає перелік eventId, на які userId зареєстрований
 async function getUserRegisteredEventIds(userId) {
-    return [];
+    const chatKey = String(userId || '').trim();
+    if (!chatKey) {
+        return [];
+    }
+
+    const registrations = Array.isArray(userEventRegistrations[chatKey])
+        ? userEventRegistrations[chatKey]
+        : [];
+    return Array.from(new Set(
+        registrations
+            .map((registration) => String(registration && registration.eventId || '').trim())
+            .filter(Boolean)
+    ));
 }
 
 // Функція для відписання від заходу
-async function unregisterFromEvent(chatId, eventId) {
+async function unregisterFromEventUnlocked(chatId, eventId) {
     if (!userEventRegistrations[chatId]) {
         return { status: 'not-registered' };
     }
@@ -6552,52 +6783,53 @@ async function unregisterFromEvent(chatId, eventId) {
     }
 
     const registration = userEventRegistrations[chatId][regIndex];
-    const event = events.find((entry) => entry.id === eventId);
-    if (!event) {
-        return { status: 'failed', eventName: registration.eventName, mode: 'registration' };
-    }
+    // Оновлюємо лічильник в пам'яті (seats = місткість, не чіпаємо)
+    const event = events.find(e => e.id === eventId);
+    if (event) {
+        event.registrations = Math.max(0, (event.registrations || 1) - 1);
 
-    const registrantProfile = await resolveRegistrantProfile(
-        chatId,
-        users[chatId],
-        registration.registrantName,
-        registration.registrantPhone
-    );
-
-    const removedFromPersonalSheet = await registrationSheetUtils.removeEventRegistration(users[chatId], event, registrantProfile).catch(() => false);
-    const scheduleResult = await decrementSheetRegistration(event, registrantProfile);
-    const scheduleSucceeded = scheduleResult && scheduleResult.status === 'ok';
-
-    if (!removedFromPersonalSheet || !scheduleSucceeded) {
-        console.warn(`⚠️ Не вдалося повністю відписати користувача ${chatId} від ${registration.eventName}: personalSheet=${removedFromPersonalSheet}, schedule=${scheduleSucceeded}`);
-        return { status: 'failed', eventName: registration.eventName, mode: 'registration' };
-    }
-
-    const removalResult = registrationSheetUtils.removeRegistrationEntry(
-        userEventRegistrations[chatId],
-        eventId,
-        {
-            userId: String(chatId || ''),
-            name: registration && registration.registrantName,
-            phone: registration && registration.registrantPhone
+        const registrantProfile = await resolveRegistrantProfile(
+            chatId,
+            users[chatId],
+            registration.registrantName,
+            registration.registrantPhone
+        );
+        try {
+            await decrementSheetRegistrationUnlocked(event, registrantProfile);
+        } catch (error) {
+            event.registrations += 1;
+            throw error;
         }
-    );
-    userEventRegistrations[chatId] = removalResult.entries;
-    removeFeedbackCandidate(chatId, registration.eventDate, registration.eventName);
-
-    if (userEventRegistrations[chatId].length === 0) {
-        delete userEventRegistrations[chatId];
+        await promoteFirstReserveRegistrantToRegistrationUnlocked(event);
+        console.log(`📝 Користувач ${chatId} відписаний від "${registration.eventName}" (місць +1)`);
     }
-    saveReminderStateToDisk();
 
-    event.registrations = Math.max(0, (event.registrations || 1) - 1);
-    await promoteFirstReserveRegistrantToRegistration(event);
-    console.log(`📝 Користувач ${chatId} відписаний від "${registration.eventName}" (місць +1)`);
+    const targetPhoneKey = normalizeRegistrantPhone(registration && registration.registrantPhone);
+    const targetNameKey = normalizeRegistrantName(registration && registration.registrantName);
+    const canMatchByIdentity = Boolean(targetPhoneKey || targetNameKey);
+    let removedFallbackByIndex = false;
+    userEventRegistrations[chatId] = userEventRegistrations[chatId].filter((entry, index) => {
+        if (!entry || entry.eventId !== eventId) return true;
+        if (!canMatchByIdentity) {
+            if (!removedFallbackByIndex && index === regIndex) {
+                removedFallbackByIndex = true;
+                return false;
+            }
+            return true;
+        }
+        const entryPhoneKey = normalizeRegistrantPhone(entry.registrantPhone);
+        const entryNameKey = normalizeRegistrantName(entry.registrantName);
+        return !((targetPhoneKey && entryPhoneKey && targetPhoneKey === entryPhoneKey)
+            || (targetNameKey && entryNameKey && targetNameKey === entryNameKey));
+    });
+    removeFeedbackCandidate(chatId, registration.eventDate, registration.eventName);
+    if (userEventRegistrations[chatId].length === 0) delete userEventRegistrations[chatId];
+    saveReminderStateToDisk();
 
     return { status: 'ok', eventName: registration.eventName, mode: 'registration' };
 }
 
-async function unregisterFromReserve(chatId, eventId) {
+async function unregisterFromReserveUnlocked(chatId, eventId) {
     if (!userEventReserveRegistrations[chatId]) {
         return { status: 'not-registered' };
     }
@@ -6610,7 +6842,7 @@ async function unregisterFromReserve(chatId, eventId) {
     const registration = userEventReserveRegistrations[chatId][regIndex];
     const event = events.find((eventItem) => eventItem.id === eventId);
     if (event) {
-        const removed = await removeRegistrantFromReserve(event, {
+        const removed = await removeRegistrantFromReserveUnlocked(event, {
             userId: String(chatId || ''),
             name: String(registration.registrantName || '').trim(),
             phone: String(registration.registrantPhone || '').trim()
@@ -6622,15 +6854,13 @@ async function unregisterFromReserve(chatId, eventId) {
     }
 
     userEventReserveRegistrations[chatId].splice(regIndex, 1);
-    if (userEventReserveRegistrations[chatId].length === 0) {
-        delete userEventReserveRegistrations[chatId];
-    }
+    if (userEventReserveRegistrations[chatId].length === 0) delete userEventReserveRegistrations[chatId];
     saveReminderStateToDisk();
 
     return { status: 'ok', eventName: registration.eventName, mode: 'reserve' };
 }
 
-async function unregisterFriendFromEvent(chatId, registrationKey) {
+async function unregisterFriendFromEventUnlocked(chatId, registrationKey) {
     if (!friendEventRegistrations[chatId]) {
         return { status: 'not-registered' };
     }
@@ -6645,22 +6875,22 @@ async function unregisterFriendFromEvent(chatId, registrationKey) {
     if (event) {
         event.registrations = Math.max(0, (event.registrations || 1) - 1);
 
-        const scheduleResult = await decrementSheetRegistration(event, {
-            userId: String(chatId || ''),
-            name: String(registration.registrantName || '').trim(),
-            phone: String(registration.registrantPhone || '').trim()
-        });
-        if (!scheduleResult || scheduleResult.status !== 'ok') {
-            return { status: 'failed', eventName: registration.eventName, registrantName: registration.registrantName };
+        try {
+            await decrementSheetRegistrationUnlocked(event, {
+                userId: String(chatId || ''),
+                name: String(registration.registrantName || '').trim(),
+                phone: String(registration.registrantPhone || '').trim()
+            });
+        } catch (error) {
+            event.registrations += 1;
+            throw error;
         }
-        await promoteFirstReserveRegistrantToRegistration(event);
+        await promoteFirstReserveRegistrantToRegistrationUnlocked(event);
         console.log(`👭 Подругу відписано від "${registration.eventName}" (chatId=${chatId})`);
     }
 
     friendEventRegistrations[chatId].splice(regIndex, 1);
-    if (friendEventRegistrations[chatId].length === 0) {
-        delete friendEventRegistrations[chatId];
-    }
+    if (friendEventRegistrations[chatId].length === 0) delete friendEventRegistrations[chatId];
     saveReminderStateToDisk();
 
     return {
@@ -6671,6 +6901,20 @@ async function unregisterFriendFromEvent(chatId, registrationKey) {
 }
 
 // Отримує заходи користувача на цьому тижні
+async function unregisterFromEvent(chatId, eventId) {
+    return withRegistrationLock(eventId, () => unregisterFromEventUnlocked(chatId, eventId));
+}
+
+async function unregisterFromReserve(chatId, eventId) {
+    return withRegistrationLock(eventId, () => unregisterFromReserveUnlocked(chatId, eventId));
+}
+
+async function unregisterFriendFromEvent(chatId, registrationKey) {
+    const registrations = friendEventRegistrations[chatId] || [];
+    const registration = registrations.find((item) => item.registrationKey === registrationKey);
+    return withRegistrationLock(registration && registration.eventId, () => unregisterFriendFromEventUnlocked(chatId, registrationKey));
+}
+
 async function getUserWeeklyEvents(chatId, userProfile) {
     const userRegistrations = userEventRegistrations[chatId] || [];
     
@@ -7134,7 +7378,7 @@ async function processParsedEvents(parsedEvents) {
         return { availableSlots, dateButtonMap, dateButtons };
     }
 
-    async function saveIndividualConsultationRow({ sheetName, rowNumber, dateText, timeText, name, phone, requestText }) {
+    async function saveIndividualConsultationRowUnlocked({ sheetName, rowNumber, dateText, timeText, name, phone, requestText }) {
         if (!sheetsClient) {
             throw new Error('Google Sheets client не ініціалізовано');
         }
@@ -7176,6 +7420,21 @@ async function processParsedEvents(parsedEvents) {
                 values: [[dateText || '', timeText || '', name || '', phone || '', requestText || '']]
             }
         });
+    }
+
+    async function saveIndividualConsultationRow({ sheetName, rowNumber, dateText, timeText, name, phone, requestText }) {
+        const slotKey = Number.isInteger(rowNumber) && rowNumber > 0
+            ? `consultation:${sheetName}:${rowNumber}`
+            : `consultation:${sheetName}:append`;
+        return withRegistrationLock(slotKey, () => saveIndividualConsultationRowUnlocked({
+            sheetName,
+            rowNumber,
+            dateText,
+            timeText,
+            name,
+            phone,
+            requestText
+        }));
     }
 
     async function notifySpecialistAboutConsultation({ specialistLabel, specialistChatId, dateText, timeText, name, phone, requestText, userChatId }) {
@@ -7329,6 +7588,11 @@ async function processParsedEvents(parsedEvents) {
     async function detectAiIntentTag(userText) {
         if (!AI_ENABLED || !userText) {
             return null;
+        }
+
+        const normalizedUserText = normalizeText(String(userText || '')).trim();
+        if (normalizedUserText.length < 4) {
+            return 'UNKNOWN';
         }
 
         const systemPrompt = [
@@ -8434,11 +8698,11 @@ bot.on('message', async (msg) => {
     }
 
     // ДІАГНОСТИКА: логуємо всі повідомлення з групи звернень
-    if (chatId === APPEALS_GROUP_ID) {
+    if (chatId === effectiveAppealsGroupId) {
         console.log(`\n🔔 ПОВІДОМЛЕННЯ З ГРУПИ ЗВЕРНЕНЬ`);
         console.log(`Chat ID: ${chatId} (type: ${typeof chatId})`);
-        console.log(`APPEALS_GROUP_ID: ${APPEALS_GROUP_ID} (type: ${typeof APPEALS_GROUP_ID})`);
-        console.log(`IDs match: ${chatId === APPEALS_GROUP_ID}`);
+        console.log(`APPEALS_GROUP_ID: ${effectiveAppealsGroupId} (type: ${typeof effectiveAppealsGroupId})`);
+        console.log(`IDs match: ${chatId === effectiveAppealsGroupId}`);
         console.log(`Chat type: ${msg.chat.type}`);
         console.log(`Has reply: ${!!msg.reply_to_message}`);
         console.log(`Message from: ${msg.from?.first_name || msg.from?.username || 'Unknown'} (${msg.from?.id})`);
@@ -8487,8 +8751,8 @@ bot.on('message', async (msg) => {
         let testMsg = `🔍 <b>ТЕСТ ГРУПИ ЗВЕРНЕНЬ</b>\n\n`;
         testMsg += `📊 Поточний чат ID: ${chatId}\n`;
         testMsg += `📊 Тип чату: ${msg.chat.type}\n`;
-        testMsg += `📊 APPEALS_GROUP_ID: ${APPEALS_GROUP_ID}\n`;
-        testMsg += `📊 IDs match: ${chatId === APPEALS_GROUP_ID ? '✅' : '❌'}\n\n`;
+        testMsg += `📊 APPEALS_GROUP_ID: ${effectiveAppealsGroupId}\n`;
+        testMsg += `📊 IDs match: ${chatId === effectiveAppealsGroupId ? '✅' : '❌'}\n\n`;
         testMsg += `💾 Збережених звернень: ${Object.keys(appealMessagesMap).length}\n`;
         
         if (Object.keys(appealMessagesMap).length > 0) {
@@ -8499,7 +8763,7 @@ bot.on('message', async (msg) => {
             });
         }
         
-        if (chatId === APPEALS_GROUP_ID) {
+        if (chatId === effectiveAppealsGroupId) {
             testMsg += `\n✅ Це група звернень! Відповіді працюватимуть.`;
         } else {
             testMsg += `\n⚠️ Це НЕ група звернень!`;
@@ -8509,39 +8773,7 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    if (matchesCommand(text, '/check_code', '/check_code@' + BOT_USERNAME)) {
-        const payload = String(text || '')
-            .replace(/^\/check_code(?:@\w+)?\s*/i, '')
-            .trim();
-
-        if (!payload) {
-            await bot.sendMessage(chatId, '🧪 Надішліть код після команди, наприклад: /check_code ABC123');
-            return;
-        }
-
-        const checkCodeMessage =
-            '🧪 Перевірка доставки\n' +
-            `👤 Відправив: ${resolveFeedbackUserName(chatId, msg.from || null)}\n` +
-            `📌 Код для перевірки:\n${payload}`;
-
-        if (effectiveAppealsGroupId) {
-            try {
-                await bot.sendMessage(effectiveAppealsGroupId, checkCodeMessage);
-                await bot.sendMessage(chatId, `✅ Код відправлено в чат для відгуків: ${effectiveAppealsGroupId}`);
-            } catch (error) {
-                const errorBody = error && error.response && error.response.body
-                    ? error.response.body
-                    : (error && error.message ? error.message : error);
-                console.error('❌ Не вдалося відправити код для перевірки:', errorBody);
-                await bot.sendMessage(chatId, `❌ Не вдалося відправити код: ${String(errorBody || error || '')}`);
-            }
-        } else {
-            await bot.sendMessage(chatId, '❌ Чат для відгуків не налаштовано');
-        }
-        return;
-    }
-
-    if (matchesCommand(text, '/test_feedback', '/test_feedback@' + BOT_USERNAME)) {
+    if (text === '/test_feedback') {
         const testFeedbackMessage = `🧪 Тестове повідомлення від бота\n\nЦе повідомлення відправлено для перевірки доставки у групу відгуків.`;
         if (effectiveAppealsGroupId) {
             try {
@@ -8556,53 +8788,6 @@ bot.on('message', async (msg) => {
             }
         } else {
             await bot.sendMessage(chatId, '❌ APPEALS_GROUP_ID не встановлено');
-        }
-        return;
-    }
-
-    if (matchesCommand(text, '/test_feedback_me', '/test_feedback_me@' + BOT_USERNAME)) {
-        try {
-            await bot.sendMessage(chatId, '🧪 Це тестове повідомлення від бота. Якщо ти його бачиш — команда працює.');
-            await bot.sendMessage(chatId, '✅ Тестове повідомлення надіслано тобі в приватний чат.');
-        } catch (error) {
-            const errorBody = error && error.response && error.response.body
-                ? error.response.body
-                : (error && error.message ? error.message : error);
-            console.error('❌ Не вдалося відправити тестове повідомлення користувачу:', errorBody);
-            await bot.sendMessage(chatId, `❌ Не вдалося надіслати тестове повідомлення: ${String(errorBody || error || '')}`);
-        }
-        return;
-    }
-
-    if (matchesCommand(text, '/test_feedback_group', '/test_feedback_group@' + BOT_USERNAME)) {
-        const testFeedbackMessage = `🧪 Тестове повідомлення у групу відгуків\n\nЦе повідомлення має потрапити в групу “Відгуки”.`;
-        if (APPEALS_GROUP_ID) {
-            try {
-                const result = await bot.sendMessage(APPEALS_GROUP_ID, testFeedbackMessage);
-                await bot.sendMessage(chatId, `✅ Тестове повідомлення відправлено в групу ${APPEALS_GROUP_ID}\n\nMessage ID: ${result && result.message_id ? result.message_id : 'N/A'}`);
-            } catch (error) {
-                const errorBody = error && error.response && error.response.body
-                    ? error.response.body
-                    : (error && error.message ? error.message : error);
-                console.error('❌ Не вдалося відправити тестове повідомлення в групу:', errorBody);
-                await bot.sendMessage(chatId, `❌ Не вдалося відправити тестове повідомлення в групу: ${String(errorBody || error || '')}`);
-            }
-        } else {
-            await bot.sendMessage(chatId, '❌ APPEALS_GROUP_ID не встановлено');
-        }
-        return;
-    }
-
-    if (matchesCommand(text, '/debug_send_to_chat', '/debug_send_to_chat@' + BOT_USERNAME)) {
-        const targetChatId = Number(process.env.DEBUG_TARGET_CHAT_ID || '-1003802751255');
-        try {
-            await bot.sendMessage(targetChatId, '🧪 DEBUG: direct send to numeric chat id');
-            await bot.sendMessage(chatId, `✅ DEBUG send succeeded to ${targetChatId}`);
-        } catch (error) {
-            const errorBody = error && error.response && error.response.body
-                ? error.response.body
-                : (error && error.message ? error.message : error);
-            await bot.sendMessage(chatId, `❌ DEBUG send failed: ${JSON.stringify(errorBody || error || {}, null, 2)}`);
         }
         return;
     }
@@ -8752,19 +8937,20 @@ bot.on('message', async (msg) => {
         if (!foundProfile && msg.from && msg.from.username) {
             foundProfile = await loadKnownUserByUsername(msg.from.username);
         }
-
+        
         if (foundProfile) {
+            // Профіль знайдено — логінимо користувача
             Object.assign(user, foundProfile);
             user.profileHydrated = true;
             knownUsers[chatId] = foundProfile;
 
             const thisWeekEvents = await getUserWeeklyEvents(chatId, foundProfile);
-
+            
             const greetingName = String(foundProfile.name || '').trim().split(/\s+/)[1]
                 || String(foundProfile.name || '').trim().split(/\s+/)[0]
                 || 'друже';
             let greeting = `✅ Привіт, ${greetingName}! Рад(а) тебе бачити.\n\n`;
-
+            
             if (thisWeekEvents && thisWeekEvents.length > 0) {
                 greeting += `📅 <b>Ваші заходи на цьому тижні:</b>\n`;
                 thisWeekEvents.forEach((evt, idx) => {
@@ -8818,10 +9004,10 @@ bot.on('message', async (msg) => {
     }
 
     // === ОБРОБКА ВІДПОВІДЕЙ НА ЗВЕРНЕННЯ У ГРУПІ (ПЕРЕД ІНШИМИ ГРУПАМИ) ===
-    if (chatId === APPEALS_GROUP_ID && msg.reply_to_message) {
+    if (chatId === effectiveAppealsGroupId && msg.reply_to_message) {
         console.log(`\n🔍 ПЕРЕВІРКА REPLY У ГРУПІ ЗВЕРНЕНЬ`);
-        console.log(`ChatID: ${chatId} (type: ${typeof chatId}) === APPEALS_GROUP_ID: ${APPEALS_GROUP_ID} (type: ${typeof APPEALS_GROUP_ID})`);
-        console.log(`Comparison result: ${chatId === APPEALS_GROUP_ID}`);
+        console.log(`ChatID: ${chatId} (type: ${typeof chatId}) === APPEALS_GROUP_ID: ${effectiveAppealsGroupId} (type: ${typeof effectiveAppealsGroupId})`);
+        console.log(`Comparison result: ${chatId === effectiveAppealsGroupId}`);
         console.log(`Reply to message ID: ${msg.reply_to_message.message_id}`);
         console.log(`Reply to message from bot: ${msg.reply_to_message.from?.is_bot}`);
         console.log(`Reply to message from username: ${msg.reply_to_message.from?.username}`);
@@ -8855,14 +9041,14 @@ bot.on('message', async (msg) => {
                 });
                 
                 // Підтверджуємо успішну відправку в групі
-                await bot.sendMessage(APPEALS_GROUP_ID, `✅ Відповідь надіслано користувачу`, {
+                await bot.sendMessage(effectiveAppealsGroupId, `✅ Відповідь надіслано користувачу`, {
                     reply_to_message_id: msg.message_id
                 });
                 
                 console.log(`✅ Відповідь успішно надіслано користувачу ${userChatId}\n`);
             } catch (error) {
                 console.error(`❌ Помилка при відправці відповіді:`, error);
-                await bot.sendMessage(APPEALS_GROUP_ID, `❌ Не вдалося надіслати відповідь користувачу (можливо, заблокував бота)`, {
+                await bot.sendMessage(effectiveAppealsGroupId, `❌ Не вдалося надіслати відповідь користувачу (можливо, заблокував бота)`, {
                     reply_to_message_id: msg.message_id
                 });
             }
@@ -8871,7 +9057,7 @@ bot.on('message', async (msg) => {
             console.log(`⚠️ Спроба відповісти старим способом...`);
             
             // Спробуємо відповісти тому, хто відправив повідомлення (fallback)
-            await bot.sendMessage(APPEALS_GROUP_ID, 
+            await bot.sendMessage(effectiveAppealsGroupId, 
                 `⚠️ Не знайдено користувача для цього звернення.\n\n` +
                 `Це може статися якщо:\n` +
                 `• Бот був перезапущений після отримання звернення\n` +
@@ -8898,8 +9084,8 @@ bot.on('message', async (msg) => {
         console.log(`📌 Група (ID: ${msg.chat.id}, тип: ${msg.chat.type}) ${status}`);
         
         // Додатково логуємо повідомлення з групи звернень
-        if (msg.chat.id === APPEALS_GROUP_ID) {
-            console.log(`   🔔 Це група звернень! ID: ${APPEALS_GROUP_ID}`);
+        if (msg.chat.id === effectiveAppealsGroupId) {
+            console.log(`   🔔 Це група звернень! ID: ${effectiveAppealsGroupId}`);
             console.log(`   Reply: ${msg.reply_to_message ? 'ТАК' : 'НІ'}`);
             if (msg.reply_to_message) {
                 console.log(`   Reply from bot: ${msg.reply_to_message.from?.is_bot ? 'ТАК' : 'НІ'}`);
@@ -9013,11 +9199,35 @@ bot.on('message', async (msg) => {
 
     if (user.context === 'daily-feedback-write' && user.pendingFeedbackDateKey) {
         const dateKey = String(user.pendingFeedbackDateKey || '');
-        const feedbackText = String(text || '').trim();
+        if (
+            matchesCommand(text, NAVIGATION_BUTTONS.menu, 'Повернутися в меню', 'Назад в меню') ||
+            matchesCommand(text, NAVIGATION_BUTTONS.back, 'Назад') ||
+            text === '❌ Скасувати'
+        ) {
+            delete user.pendingFeedbackDateKey;
+            delete user.pendingFeedbackText;
+            user.context = null;
+            await bot.sendMessage(chatId, 'Меню: оберіть потрібний розділ', {
+                reply_markup: {
+                    keyboard: getMainMenuKeyboard(chatId),
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        const isFeedbackRetry = text === '✅ Надіслати ще раз';
+        const feedbackText = isFeedbackRetry
+            ? String(user.pendingFeedbackText || '').trim()
+            : String(text || '').trim();
         if (!feedbackText) {
             await bot.sendMessage(chatId, 'Будь ласка, напишіть текст відгуку повідомленням.');
             return;
         }
+
+        const telegramFeedbackText = feedbackText.length > 3500
+            ? `${feedbackText.slice(0, 3500)}\n\n[Відгук скорочено до ліміту Telegram]`
+            : feedbackText;
 
         const dateLabel = formatFeedbackDateLabel(dateKey) || dateKey;
         const eventNames = getFeedbackEventsForChatByDate(chatId, dateKey);
@@ -9035,19 +9245,47 @@ bot.on('message', async (msg) => {
             '📌 Заходи:\n' +
             `${eventsBlock}\n\n` +
             '💬 Відгук:\n' +
-            `"${feedbackText}"`;
+            `"${telegramFeedbackText}"`;
 
         try {
-            const feedbackDestinationId = effectiveAppealsGroupId || GROUP_ID;
-            if (feedbackDestinationId) {
-                await bot.sendMessage(feedbackDestinationId, adminMessage);
-                console.log(`[FEEDBACK] Sent feedback to ${feedbackDestinationId}`);
+            let deliveredToAdmin = false;
+
+            if (effectiveAppealsGroupId) {
+                try {
+                    console.log(`[FEEDBACK] Sending feedback to appeals group ${effectiveAppealsGroupId} for chat ${chatId}`);
+                    await bot.sendMessage(effectiveAppealsGroupId, adminMessage, {
+                        disable_web_page_preview: true
+                    });
+                    console.log(`[FEEDBACK] Sent feedback successfully to appeals group ${effectiveAppealsGroupId}`);
+                    deliveredToAdmin = true;
+                } catch (groupSendError) {
+                    console.error(
+                        '❌ Не вдалося надіслати відгук у APPEALS_GROUP_ID:',
+                        groupSendError && groupSendError.response && groupSendError.response.body
+                            ? groupSendError.response.body
+                            : (groupSendError && groupSendError.message ? groupSendError.message : groupSendError)
+                    );
+                }
             } else {
-                console.warn('⚠️ Не вдалося визначити цільову групу для відгуку');
+                console.warn('⚠️ APPEALS_GROUP_ID не встановлено, відгук не переслано в адмін-групу');
+            }
+
+            if (!deliveredToAdmin && DARYNA_CHAT_ID) {
+                const fallbackMessage =
+                    '⚠️ Fallback-доставка відгуку (не вдалося надіслати в APPEALS_GROUP_ID)\n\n' +
+                    adminMessage;
+                await bot.sendMessage(DARYNA_CHAT_ID, fallbackMessage);
+                deliveredToAdmin = true;
+            }
+
+            if (!deliveredToAdmin) {
+                throw new Error('Feedback delivery failed for both APPEALS_GROUP_ID and fallback recipient');
             }
 
             setFeedbackStatus(chatId, dateKey, 'submitted');
-            clearFeedbackFlowState(user);
+            delete user.pendingFeedbackDateKey;
+            delete user.pendingFeedbackText;
+            user.context = null;
             saveReminderStateToDisk();
 
             await bot.sendMessage(chatId,
@@ -9058,12 +9296,39 @@ bot.on('message', async (msg) => {
                 }
             });
         } catch (error) {
-            console.error('❌ Помилка обробки відгуку:', error && error.message ? error.message : error);
-            const errorText = error && error.response && error.response.body
-                ? JSON.stringify(error.response.body)
-                : (error && error.message ? error.message : String(error));
-            clearFeedbackFlowState(user);
-            await bot.sendMessage(chatId, `❌ Не вдалося надіслати відгук. Спробуйте ще раз трохи пізніше.\n\nДеталі: ${errorText}`);
+            const errorBody = error && error.response && error.response.body
+                ? error.response.body
+                : (error && error.message ? error.message : error);
+            console.error('❌ Помилка обробки відгуку:', errorBody);
+
+            try {
+                const feedbackFallbackDir = path.join(__dirname, 'logs');
+                if (!fs.existsSync(feedbackFallbackDir)) {
+                    fs.mkdirSync(feedbackFallbackDir, { recursive: true });
+                }
+                const feedbackFallbackPath = path.join(feedbackFallbackDir, `feedback-fallback-${Date.now()}.txt`);
+                fs.writeFileSync(feedbackFallbackPath, JSON.stringify({
+                    chatId,
+                    dateKey,
+                    feedbackText,
+                    userName,
+                    eventNames,
+                    createdAt: new Date().toISOString(),
+                    error: errorBody
+                }, null, 2), 'utf8');
+                console.warn(`💾 Текст відгуку збережено у файл ${feedbackFallbackPath}`);
+            } catch (fallbackWriteError) {
+                console.error('❌ Не вдалося зберегти резервну копію відгуку:', fallbackWriteError);
+            }
+
+            user.pendingFeedbackText = feedbackText;
+            await bot.sendMessage(chatId,
+                '❌ Не вдалося надіслати відгук у групу. Натисніть «Надіслати ще раз» або напишіть текст повторно.', {
+                reply_markup: {
+                    keyboard: [[{ text: '✅ Надіслати ще раз' }], [{ text: NAVIGATION_BUTTONS.menu }]],
+                    resize_keyboard: true
+                }
+            });
         }
         return;
     }
@@ -9072,6 +9337,7 @@ bot.on('message', async (msg) => {
     if (text === FEEDBACK_BUTTON_YES && pendingFeedbackDateKey) {
         user.context = 'daily-feedback-write';
         user.pendingFeedbackDateKey = pendingFeedbackDateKey;
+        delete user.pendingFeedbackText;
         await bot.sendMessage(chatId,
             'Напишіть, будь ласка, ваш відгук одним повідомленням. Ми передамо його команді 💛', {
             reply_markup: {
@@ -9217,10 +9483,10 @@ bot.on('message', async (msg) => {
         `;
 
         // Відправляємо звернення в групу "Відгуки"
-        if (APPEALS_GROUP_ID) {
+        if (effectiveAppealsGroupId) {
             try {
-                console.log(`⏳ Надсилаю в групу ${APPEALS_GROUP_ID}...`);
-                const result = await bot.sendMessage(APPEALS_GROUP_ID, appealMessage, {
+                console.log(`⏳ Надсилаю в групу ${effectiveAppealsGroupId}...`);
+                const result = await bot.sendMessage(effectiveAppealsGroupId, appealMessage, {
                     parse_mode: 'HTML'
                 });
                 
@@ -12540,16 +12806,17 @@ bot.on('message', async (msg) => {
         const unregMode = user.pendingUnregMode;
 
         let result;
-        if (unregMode === 'reserve') {
-            result = await unregisterFromReserve(chatId, eventId);
-            if (result.status !== 'ok') {
-                result = await unregisterFromEvent(chatId, eventId);
-            }
-        } else {
-            result = await unregisterFromEvent(chatId, eventId);
-            if (result.status !== 'ok') {
+        try {
+            if (unregMode === 'reserve') {
                 result = await unregisterFromReserve(chatId, eventId);
+                if (result.status !== 'ok') result = await unregisterFromEvent(chatId, eventId);
+            } else {
+                result = await unregisterFromEvent(chatId, eventId);
+                if (result.status !== 'ok') result = await unregisterFromReserve(chatId, eventId);
             }
+        } catch (error) {
+            console.error('❌ Помилка відписання від заходу:', error && error.message ? error.message : error);
+            result = { status: 'error' };
         }
         
         if (result.status === 'ok') {
@@ -12582,7 +12849,13 @@ bot.on('message', async (msg) => {
     }
 
     if (text === '✅ Так, відписати подругу' && user.pendingFriendUnregKey) {
-        const result = await unregisterFriendFromEvent(chatId, user.pendingFriendUnregKey);
+        let result;
+        try {
+            result = await unregisterFriendFromEvent(chatId, user.pendingFriendUnregKey);
+        } catch (error) {
+            console.error('❌ Помилка відписання подруги:', error && error.message ? error.message : error);
+            result = { status: 'error' };
+        }
 
         if (result.status === 'ok') {
             const registrantSuffix = result.registrantName ? `👭 ${result.registrantName}\n` : '';
@@ -12890,10 +13163,17 @@ bot.on('message', async (msg) => {
 
     // AI fallback: якщо текст не збігся з жодною кнопкою/сценарієм вище.
     if (msg.chat.type === 'private') {
-        if (!AI_ENABLED || shouldSkipAiIntentDetection(text)) {
-            const fallbackIntentTag = detectIntentLocally(text);
-            console.log(`🧠 Local fallback: ${fallbackIntentTag}`);
-            if (await handleIntentTag(chatId, user, fallbackIntentTag, text)) {
+        const localIntentTag = detectIntentLocally(text);
+        if (localIntentTag && localIntentTag !== 'UNKNOWN') {
+            console.log(`🧠 Local intent fast-path: ${localIntentTag}`);
+            if (await handleIntentTag(chatId, user, localIntentTag, text)) {
+                return;
+            }
+        }
+
+        if (!AI_ENABLED) {
+            console.log(`🧠 AI disabled, local intent fallback: ${localIntentTag}`);
+            if (await handleIntentTag(chatId, user, localIntentTag, text)) {
                 return;
             }
 
@@ -12923,7 +13203,7 @@ bot.on('message', async (msg) => {
             });
         } catch (error) {
             console.error('❌ AI fallback error:', error && error.message ? error.message : error);
-            const fallbackIntentTag = detectIntentLocally(text);
+            const fallbackIntentTag = localIntentTag || detectIntentLocally(text);
             console.log(`🧠 Local intent fallback result: ${fallbackIntentTag}`);
 
             if (await handleIntentTag(chatId, user, fallbackIntentTag, text)) {
@@ -12945,6 +13225,6 @@ bot.on('message', async (msg) => {
 
 });
 
-console.log("⏳ Бот ініціалізується. Telegram webhook автоматично встановлюється після підключення до Google Sheets.");
+console.log("⏳ Бот ініціалізується. Режим роботи: polling (без webhook).");
 console.log("📋 Розклад:", config.SPREADSHEET_ID);
 console.log("👤 Персональні дані:", config.PERSONAL_DATA_SPREADSHEET_ID);

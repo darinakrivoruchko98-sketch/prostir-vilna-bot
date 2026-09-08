@@ -235,6 +235,7 @@ async function appendEventRegistration(user, event, registrantInfo) {
         console.log(`✅ Реєстрацію записано в "${config.REGISTRATIONS_SHEET_NAME}": ${name} -> ${(event && event.name) || ''}`);
     } catch (e) {
         console.error('appendEventRegistration error:', e && e.message ? e.message : e);
+        throw e;
     }
 }
 
