@@ -1,4 +1,4 @@
-c:\Users\LENOVO\AppData\Local\Packages\MicrosoftWindows.Client.Core_cw5n1h2txyewy\TempState\ScreenClip\{5A59E724-654A-445B-954C-EAF9FBAC8598}.pngconst test = require('node:test');
+const test = require('node:test');
 const assert = require('node:assert/strict');
 const { resolveKnownUser } = require('../src/sheets/personal-data');
 const { applyKnownUserProfile } = require('../src/handlers/registration');
@@ -35,7 +35,7 @@ test('applyKnownUserProfile imports existing profile data into the session', () 
     birth: '01.01.1990',
     status: 'ВПО',
     childrenCount: '1',
-    health: 'Ні, немає істотних проблем зі здоров'ям',
+    health: 'Ні, немає істотних проблем зі здоров\'ям',
     evacuationStatus: 'Нічого з зазначеного',
     shellingImpact: 'Ні, не постраждала',
     employment: 'Працюю',
