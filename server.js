@@ -2945,7 +2945,7 @@ function getStartOfWeekMonday(inputDate) {
     return date;
 }
 
-function getAfishaTwoWeekBounds(now = new Date()) {
+function getAfishaVisibleWindow(now = new Date()) {
     const thisWeekStart = getStartOfWeekMonday(now);
     const nextWeekStart = new Date(thisWeekStart);
     nextWeekStart.setDate(nextWeekStart.getDate() + 7);
@@ -2995,11 +2995,10 @@ function buildAfishaDaysKeyboardData() {
     const seenDates = new Set();
     const uniqueDates = [];
     const now = new Date();
-    const { afterNextWeekStart } = getAfishaTwoWeekBounds(now);
 
     for (const eventItem of getAllEvents()) {
         if (!eventItem || !(eventItem.date instanceof Date) || Number.isNaN(eventItem.date.getTime())
-            || eventItem.date <= now || eventItem.date >= afterNextWeekStart) {
+            || eventItem.date <= now) {
             continue;
         }
         const eventDateOnly = new Date(eventItem.date);
