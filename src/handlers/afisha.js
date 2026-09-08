@@ -2,6 +2,7 @@ const state = require('../state');
 const { getAllEvents } = require('../events/store');
 const { getSeatsLeft } = require('../sheets/registration');
 const { formatShortDate, formatTime } = require('../utils/date');
+const { normalizeText } = require('../utils/afisha-day-selection');
 
 function buildDateKey(date) {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -57,7 +58,25 @@ function handleAfishaMenu(bot, chatId, user) {
 
 function resolveAfishaDateSelection(user, buttonText) {
     if (!user || !user.afishaDateButtonMap) return null;
-    return user.afishaDateButtonMap[buttonText] || null;
+
+    const candidateText = normalizeText(String(buttonText || ''));
+    if (!candidateText) return null;
+
+    if (user.afishaDateButtonMap[candidateText]) {
+        return user.afishaDateButtonMap[candidateText];
+    }
+
+    const normalizedButtonText = normalizeText(candidateText)
+        .replace(/[\u2019\u2018\u02BC\u0060]/g, "'")
+        .trim();
+
+    const directMatch = user.afishaDateButtonMap[normalizedButtonText];
+    if (directMatch) {
+        return directMatch;
+    }
+
+    const fallbackKey = Object.keys(user.afishaDateButtonMap).find((key) => normalizeText(key) === normalizedButtonText);
+    return fallbackKey ? user.afishaDateButtonMap[fallbackKey] : null;
 }
 
 // Відображає афішу для конкретної дати
