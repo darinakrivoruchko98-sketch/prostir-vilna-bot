@@ -12087,6 +12087,85 @@ bot.on('message', async (msg) => {
         return;
     }
 
+    if (text === "✅ Так, відписатись" && user.pendingUnregEventId) {
+        const eventId = user.pendingUnregEventId;
+        const eventName = String(user.pendingUnregEventName || '').trim();
+        const selectedMode = user.pendingUnregMode === 'reserve' ? 'reserve' : 'registration';
+
+        let result = null;
+        if (selectedMode === 'reserve') {
+            result = await unregisterFromReserve(chatId, eventId);
+        } else {
+            result = await unregisterFromEvent(chatId, eventId);
+            if (!result || result.status !== 'ok') {
+                result = await unregisterFromReserve(chatId, eventId);
+            }
+        }
+
+        delete user.pendingUnregEventId;
+        delete user.pendingUnregEventName;
+        delete user.pendingUnregMode;
+        delete user.unregButtonMap;
+        user.context = null;
+
+        if (!result || result.status !== 'ok') {
+            await bot.sendMessage(chatId, '❌ Помилка при відписанні. Спробуйте ще раз.', {
+                reply_markup: {
+                    keyboard: [[{ text: MAIN_MENU_BUTTONS.reminders }], [{ text: NAVIGATION_BUTTONS.menu }]],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        const details = result.mode === 'reserve'
+            ? 'Запис у резерв скасовано.'
+            : 'Місце звільнено для інших учасників.';
+
+        await bot.sendMessage(chatId,
+            `✅ <b>Відписання підтверджено.</b>\n\n📌 <b>${eventName || result.eventName}</b>\n\n${details}`, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [
+                        [{ text: MAIN_MENU_BUTTONS.reminders }],
+                        [{ text: NAVIGATION_BUTTONS.menu }]
+                    ],
+                    resize_keyboard: true
+                }
+            });
+        return;
+    }
+
+    if (text === '✅ Так, відписати подругу' && user.pendingFriendUnregKey) {
+        const result = await unregisterFriendFromEvent(chatId, user.pendingFriendUnregKey);
+
+        delete user.pendingFriendUnregKey;
+        delete user.pendingFriendUnregEventName;
+        delete user.pendingFriendRegistrantName;
+        delete user.friendUnregButtonMap;
+        user.context = null;
+
+        if (!result || result.status !== 'ok') {
+            await bot.sendMessage(chatId, '❌ Помилка при відписанні подруги. Спробуйте ще раз.', {
+                reply_markup: {
+                    keyboard: [[{ text: MAIN_MENU_BUTTONS.unsubscribeFriend }], [{ text: NAVIGATION_BUTTONS.menu }]],
+                    resize_keyboard: true
+                }
+            });
+            return;
+        }
+
+        await bot.sendMessage(chatId,
+            `✅ <b>Відписання подруги підтверджено.</b>\n\n📌 <b>${result.eventName}</b>\n\nМісце звільниться для інших учасниць.`, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    keyboard: [[{ text: MAIN_MENU_BUTTONS.unsubscribeFriend }], [{ text: NAVIGATION_BUTTONS.menu }]],
+                    resize_keyboard: true
+                }
+            });
+        return;
+    }
+
     // Повертаємось до афіші для додавання ще одного заходу
     if (text === "➕ Додати ще один" || text === "➕ Додати ще захід") {
         await showAfishaDaysMenu(chatId);

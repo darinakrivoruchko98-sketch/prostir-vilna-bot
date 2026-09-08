@@ -58,3 +58,11 @@ test('decrementSheetRegistration removes a registrant from the schedule note and
         config.SPREADSHEET_ID = originalSpreadsheetId;
     }
 });
+
+test('unsubscribe confirmation flow includes handlers for self and friend unregistration', () => {
+    const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'server.js'), 'utf8');
+
+    assert.match(source, /if \(text === "✅ Так, відписатись" && user\.pendingUnregEventId\)\s*\{[\s\S]*?result = await unregisterFromEvent\(chatId, eventId\);/);
+    assert.match(source, /if \(text === '✅ Так, відписати подругу' && user\.pendingFriendUnregKey\)\s*\{[\s\S]*?const result = await unregisterFriendFromEvent\(chatId, user\.pendingFriendUnregKey\);/);
+    assert.match(source, /unregisterFromReserve\(chatId, eventId\)/);
+});
