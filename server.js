@@ -15,6 +15,7 @@ const { shouldSkipAiIntentDetection } = require('./src/utils/intent-detection');
 const { createNotificationDeduper } = require('./src/utils/notification-dedup');
 const { clearFeedbackFlowState } = require('./src/utils/feedback-state');
 const { normalizeSendOptions } = require('./src/utils/telegram-reply-markup');
+const { parseAfishaDaySelection: parseAfishaDaySelectionFromModule } = require('./src/utils/afisha-day-selection');
 const {
     buildStatisticsSnapshotForSelection,
     formatStatisticsSnapshot,
@@ -2987,35 +2988,7 @@ function formatDayMonthLabel(date) {
 }
 
 function parseAfishaDaySelection(value) {
-    const source = normalizeText(String(value || '')).trim();
-    if (!source) {
-        return null;
-    }
-    const normalizedWithoutDate = source.replace(/\(\s*\d{2}[./-]\d{2}[./-]\d{4}\s*\)/g, ' ').trim();
-    const direct = normalizeWeekdayKey(normalizedWithoutDate);
-    if (WEEKDAY_INDEX_BY_NAME[direct] !== undefined) {
-        return {
-            weekdayKey: direct,
-            dayNum: WEEKDAY_INDEX_BY_NAME[direct]
-        };
-    }
-
-    const tokens = normalizedWithoutDate
-        .split(/\s+/)
-        .map((token) => token.replace(/[()]/g, ''))
-        .filter(Boolean);
-
-    for (const token of tokens) {
-        const normalizedToken = normalizeWeekdayKey(token);
-        if (WEEKDAY_INDEX_BY_NAME[normalizedToken] !== undefined) {
-            return {
-                weekdayKey: normalizedToken,
-                dayNum: WEEKDAY_INDEX_BY_NAME[normalizedToken]
-            };
-        }
-    }
-
-    return null;
+    return parseAfishaDaySelectionFromModule(value);
 }
 
 function buildAfishaDaysKeyboardData() {
@@ -3054,35 +3027,8 @@ function buildAfishaDaysKeyboardData() {
 }
 
 function normalizeWeekdayKey(value) {
-    const normalized = normalizeCommandText(String(value || ''))
-        .replace(/[’`]/g, "'");
-
-    const aliases = {
-        "пн": "понеділок",
-        "пон": "понеділок",
-        "вів": "вівторок",
-        "вт": "вівторок",
-        "втр": "вівторок",
-        "ср": "середа",
-        "серед": "середа",
-        "срд": "середа",
-        "чет": "четвер",
-        "чт": "четвер",
-        "чтв": "четвер",
-        "пт": "п'ятниця",
-        "птн": "п'ятниця",
-        "пят": "п'ятниця",
-        "сб": "субота",
-        "суб": "субота",
-        "сбт": "субота",
-        "нд": "неділя",
-        "нед": "неділя",
-        "пятниця": "п'ятниця",
-        "пятницю": "п'ятниця",
-        "п'ятницю": "п'ятниця"
-    };
-
-    return aliases[normalized] || normalized;
+    const parsed = parseAfishaDaySelectionFromModule(value);
+    return parsed && parsed.weekdayKey ? parsed.weekdayKey : '';
 }
 
 function showAfishaDaysMenu(chatId) {
@@ -6562,12 +6508,26 @@ async function registerForSelectedEventUnlocked(chatId, user, providedName, prov
 
     // Оновлюємо лічильник у розкладі та зберігаємо реєстрацію у листі "Зареєстровані"
     if (evObj) {
+<<<<<<< HEAD
         evObj.registrations = (evObj.registrations || 0) + 1;
         try {
             await incrementSheetRegistrationUnlocked(evObj, registrantProfile);
         } catch (error) {
             evObj.registrations = Math.max(0, evObj.registrations - 1);
             throw error;
+=======
+        await appendEventRegistration(eventId, chatId, {
+            name: registrantProfile.name,
+            phone: registrantProfile.phone,
+            eventName: evObj.name,
+            eventDate: evObj.date
+        });
+        await incrementSheetRegistration(evObj, registrantProfile);
+        if (Number.isFinite(evObj.registrations)) {
+            evObj.registrations = Number(evObj.registrations) + 1;
+        } else {
+            evObj.registrations = 1;
+>>>>>>> fbbd79c (Fix friday afisha day parsing)
         }
     }
 
@@ -6817,6 +6777,7 @@ async function unregisterFromEventUnlocked(chatId, eventId) {
         console.log(`📝 Користувач ${chatId} відписаний від "${registration.eventName}" (місць +1)`);
     }
 
+<<<<<<< HEAD
     const targetPhoneKey = normalizeRegistrantPhone(registration && registration.registrantPhone);
     const targetNameKey = normalizeRegistrantName(registration && registration.registrantName);
     const canMatchByIdentity = Boolean(targetPhoneKey || targetNameKey);
@@ -6838,6 +6799,15 @@ async function unregisterFromEventUnlocked(chatId, eventId) {
     removeFeedbackCandidate(chatId, registration.eventDate, registration.eventName);
     if (userEventRegistrations[chatId].length === 0) delete userEventRegistrations[chatId];
     saveReminderStateToDisk();
+=======
+    if (Number.isFinite(event.registrations)) {
+        event.registrations = Math.max(0, Number(event.registrations) - 1);
+    } else {
+        event.registrations = 0;
+    }
+    await promoteFirstReserveRegistrantToRegistration(event);
+    console.log(`📝 Користувач ${chatId} відписаний від "${registration.eventName}" (місць +1)`);
+>>>>>>> fbbd79c (Fix friday afisha day parsing)
 
     return { status: 'ok', eventName: registration.eventName, mode: 'registration' };
 }
@@ -6886,7 +6856,11 @@ async function unregisterFriendFromEventUnlocked(chatId, registrationKey) {
     const registration = friendEventRegistrations[chatId][regIndex];
     const event = events.find((eventItem) => eventItem.id === registration.eventId);
     if (event) {
-        event.registrations = Math.max(0, (event.registrations || 1) - 1);
+        if (Number.isFinite(event.registrations)) {
+            event.registrations = Math.max(0, Number(event.registrations) - 1);
+        } else {
+            event.registrations = 0;
+        }
 
         try {
             await decrementSheetRegistrationUnlocked(event, {
