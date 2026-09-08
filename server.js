@@ -2997,8 +2997,15 @@ function buildAfishaDaysKeyboardData() {
     const now = new Date();
 
     for (const eventItem of getAllEvents()) {
+        const isTargetDateEvent = eventItem && eventItem.date instanceof Date && eventItem.date.getFullYear() === 2026 && eventItem.date.getMonth() === 8 && eventItem.date.getDate() >= 9 && eventItem.date.getDate() <= 13;
+        if (isTargetDateEvent) {
+            console.log(`[AFISHA-FILTER-DEBUG] event="${eventItem.name}" parsedDate=${eventItem.date.toISOString()} getTime=${eventItem.date.getTime()} now=${now.toISOString()} compare=${eventItem.date <= now}`);
+        }
         if (!eventItem || !(eventItem.date instanceof Date) || Number.isNaN(eventItem.date.getTime())
             || eventItem.date <= now) {
+            if (isTargetDateEvent) {
+                console.log(`[AFISHA-FILTER-DEBUG] skip reason: invalidDate=${!eventItem || !(eventItem.date instanceof Date)} invalidTime=${eventItem && eventItem.date instanceof Date && Number.isNaN(eventItem.date.getTime())} compare=${eventItem && eventItem.date instanceof Date ? eventItem.date <= now : 'n/a'}`);
+            }
             continue;
         }
         const eventDateOnly = new Date(eventItem.date);
@@ -5563,6 +5570,7 @@ async function loadEventsFromSheet() {
         events = [];
         const seen = new Set();
         let dateContext = null;
+        const nowForDebug = new Date();
 
         for (const [i, row] of rows.entries()) {
             const parsed = parseEventFromRow(row, dateContext);
@@ -5586,6 +5594,12 @@ async function loadEventsFromSheet() {
 
             if (seen.has(ev.id)) {
                 continue;
+            }
+
+            const shouldLogDateDebug = ev && ev.date instanceof Date && ev.date.getFullYear() === 2026 && ev.date.getMonth() === 8 && ev.date.getDate() >= 9 && ev.date.getDate() <= 13;
+            if (shouldLogDateDebug) {
+                const rawDateValue = Array.isArray(row) && row.length > 0 ? String(row[0] || '').trim() : '';
+                console.log(`[AFISHA-DATE-DEBUG] rawDate="${rawDateValue}" eventName="${ev.name}" parsedDate=${ev.date.toISOString()} getTime=${ev.date.getTime()} now=${nowForDebug.toISOString()} compare=${ev.date <= nowForDebug}`);
             }
 
             seen.add(ev.id);
