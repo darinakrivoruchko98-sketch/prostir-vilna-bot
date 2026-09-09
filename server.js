@@ -8,7 +8,7 @@ const path = require("path");
 const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
 const { createAuthorizedSheetsClient } = require('./src/sheets/auth');
-const { isRegistrationCancelText } = require('./src/utils/registration-flow');
+const { cancelAfishaRegistrationButton, isRegistrationCancelText } = require('./src/utils/registration-flow');
 const { withCache, invalidateCache } = require('./src/sheets/cache');
 const { buildBeneficiarySummary, parseRegistrantsFromNoteText } = require('./src/utils/beneficiary-summary');
 const { hasCompleteRegistrationProfile } = require('./src/utils/profile');
@@ -12469,45 +12469,18 @@ bot.on('message', async (msg) => {
     }
 
     if (text === '❌ Відмінити реєстрацію') {
-        const lastEventId = user.lastAfishaRegisteredEventId;
+        const result = await cancelAfishaRegistrationButton({
+            chatId,
+            user,
+            unregisterFromEvent: (targetChatId, eventId) => unregisterFromEvent(targetChatId, eventId),
+            unregisterFromReserve: (targetChatId, eventId) => unregisterFromReserve(targetChatId, eventId),
+            sendMessage: (targetChatId, message, options) => bot.sendMessage(targetChatId, message, options),
+            getAfishaInstantRegistrationKeyboard
+        });
 
-        if (!lastEventId) {
-            await bot.sendMessage(chatId, 'Немає активної реєстрації для скасування.', {
-                reply_markup: {
-                    keyboard: getAfishaInstantRegistrationKeyboard(),
-                    resize_keyboard: true
-                }
-            });
+        if (result && result.handled) {
             return;
         }
-
-        let result = await unregisterFromEvent(chatId, lastEventId);
-        if (!result || result.status !== 'ok') {
-            result = await unregisterFromReserve(chatId, lastEventId);
-        }
-        if (result.status === 'ok') {
-            const details = result.mode === 'reserve'
-                ? 'Запис у резерв скасовано.'
-                : 'Місце звільнено для інших учасників.';
-            await bot.sendMessage(chatId,
-                `✅ <b>Реєстрацію скасовано.</b>\n\n📌 ${result.eventName}\n\n${details}`, {
-                parse_mode: 'HTML',
-                reply_markup: {
-                    keyboard: getAfishaInstantRegistrationKeyboard(),
-                    resize_keyboard: true
-                }
-            });
-            delete user.lastAfishaRegisteredEventId;
-            delete user.lastAfishaRegisteredEventName;
-        } else {
-            await bot.sendMessage(chatId, '❌ Не вдалося скасувати реєстрацію. Спробуйте ще раз.', {
-                reply_markup: {
-                    keyboard: getAfishaInstantRegistrationKeyboard(),
-                    resize_keyboard: true
-                }
-            });
-        }
-        return;
     }
 
     // Скасування реєстрації
