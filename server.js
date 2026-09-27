@@ -2974,7 +2974,7 @@ function formatPeopleCount(count) {
 
 // Форматує блок інформації про захід для повідомлення
 function formatEventDetails(event) {
-    const seatsLeft = Number.isFinite(Number(event && event.seats)) ? Number(event.seats) : 0;
+    const seatsLeft = Math.max(0, (Number(event && event.seats) || 0) - (Number(event && event.registrations) || 0));
     const registrationsCount = Math.max(0, Number(event && event.registrations) || 0);
     const reserveCount = Math.max(0, Number(event && event.reserveCount) || 0);
     return `Назва: ${event && event.name ? event.name : ''}\nЧас: ${event && event.date instanceof Date ? String(event.date.getHours()).padStart(2,'0')+":"+String(event.date.getMinutes()).padStart(2,'0') : ''}\nМісць залишилось: ${seatsLeft > 0 ? formatSeatsCount(seatsLeft) : '❌ закрито'}\nЗареєстровано: ${formatPeopleCount(registrationsCount)}\nРезерв: ${formatPeopleCount(reserveCount)}`;
@@ -3517,6 +3517,7 @@ async function incrementSheetRegistrationUnlocked(event, fallbackRegistrant) {
 
         const currentRemaining = Number(previousValues[0] ?? 0) || 0;
         const currentRegistrations = Number(previousValues[1] ?? 0) || 0;
+        // Колонка D = ЗАЛИШОК місць — зменшується на 1 при реєстрації, E = кількість зареєстрованих
         const nextRemaining = Math.max(0, currentRemaining - 1);
         const nextRegistrations = currentRegistrations + 1;
 
@@ -3549,9 +3550,6 @@ async function incrementSheetRegistrationUnlocked(event, fallbackRegistrant) {
         if (Number.isFinite(event.registrations)) {
             event.registrations = nextRegistrations;
         }
-        if (Number.isFinite(event.seats)) {
-            event.seats = nextRemaining;
-        }
     } catch (error) {
         await restoreScheduleRegistrationState(match, previousValues, previousNote);
         console.error(`[registration] failed to update Google Sheets for event "${eventLabel}"`, error && error.message ? error.message : error);
@@ -3574,6 +3572,7 @@ async function decrementSheetRegistrationUnlocked(event, registrantProfile) {
     }
 
     const registrationsCount = Number.isFinite(event.registrations) ? event.registrations : 0;
+    // event.seats у пам'яті = загальна місткість (D+E), тому залишок = місткість - реєстрації
     const totalSeats = Number.isFinite(event.seats) ? Math.max(0, event.seats) : 0;
     const remainingSeats = Math.max(0, totalSeats - registrationsCount);
     let previousValues = ['', ''];
@@ -3725,13 +3724,16 @@ function stateHasSheetsClient() {
     return Boolean(sheetsClient && SPREADSHEET_ID);
 }
 
-function parseRegistrantsFromNote(noteText) {
+// Парсить нотатку повністю: секції "Зареєстровано:" і "Резерв:" зберігаються окремо,
+// а рядки, які не вдалося розпізнати структурно, зберігаються "як є" (raw), щоб жодні
+// дані не губилися при подальшому перезаписі нотатки.
+function parseScheduleNoteSections(noteText) {
+    const sections = { registered: [], reserve: [] };
     const text = String(noteText || '').trim();
-    if (!text) return [];
+    if (!text) return sections;
 
-    const registrants = [];
-    const seen = new Set();
     let currentSection = 'registered';
+    const seenBySection = { registered: new Set(), reserve: new Set() };
     const lines = text
         .split(/\r?\n/)
         .map((line) => line.trim())
@@ -3745,10 +3747,6 @@ function parseRegistrantsFromNote(noteText) {
 
         if (/^резерв\s*:/i.test(line)) {
             currentSection = 'reserve';
-            continue;
-        }
-
-        if (currentSection !== 'registered') {
             continue;
         }
 
@@ -3768,32 +3766,92 @@ function parseRegistrantsFromNote(noteText) {
 
         let name = '';
         let phone = '';
+        let userId = '';
+        let raw = '';
 
-        const structuredMatch = cleaned.match(/^(.*?)\s*(?:\||[—-])\s*(.+)$/);
-        if (structuredMatch) {
-            name = String(structuredMatch[1] || '').trim();
-            phone = String(structuredMatch[2] || '').trim();
+        if (cleaned.includes('|')) {
+            const parts = cleaned.split('|').map((part) => String(part || '').trim());
+            name = String(parts[0] || '').trim();
+            phone = String(parts[1] || '').trim();
+            userId = String(parts[2] || '').trim();
         } else {
-            const phoneMatch = cleaned.match(/(\+?\d[\d\s()\-]{6,})$/);
-            if (phoneMatch) {
-                phone = String(phoneMatch[1] || '').trim();
-                name = cleaned.slice(0, cleaned.length - phone.length).replace(/[,:;\-\s]+$/, '').trim();
+            const structuredMatch = cleaned.match(/^(.*?)\s*[—-]\s*(.+)$/);
+            if (structuredMatch) {
+                name = String(structuredMatch[1] || '').trim();
+                phone = String(structuredMatch[2] || '').trim();
+            } else {
+                const phoneMatch = cleaned.match(/(\+?\d[\d\s()\-]{6,})$/);
+                if (phoneMatch) {
+                    phone = String(phoneMatch[1] || '').trim();
+                    name = cleaned.slice(0, cleaned.length - phone.length).replace(/[,:;\-\s]+$/, '').trim();
+                }
             }
         }
 
-        if (!name && !phone) {
-            continue;
+        if (!name && !phone && !userId) {
+            // Рядок не вдалося розпізнати структурно — зберігаємо його дослівно,
+            // щоб не втратити зареєстровану людину при перезаписі нотатки.
+            raw = cleaned;
         }
 
-        const key = `${normalizeRegistrantName(name)}|${normalizeRegistrantPhone(phone)}`;
+        const key = `${normalizeRegistrantName(name)}|${normalizeRegistrantPhone(phone)}|${normalizeRegistrantUserId(userId)}|${raw}`;
+        const seen = seenBySection[currentSection] || seenBySection.registered;
         if (seen.has(key)) {
             continue;
         }
         seen.add(key);
-        registrants.push({ name, phone });
+
+        const entry = { name, phone };
+        if (userId) entry.userId = userId;
+        if (raw) entry.raw = raw;
+
+        sections[currentSection === 'reserve' ? 'reserve' : 'registered'].push(entry);
     }
 
-    return registrants;
+    return sections;
+}
+
+function parseRegistrantsFromNote(noteText) {
+    return parseScheduleNoteSections(noteText).registered;
+}
+
+// Знаходить індекс ЄДИНОГО запису, що точно відповідає ідентичності користувача.
+// Якщо однозначно визначити запис неможливо (наприклад, кілька людей з однаковим
+// іменем без телефону/userId), повертає -1, щоб НІКОЛИ не видалити чужий запис.
+function findSingleRegistrantIndex(list, target) {
+    const safeList = Array.isArray(list) ? list : [];
+    const targetUserId = normalizeRegistrantUserId(target && target.userId);
+    const targetName = normalizeRegistrantName(target && target.name);
+    const targetPhone = normalizeRegistrantPhone(target && target.phone);
+
+    if (targetUserId) {
+        const idx = safeList.findIndex((item) => normalizeRegistrantUserId(item && item.userId) === targetUserId);
+        if (idx !== -1) return idx;
+    }
+
+    if (targetName && targetPhone) {
+        const idx = safeList.findIndex((item) => normalizeRegistrantName(item && item.name) === targetName
+            && normalizeRegistrantPhone(item && item.phone) === targetPhone);
+        if (idx !== -1) return idx;
+    }
+
+    if (targetPhone) {
+        const matches = [];
+        safeList.forEach((item, index) => {
+            if (normalizeRegistrantPhone(item && item.phone) === targetPhone) matches.push(index);
+        });
+        if (matches.length === 1) return matches[0];
+    }
+
+    if (targetName) {
+        const matches = [];
+        safeList.forEach((item, index) => {
+            if (normalizeRegistrantName(item && item.name) === targetName) matches.push(index);
+        });
+        if (matches.length === 1) return matches[0];
+    }
+
+    return -1;
 }
 
 async function getCachedScheduleIndex(forceRefresh = false) {
@@ -4000,21 +4058,34 @@ function ensureScheduleNoteEventIdTag(noteText, eventId) {
     return `${cleaned}\n\n${SCHEDULE_NOTE_EVENT_ID_TAG}${eventId}`;
 }
 
-function buildRegistrantsNoteFromList(registrationsCount, registrants, eventId = '') {
+function formatRegistrantNoteLine(item, index) {
+    if (item && item.raw) {
+        return `${index + 1}. ${item.raw}`;
+    }
+    const name = String((item && item.name) || '').trim() || 'Без імені';
+    const phone = String((item && item.phone) || '').trim();
+    const userId = String((item && item.userId) || '').trim();
+    const tail = [phone, userId].filter(Boolean).join(' | ');
+    return `${index + 1}. ${name}${tail ? ` | ${tail}` : ''}`;
+}
+
+// reserveEntries дозволяє зберегти секцію "Резерв:" незмінною при перезаписі нотатки,
+// щоб оновлення списку зареєстрованих ніколи не стирало дані резерву.
+function buildRegistrantsNoteFromList(registrationsCount, registrants, eventId = '', reserveEntries = []) {
     const safeRegistrants = Array.isArray(registrants) ? registrants : [];
     const derivedCount = Math.max(safeRegistrants.length, 0);
-    const safeCount = Number.isFinite(registrationsCount) && registrationsCount > derivedCount
-        ? derivedCount
-        : derivedCount;
-    const header = `Зареєстровано: ${safeCount}`;
-    const people = safeRegistrants.map((item, index) => {
-        const name = String(item.name || '').trim() || 'Без імені';
-        const phone = String(item.phone || '').trim();
-        return `${index + 1}. ${name}${phone ? ` | ${phone}` : ''}`;
-    });
+    const header = `Зареєстровано: ${derivedCount}`;
+    const people = safeRegistrants.map((item, index) => formatRegistrantNoteLine(item, index));
 
-    const content = people.length === 0 ? header : `${header}\n\n${people.join('\n')}`;
-    return ensureScheduleNoteEventIdTag(content, eventId);
+    const parts = [people.length === 0 ? `${header}\n\nСписок порожній` : `${header}\n\n${people.join('\n')}`];
+
+    const safeReserve = Array.isArray(reserveEntries) ? reserveEntries : [];
+    if (safeReserve.length > 0) {
+        const reservePeople = safeReserve.map((item, index) => formatRegistrantNoteLine(item, index));
+        parts.push(`Резерв: ${safeReserve.length}\n\n${reservePeople.join('\n')}`);
+    }
+
+    return ensureScheduleNoteEventIdTag(parts.join('\n\n'), eventId);
 }
 
 function getEventIdentityKey(event) {
@@ -4460,28 +4531,21 @@ async function updateScheduleReserveNote({ scheduleSheet, rowIndex, reserveCount
     }
 
     if (removeRegistrant) {
-        const removeNameKey = normalizeRegistrantName(removeRegistrant.name);
-        const removePhoneKey = normalizeRegistrantPhone(removeRegistrant.phone);
-        const removeUserIdKey = normalizeRegistrantUserId(removeRegistrant.userId);
-        reservists = reservists.filter((item) => {
-            const sameName = normalizeRegistrantName(item.name) === removeNameKey;
-            const samePhone = normalizeRegistrantPhone(item.phone) === removePhoneKey;
-            const sameUserId = normalizeRegistrantUserId(item.userId) === removeUserIdKey;
-
-            if (removeNameKey && removePhoneKey) {
-                return !(sameName && samePhone);
+        const removeNameKey = String(removeRegistrant.name || '').trim();
+        const removePhoneKey = String(removeRegistrant.phone || '').trim();
+        const removeUserIdKey = String(removeRegistrant.userId || '').trim();
+        if (removeNameKey || removePhoneKey || removeUserIdKey) {
+            const idx = findSingleRegistrantIndex(reservists, { name: removeNameKey, phone: removePhoneKey, userId: removeUserIdKey });
+            if (idx !== -1) {
+                reservists.splice(idx, 1);
+            } else {
+                console.warn('[reserve-note] cannot uniquely identify reservist to remove; note left unchanged to avoid removing the wrong person', {
+                    name: removeNameKey,
+                    phone: removePhoneKey,
+                    userId: removeUserIdKey
+                });
             }
-            if (removeUserIdKey) {
-                return !sameUserId;
-            }
-            if (removeNameKey) {
-                return !sameName;
-            }
-            if (removePhoneKey) {
-                return !samePhone;
-            }
-            return true;
-        });
+        }
     }
 
     if (addRegistrant) {
@@ -4619,29 +4683,15 @@ async function removeRegistrantFromReserveUnlocked(event, registrantProfile) {
 
     const reservists = await getEffectiveReserveRegistrants(match.scheduleSheet, match.rowIndex);
 
-    const targetName = normalizeRegistrantName(registrantProfile.name || '');
-    const targetPhone = normalizeRegistrantPhone(registrantProfile.phone || '');
-    const targetUserId = normalizeRegistrantUserId(registrantProfile.userId || registrantProfile.chatId || '');
+    const targetName = String(registrantProfile.name || '').trim();
+    const targetPhone = String(registrantProfile.phone || '').trim();
+    const targetUserId = String(registrantProfile.userId || registrantProfile.chatId || '').trim();
 
-    const remaining = reservists.filter((item) => {
-        const sameName = normalizeRegistrantName(item.name) === targetName;
-        const samePhone = normalizeRegistrantPhone(item.phone) === targetPhone;
-        const sameUserId = normalizeRegistrantUserId(item.userId) === targetUserId;
-
-        if (targetName && targetPhone) {
-            return !(sameName && samePhone);
-        }
-        if (targetUserId) {
-            return !sameUserId;
-        }
-        if (targetName) {
-            return !sameName;
-        }
-        if (targetPhone) {
-            return !samePhone;
-        }
-        return true;
-    });
+    const targetIdx = findSingleRegistrantIndex(reservists, { name: targetName, phone: targetPhone, userId: targetUserId });
+    if (targetIdx === -1) {
+        return false;
+    }
+    const remaining = reservists.slice(0, targetIdx).concat(reservists.slice(targetIdx + 1));
 
     if (remaining.length === reservists.length) {
         return false;
@@ -4682,8 +4732,8 @@ async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {
         return false;
     }
 
-    // event.seats stores the number of currently available seats.
-    const seatsLeft = Math.max(0, Number(event.seats) || 0);
+    // event.seats = загальна місткість, event.registrations = зайняті місця.
+    const seatsLeft = Math.max(0, (Number(event.seats) || 0) - (Number(event.registrations) || 0));
     if (seatsLeft <= 0) {
         return false;
     }
@@ -4693,25 +4743,16 @@ async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {
         return false;
     }
 
-    const reservists = await getEffectiveReserveRegistrants(match.scheduleSheet, match.rowIndex);
-    if (reservists.length === 0) {
+    // Хто саме перенесений визначаємо з РЕЗУЛЬТАТУ операції в schedule.js, а не окремим
+    // повторним читанням резерву — так пам'ять і сповіщення завжди стосуються рівно того
+    // користувача, якого дійсно було видалено з резерву в таблиці (без гонки при паралелізмі).
+    const promotionResult = await scheduleSheetUtils.promoteFirstReserveRegistrantToRegistration(event);
+    if (!promotionResult || !promotionResult.promoted) {
         return false;
     }
 
-    const promoted = reservists[0];
+    const promoted = promotionResult.promoted;
     const promotedChatId = Number(String(promoted.userId || '').trim());
-
-    const promotedInSchedule = await scheduleSheetUtils.promoteFirstReserveRegistrantToRegistration(event);
-    if (!promotedInSchedule) {
-        return false;
-    }
-
-    event.registrations = Math.max(0, Number(event.registrations) || 0) + 1;
-    await incrementSheetRegistrationUnlocked(event, {
-        name: promoted.name,
-        phone: promoted.phone,
-        userId: promoted.userId
-    });
 
     if (Number.isFinite(promotedChatId) && promotedChatId > 0) {
         if (!userEventRegistrations[promotedChatId]) {
@@ -4774,7 +4815,8 @@ async function promoteFirstReserveRegistrantToRegistration(event) {
 }
 
 async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, existingNote) {
-    const registrants = parseRegistrantsFromNote(existingNote);
+    const sections = parseScheduleNoteSections(existingNote);
+    const registrants = sections.registered;
 
     const candidateName = String((fallbackRegistrant && fallbackRegistrant.name) || '').trim();
     const candidatePhone = String((fallbackRegistrant && fallbackRegistrant.phone) || '').trim();
@@ -4789,7 +4831,7 @@ async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, exis
     }
 
     const eventId = extractScheduleNoteEventId(existingNote);
-    return buildRegistrantsNoteFromList(registrationsCount, registrants, eventId);
+    return buildRegistrantsNoteFromList(registrationsCount, registrants, eventId, sections.reserve);
 }
 
 async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registrationsCount, fallbackRegistrant, removeRegistrant, eventId }) {
@@ -4812,14 +4854,24 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
     }
 
     const existingNote = await getScheduleCellNote(scheduleSheet, rowIndex);
-    let registrants = parseRegistrantsFromNote(existingNote);
+    const sections = parseScheduleNoteSections(existingNote);
+    let registrants = sections.registered;
 
     if (removeRegistrant) {
-        const removeNameKey = normalizeRegistrantName(removeRegistrant.name);
-        const removePhoneKey = normalizeRegistrantPhone(removeRegistrant.phone);
-        const removeUserId = normalizeRegistrantUserId(removeRegistrant.userId);
-        if (removeNameKey || removePhoneKey || removeUserId) {
-            registrants = registrants.filter((item) => !isSameRegistrant(item, removeNameKey, removePhoneKey, removeUserId));
+        const removeName = String((removeRegistrant && removeRegistrant.name) || '').trim();
+        const removePhone = String((removeRegistrant && removeRegistrant.phone) || '').trim();
+        const removeUserId = String((removeRegistrant && removeRegistrant.userId) || '').trim();
+        if (removeName || removePhone || removeUserId) {
+            const idx = findSingleRegistrantIndex(registrants, { name: removeName, phone: removePhone, userId: removeUserId });
+            if (idx !== -1) {
+                registrants.splice(idx, 1);
+            } else {
+                console.warn('[registration-note] cannot uniquely identify registrant to remove; note left unchanged to avoid deleting the wrong person', {
+                    name: removeName,
+                    phone: removePhone,
+                    userId: removeUserId
+                });
+            }
         }
     } else if (fallbackRegistrant) {
         const candidateName = String((fallbackRegistrant && fallbackRegistrant.name) || '').trim();
@@ -4847,13 +4899,15 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
     const normalizedRegistrants = registrants.filter((item) => {
         const hasName = String(item.name || '').trim();
         const hasPhone = String(item.phone || '').trim();
-        return hasName || hasPhone;
+        const hasRaw = String(item.raw || '').trim();
+        return hasName || hasPhone || hasRaw;
     });
 
     const nextNote = buildRegistrantsNoteFromList(
         normalizedRegistrants.length,
         normalizedRegistrants,
-        eventId
+        eventId,
+        sections.reserve
     );
 
     console.log(`[registration-note] writing note to ${scheduleSheet}:${rowIndex + 1}`, {
