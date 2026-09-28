@@ -4797,7 +4797,7 @@ async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {
     return true;
 }
 
-async function promoteReserveRegistrantsForAvailableSeats(event) {
+async function promoteReserveRegistrantsForAvailableSeatsUnlocked(event) {
     if (!event) {
         return false;
     }
@@ -4808,6 +4808,10 @@ async function promoteReserveRegistrantsForAvailableSeats(event) {
     }
 
     return promotedAny;
+}
+
+async function promoteReserveRegistrantsForAvailableSeats(event) {
+    return withRegistrationLock(event && event.id, () => promoteReserveRegistrantsForAvailableSeatsUnlocked(event));
 }
 
 async function promoteFirstReserveRegistrantToRegistration(event) {
@@ -6878,7 +6882,7 @@ async function unregisterFromEventUnlocked(chatId, eventId) {
             event.registrations += 1;
             throw error;
         }
-        await promoteFirstReserveRegistrantToRegistrationUnlocked(event);
+        await promoteReserveRegistrantsForAvailableSeatsUnlocked(event);
         console.log(`📝 Користувач ${chatId} відписаний від "${registration.eventName}" (місць +1)`);
     }
 
@@ -6967,7 +6971,7 @@ async function unregisterFriendFromEventUnlocked(chatId, registrationKey) {
             event.registrations += 1;
             throw error;
         }
-        await promoteFirstReserveRegistrantToRegistrationUnlocked(event);
+        await promoteReserveRegistrantsForAvailableSeatsUnlocked(event);
         console.log(`👭 Подругу відписано від "${registration.eventName}" (chatId=${chatId})`);
     }
 
