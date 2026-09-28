@@ -6583,17 +6583,15 @@ async function registerForSelectedEventUnlocked(chatId, user, providedName, prov
     }
 
     const skipReminders = options.skipReminders === true;
-    const reserveMode = options.reserveMode === true;
     const reminderOwnerChatId = skipReminders
         ? String(options.reminderOwnerChatId || '').trim()
         : String(options.reminderOwnerChatId || chatId || '').trim();
 
     const seatsLeft = await getSeatsLeft(eventId);
     if (seatsLeft <= 0) {
-        if (reserveMode) {
-            return await registerForSelectedEventReserveUnlocked(chatId, user, providedName, providedPhone, options);
-        }
-        return { status: 'no-seats' };
+        // Місткість вичерпана саме на момент реєстрації (могло змінитись під час заповнення анкети) —
+        // завжди переводимо в резерв, а не лише коли reserveMode був заздалегідь виставлений.
+        return await registerForSelectedEventReserveUnlocked(chatId, user, providedName, providedPhone, options);
     }
 
     const registrantProfile = await resolveRegistrantProfile(chatId, user, providedName || '', providedPhone || '');
