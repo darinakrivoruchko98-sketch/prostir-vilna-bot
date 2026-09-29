@@ -4794,24 +4794,27 @@ async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {
         }
     }
 
+    event.registrations = Math.max(0, Number(event.registrations) || 0) + 1;
     return true;
 }
 
-async function promoteReserveRegistrantsForAvailableSeatsUnlocked(event) {
+async function promoteReserveRegistrantsForAvailableSeatsUnlocked(event, maxPromotions = Infinity) {
     if (!event) {
         return false;
     }
 
     let promotedAny = false;
-    while (await promoteFirstReserveRegistrantToRegistration(event)) {
+    let promotedCount = 0;
+    while (promotedCount < maxPromotions && await promoteFirstReserveRegistrantToRegistrationUnlocked(event)) {
         promotedAny = true;
+        promotedCount += 1;
     }
 
     return promotedAny;
 }
 
-async function promoteReserveRegistrantsForAvailableSeats(event) {
-    return withRegistrationLock(event && event.id, () => promoteReserveRegistrantsForAvailableSeatsUnlocked(event));
+async function promoteReserveRegistrantsForAvailableSeats(event, maxPromotions = Infinity) {
+    return withRegistrationLock(event && event.id, () => promoteReserveRegistrantsForAvailableSeatsUnlocked(event, maxPromotions));
 }
 
 async function promoteFirstReserveRegistrantToRegistration(event) {
@@ -5857,7 +5860,16 @@ async function loadEventsFromSheet() {
         }
 
         for (const event of events) {
-            await promoteReserveRegistrantsForAvailableSeats(event);
+            const previousEvent = previousEventsById.get(event.id);
+            const previousRemaining = previousEvent
+                ? Math.max(0, (Number(previousEvent.seats) || 0) - (Number(previousEvent.registrations) || 0))
+                : null;
+            const currentRemaining = Math.max(0, (Number(event.seats) || 0) - (Number(event.registrations) || 0));
+            const addedSeats = previousRemaining === null ? 0 : currentRemaining - previousRemaining;
+
+            if (addedSeats > 0) {
+                await promoteReserveRegistrantsForAvailableSeats(event, addedSeats);
+            }
         }
 
         console.log(`✅ Розклад завантажено з Sheets (${events.length} заходів)`);
