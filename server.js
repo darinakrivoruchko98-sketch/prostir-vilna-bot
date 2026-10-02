@@ -4794,7 +4794,6 @@ async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {
         }
     }
 
-    event.registrations = Math.max(0, Number(event.registrations) || 0) + 1;
     return true;
 }
 

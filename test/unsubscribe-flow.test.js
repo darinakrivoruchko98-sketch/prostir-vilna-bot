@@ -139,3 +139,15 @@ test('unsubscribe confirmation flow includes handlers for self and friend unregi
     assert.match(source, /if \(text === '✅ Так, відписати подругу' && user\.pendingFriendUnregKey\)\s*\{[\s\S]*?const result = await unregisterFriendFromEvent\(chatId, user\.pendingFriendUnregKey\);/);
     assert.match(source, /unregisterFromReserve\(chatId, eventId\)/);
 });
+
+test('reserve promotion does not increment registrations a second time after the sheet update', () => {
+    const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'server.js'), 'utf8');
+    const helperStart = source.indexOf('async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {');
+    const helperEnd = source.indexOf('\nasync function promoteReserveRegistrantsForAvailableSeatsUnlocked', helperStart);
+    const helper = source.slice(helperStart, helperEnd);
+
+    assert.notEqual(helperStart, -1);
+    assert.notEqual(helperEnd, -1);
+    assert.match(helper, /scheduleSheetUtils\.promoteFirstReserveRegistrantToRegistration\(event\)/);
+    assert.doesNotMatch(helper, /^\s*event\.registrations\s*=/m);
+});
