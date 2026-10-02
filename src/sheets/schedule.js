@@ -640,8 +640,11 @@ async function findScheduleRowForEvent(event) {
                 range: `${scheduleSheet}!A:E`
             }));
             const rows = resp.data.values || [];
+            let dateContext = null;
             for (let i = 0; i < rows.length; i++) {
-                const parsedEvent = parseEventFromRow(rows[i], null).event;
+                const parsed = parseEventFromRow(rows[i], dateContext);
+                dateContext = parsed.nextDateContext;
+                const parsedEvent = parsed.event;
                 if (!parsedEvent) continue;
 
                 const sameTitle = normalizeTitle(parsedEvent.name) === normalizeTitle(event.name);
@@ -1033,116 +1036,58 @@ async function getScheduleEventSeatState(event) {
 }
 
 async function incrementSheetRegistrationUnlocked(event, fallbackRegistrant) {
-    if (!state.sheetsClient || !config.SPREADSHEET_ID) return;
+    if (!state.sheetsClient || !config.SPREADSHEET_ID || !event) return false;
 
-    const markerMatch = await findScheduleRowByEventByNoteTag(event);
-    if (markerMatch) {
-        const scheduleSheet = markerMatch.scheduleSheet;
-        const rowIndex = markerMatch.rowIndex;
-        try {
-            const resp = await retryRequest(() => state.sheetsClient.spreadsheets.values.get({
-                spreadsheetId: config.SPREADSHEET_ID,
-                range: `${scheduleSheet}!D${rowIndex + 1}:E${rowIndex + 1}`
-            }));
-            const row = (resp.data.values || [])[0] || [];
-            const currReg = parseInt(row[1] || '0', 10);
-            const currCap = parseInt(row[0] || '0', 10);
-            const newReg = currReg + 1;
-            // Колонка D = ЗАЛИШОК місць — зменшується на 1 при реєстрації
-            const newCap = Math.max(0, currCap - 1);
-            const range = `${scheduleSheet}!D${rowIndex + 1}:E${rowIndex + 1}`;
-            logger.info(`Updating registration counts: eventId=${event.id}, sheet=${scheduleSheet}, row=${rowIndex + 1}`, `seats ${currCap}->${newCap}`, `registrations ${currReg}->${newReg}`);
-            await retryRequest(() => state.sheetsClient.spreadsheets.values.update({
-                spreadsheetId: config.SPREADSHEET_ID,
-                range,
-                valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [[newCap, newReg]] }
-            }));
-            invalidateCache('schedule');
-
-            try {
-                await updateScheduleRegistrationNote({
-                    scheduleSheet,
-                    rowIndex,
-                    registrationsCount: newReg,
-                    fallbackRegistrant,
-                    eventId: event.id
-                });
-            } catch (noteErr) {
-                logger.error('Failed to update registration note', noteErr && noteErr.message ? noteErr.message : noteErr);
-            }
-
-            event.registrations = newReg;
-            try {
-                recordRecentAction((fallbackRegistrant && fallbackRegistrant.userId) || '', {
-                    type: 'register', event, registrant: { name: fallbackRegistrant && fallbackRegistrant.name, phone: fallbackRegistrant && fallbackRegistrant.phone }
-                });
-            } catch (recErr) { logger.warn('Failed to record recent action', recErr && recErr.message ? recErr.message : recErr); }
-            return;
-        } catch (e) {
-            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-            if (!msg.includes('unable to parse range') && !msg.includes('not found')) {
-                logger.error('Error incrementing registration count', e && e.message ? e.message : e);
-                return;
-            }
-        }
+    const match = await findScheduleRowForEvent(event);
+    if (!match) {
+        logger.warn(`Не вдалося знайти рядок у розкладі для реєстрації: ${event.name}`);
+        return false;
     }
 
-    for (const scheduleSheet of config.SCHEDULE_SHEET_CANDIDATES) {
+    const { scheduleSheet, rowIndex } = match;
+    try {
+        const resp = await retryRequest(() => state.sheetsClient.spreadsheets.values.get({
+            spreadsheetId: config.SPREADSHEET_ID,
+            range: `${scheduleSheet}!D${rowIndex + 1}:E${rowIndex + 1}`
+        }));
+        const row = (resp.data.values || [])[0] || [];
+        const currReg = parseInt(row[1] || '0', 10);
+        const currCap = parseInt(row[0] || '0', 10);
+        const newReg = currReg + 1;
+        const newCap = Math.max(0, currCap - 1);
+        const range = `${scheduleSheet}!D${rowIndex + 1}:E${rowIndex + 1}`;
+        logger.info(`Updating registration counts: eventId=${event.id}, sheet=${scheduleSheet}, row=${rowIndex + 1}`, `seats ${currCap}->${newCap}`, `registrations ${currReg}->${newReg}`);
+        await retryRequest(() => state.sheetsClient.spreadsheets.values.update({
+            spreadsheetId: config.SPREADSHEET_ID,
+            range,
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: [[newCap, newReg]] }
+        }));
+        invalidateCache('schedule');
+
         try {
-            const resp = await retryRequest(() => state.sheetsClient.spreadsheets.values.get({
-                spreadsheetId: config.SPREADSHEET_ID,
-                range: `${scheduleSheet}!D:E`
-            }));
-            const rows = resp.data.values || [];
-            for (let i = 0; i < rows.length; i++) {
-                const row = rows[i];
-                const currReg = parseInt(row[1] || '0', 10);
-                const currCap = parseInt(row[0] || '0', 10);
-                const newReg = currReg + 1;
-                // Колонка D = ЗАЛИШОК місць — зменшується на 1 при реєстрації
-                const newCap = Math.max(0, currCap - 1);
-                const range = `${scheduleSheet}!D${i+1}:E${i+1}`;
-                logger.info(`Updating registration counts: eventId=${event.id}, sheet=${scheduleSheet}, row=${i + 1}`, `seats ${currCap}->${newCap}`, `registrations ${currReg}->${newReg}`);
-                await retryRequest(() => state.sheetsClient.spreadsheets.values.update({
-                    spreadsheetId: config.SPREADSHEET_ID,
-                    range,
-                    valueInputOption: 'USER_ENTERED',
-                    requestBody: { values: [[newCap, newReg]] }
-                }));
-                invalidateCache('schedule');
-
-                try {
-                    await updateScheduleRegistrationNote({
-                        scheduleSheet,
-                        rowIndex: i,
-                        registrationsCount: newReg,
-                        fallbackRegistrant,
-                        eventId: event.id
-                    });
-                } catch (noteErr) {
-                    logger.error('Failed to update registration note', noteErr && noteErr.message ? noteErr.message : noteErr);
-                    throw noteErr;
-                }
-
-                event.registrations = newReg;
-                try {
-                    recordRecentAction((fallbackRegistrant && fallbackRegistrant.userId) || '', {
-                        type: 'register', event, registrant: { name: fallbackRegistrant && fallbackRegistrant.name, phone: fallbackRegistrant && fallbackRegistrant.phone }
-                    });
-                } catch (recErr) { logger.warn('Failed record recent action', recErr && recErr.message ? recErr.message : recErr); }
-                return;
-            }
-        } catch (e) {
-            const msg = (e && e.message) ? String(e.message).toLowerCase() : '';
-            if (msg.includes('unable to parse range') || msg.includes('not found')) {
-                continue;
-            }
-            logger.error('Error incrementing registration count', e && e.message ? e.message : e);
-            return;
+            await updateScheduleRegistrationNote({
+                scheduleSheet,
+                rowIndex,
+                registrationsCount: newReg,
+                fallbackRegistrant,
+                eventId: event.id
+            });
+        } catch (noteErr) {
+            logger.error('Failed to update registration note', noteErr && noteErr.message ? noteErr.message : noteErr);
         }
+
+        event.registrations = newReg;
+        try {
+            recordRecentAction((fallbackRegistrant && fallbackRegistrant.userId) || '', {
+                type: 'register', event, registrant: { name: fallbackRegistrant && fallbackRegistrant.name, phone: fallbackRegistrant && fallbackRegistrant.phone }
+            });
+        } catch (recErr) { logger.warn('Failed to record recent action', recErr && recErr.message ? recErr.message : recErr); }
+        return true;
+    } catch (error) {
+        logger.error('Error incrementing registration count', error && error.message ? error.message : error);
+        return false;
     }
-    logger.warn(`Не вдалося оновити лічильник у розкладі для eventId=${event.id}. Спробовано аркуші: ${config.SCHEDULE_SHEET_CANDIDATES.join(', ')}`);
 }
 
 async function decrementSheetRegistration(event, registrantProfile) {

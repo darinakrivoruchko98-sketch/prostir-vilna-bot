@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const state = require('../src/state');
 const config = require('../src/config');
-const { decrementSheetRegistration } = require('../src/sheets/schedule');
+const { decrementSheetRegistration, incrementSheetRegistration } = require('../src/sheets/schedule');
 
 test('decrementSheetRegistration removes a registrant from the schedule note and updates counts', async () => {
     const originalSheetsClient = state.sheetsClient;
@@ -126,6 +126,62 @@ test('decrementSheetRegistration keeps the remaining registrants in the note whe
         assert.match(note, /Bob/);
         assert.match(note, /Carol/);
         assert.doesNotMatch(note, /Alice/);
+    } finally {
+        state.sheetsClient = originalSheetsClient;
+        config.SPREADSHEET_ID = originalSpreadsheetId;
+    }
+});
+
+test('incrementSheetRegistration updates the matching row when the event note has no ID marker', async () => {
+    const originalSheetsClient = state.sheetsClient;
+    const originalSpreadsheetId = config.SPREADSHEET_ID;
+    const updates = [];
+
+    state.sheetsClient = {
+        spreadsheets: {
+            get: async (args) => {
+                if (args && args.ranges && args.ranges[0] && args.ranges[0].includes('!E:E')) {
+                    return { data: { sheets: [{ data: [{ rowData: [] }] }] } };
+                }
+                if (args && args.ranges && args.ranges[0] && args.ranges[0].includes('!E3')) {
+                    return { data: { sheets: [{ data: [{ rowData: [{ values: [{ note: '' }] }] }] }] } };
+                }
+                if (args && args.fields && args.fields.includes('sheets(properties(sheetId,title))')) {
+                    return { data: { sheets: [{ properties: { sheetId: 7, title: 'Розклад' } }] } };
+                }
+                return { data: { sheets: [] } };
+            },
+            values: {
+                get: async (args) => {
+                    if (args && args.range === 'Розклад!A:E') {
+                        return { data: { values: [
+                            ['2026-10-03', '', '', '', ''],
+                            ['', '18:00', 'Other Event', '0', '2'],
+                            ['', '19:00', 'Target Event', '1', '3']
+                        ] } };
+                    }
+                    if (args && args.range === 'Розклад!D3:E3') {
+                        return { data: { values: [['1', '3']] } };
+                    }
+                    return { data: { values: [] } };
+                },
+                update: async (args) => updates.push(args)
+            },
+            batchUpdate: async () => {}
+        }
+    };
+    config.SPREADSHEET_ID = 'spreadsheet-123';
+
+    try {
+        const result = await incrementSheetRegistration(
+            { id: 'target-event', name: 'Target Event', date: new Date('2026-10-03T19:00:00Z'), registrations: 3 },
+            { userId: '42', name: 'Alice', phone: '380123' }
+        );
+
+        assert.equal(result, true);
+        assert.equal(updates.length, 1);
+        assert.equal(updates[0].range, 'Розклад!D3:E3');
+        assert.deepEqual(updates[0].requestBody.values[0], [0, 4]);
     } finally {
         state.sheetsClient = originalSheetsClient;
         config.SPREADSHEET_ID = originalSpreadsheetId;
