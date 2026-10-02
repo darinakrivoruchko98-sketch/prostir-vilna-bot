@@ -150,4 +150,13 @@ test('reserve promotion does not increment registrations a second time after the
     assert.notEqual(helperEnd, -1);
     assert.match(helper, /scheduleSheetUtils\.promoteFirstReserveRegistrantToRegistration\(event\)/);
     assert.doesNotMatch(helper, /^\s*event\.registrations\s*=/m);
+
+    const scheduleLoaderStart = source.indexOf('async function loadEventsFromSheet');
+    const scheduleLoadStart = source.indexOf('for (const event of events) {', scheduleLoaderStart);
+    const scheduleLoadEnd = source.indexOf('\n        console.log(`✅ Розклад завантажено з Sheets', scheduleLoadStart);
+    const scheduleLoad = source.slice(scheduleLoadStart, scheduleLoadEnd);
+    assert.notEqual(scheduleLoaderStart, -1);
+    assert.notEqual(scheduleLoadStart, -1);
+    assert.notEqual(scheduleLoadEnd, -1);
+    assert.match(scheduleLoad, /previousRemaining === null \? currentRemaining : currentRemaining - previousRemaining/);
 });

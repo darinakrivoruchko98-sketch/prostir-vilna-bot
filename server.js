@@ -5864,7 +5864,7 @@ async function loadEventsFromSheet() {
                 ? Math.max(0, (Number(previousEvent.seats) || 0) - (Number(previousEvent.registrations) || 0))
                 : null;
             const currentRemaining = Math.max(0, (Number(event.seats) || 0) - (Number(event.registrations) || 0));
-            const addedSeats = previousRemaining === null ? 0 : currentRemaining - previousRemaining;
+            const addedSeats = previousRemaining === null ? currentRemaining : currentRemaining - previousRemaining;
 
             if (addedSeats > 0) {
                 await promoteReserveRegistrantsForAvailableSeats(event, addedSeats);
