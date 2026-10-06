@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { resolveKnownUser } = require('../src/sheets/personal-data');
+const state = require('../src/state');
+const config = require('../src/config');
+const { invalidateCache } = require('../src/sheets/cache');
+const { appendRegistrationRow, resolveKnownUser } = require('../src/sheets/personal-data');
 const { applyKnownUserProfile } = require('../src/handlers/registration');
 const { buildScheduleNoteText, extractScheduleNoteEventId } = require('../src/sheets/schedule');
 
@@ -62,4 +65,49 @@ test('buildScheduleNoteText keeps event id metadata so registrations are matched
 
   assert.match(noteText, /EVENT_ID:\s*event_123/i);
   assert.equal(extractScheduleNoteEventId(noteText), 'event_123');
+});
+
+test('friend profile without chatId writes to the registered-users sheet without overwriting the registrant', async () => {
+  const originalClient = state.sheetsClient;
+  const originalSpreadsheetId = config.PERSONAL_DATA_SPREADSHEET_ID;
+  const originalSheetName = config.PERSONAL_DATA_SHEET_NAME;
+  const updates = [];
+  const rows = [
+    ['username', 'name', 'phone', 'birth', 'status', 'children', 'health', 'evacuation', 'impact', 'employment', 'category', 'gzn', 'chatId'],
+    ['', 'Іваненко Марія Олександрівна', '380111111111', '01.01.1980', 'ВПО', '0', 'Ні', '', '', 'Працюю', '', 'Ні', '5198527486']
+  ];
+
+  state.sheetsClient = {
+    spreadsheets: {
+      get: async () => ({ data: { sheets: [{ properties: { title: 'Зареєстровані' } }] } }),
+      values: {
+        get: async () => ({ data: { values: rows } }),
+        update: async (request) => updates.push(request)
+      }
+    }
+  };
+  config.PERSONAL_DATA_SPREADSHEET_ID = 'friend-personal-sheet';
+  config.PERSONAL_DATA_SHEET_NAME = 'Зареєстровані';
+  invalidateCache('personal-data');
+
+  try {
+    await appendRegistrationRow('', {
+      name: 'Іваненко Марія Олександрівна',
+      phone: '380990635980',
+      birth: '02.02.1990',
+      status: 'ВПО'
+    }, { matchByPhoneOrChatIdOnly: true });
+
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].spreadsheetId, 'friend-personal-sheet');
+    assert.equal(updates[0].range, 'Зареєстровані!A3:M3');
+    assert.equal(updates[0].requestBody.values[0][1], 'Іваненко Марія Олександрівна');
+    assert.equal(updates[0].requestBody.values[0][2], '380990635980');
+    assert.equal(updates[0].requestBody.values[0][12], '');
+  } finally {
+    state.sheetsClient = originalClient;
+    config.PERSONAL_DATA_SPREADSHEET_ID = originalSpreadsheetId;
+    config.PERSONAL_DATA_SHEET_NAME = originalSheetName;
+    invalidateCache('personal-data');
+  }
 });

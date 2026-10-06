@@ -11,7 +11,8 @@ const { createAuthorizedSheetsClient } = require('./src/sheets/auth');
 const { cancelAfishaRegistrationButton, isRegistrationCancelText } = require('./src/utils/registration-flow');
 const { withCache, invalidateCache } = require('./src/sheets/cache');
 const { buildBeneficiarySummary, parseRegistrantsFromNoteText } = require('./src/utils/beneficiary-summary');
-const { hasCompleteRegistrationProfile } = require('./src/utils/profile');
+const { hasCompleteRegistrationProfile, hasLikelyRegistrantNameShape } = require('./src/utils/profile');
+const { buildFriendRegistrationRecord, isValidFriendRegistrationRecord, registerFriendForEvent } = require('./src/utils/friend-registration');
 const { shouldSkipAiIntentDetection } = require('./src/utils/intent-detection');
 const { createNotificationDeduper } = require('./src/utils/notification-dedup');
 const { clearFeedbackFlowState } = require('./src/utils/feedback-state');
@@ -1641,6 +1642,8 @@ function isLikelyInvalidRegistrantName(value) {
         normalizeCommandText(MAIN_MENU_BUTTONS.afisha),
         normalizeCommandText(MAIN_MENU_BUTTONS.contacts),
         normalizeCommandText(MAIN_MENU_BUTTONS.reminders),
+        normalizeCommandText(MAIN_MENU_BUTTONS.friend),
+        normalizeCommandText(FRIEND_FLOW_BUTTONS.addAnother),
         normalizeCommandText(NAVIGATION_BUTTONS.menu),
         normalizeCommandText('афіша заходів'),
         normalizeCommandText('меню')
@@ -1650,8 +1653,7 @@ function isLikelyInvalidRegistrantName(value) {
         return true;
     }
 
-    const tokens = String(value || '').trim().split(/\s+/).filter(Boolean);
-    return tokens.length < 2;
+    return !hasLikelyRegistrantNameShape(value);
 }
 
 function matchesCommand(text, ...variants) {
@@ -3486,8 +3488,7 @@ async function withRegistrationLock(eventId, operation) {
 
 async function incrementSheetRegistrationUnlocked(event, fallbackRegistrant) {
     if (!event || !sheetsClient || !SPREADSHEET_ID) {
-        console.warn('[registration] skipping sheet increment: missing event, sheets client, or spreadsheet id');
-        return;
+        throw new Error('[registration] cannot commit registration: missing event, sheets client, or spreadsheet id');
     }
 
     const eventLabel = event.name || event.id || 'unknown event';
@@ -3495,8 +3496,7 @@ async function incrementSheetRegistrationUnlocked(event, fallbackRegistrant) {
 
     const match = await findScheduleRowByEvent(event);
     if (!match) {
-        console.warn(`[registration] cannot find schedule row for event "${eventLabel}"`);
-        return;
+        throw new Error(`[registration] cannot find schedule row for event "${eventLabel}"`);
     }
 
     console.log(`[registration] found schedule row for event "${eventLabel}"`, {
@@ -3528,22 +3528,53 @@ async function incrementSheetRegistrationUnlocked(event, fallbackRegistrant) {
             nextRegistrations
         });
 
-        await sheetsClient.spreadsheets.values.update({
-            spreadsheetId: SPREADSHEET_ID,
-            range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: {
-                values: [[String(nextRemaining), String(nextRegistrations)]]
-            }
-        });
-        console.log(`[registration] successfully wrote D/E values to ${match.scheduleSheet}:${match.rowIndex + 1}`);
-
-        await updateScheduleRegistrationNote({
+        const noteUpdate = await updateScheduleRegistrationNote({
             scheduleSheet: match.scheduleSheet,
             rowIndex: match.rowIndex,
             registrationsCount: nextRegistrations,
             fallbackRegistrant,
-            eventId: event.id
+            eventId: event.id,
+            deferWrite: true
+        });
+        if (!noteUpdate || !noteUpdate.note || noteUpdate.sheetId === null || noteUpdate.sheetId === undefined) {
+            throw new Error(`[registration] failed to write registrant note for event "${eventLabel}"`);
+        }
+
+        await sheetsClient.spreadsheets.batchUpdate({
+            spreadsheetId: SPREADSHEET_ID,
+            requestBody: {
+                requests: [
+                    {
+                        updateCells: {
+                            range: {
+                                sheetId: noteUpdate.sheetId,
+                                startRowIndex: match.rowIndex,
+                                endRowIndex: match.rowIndex + 1,
+                                startColumnIndex: 3,
+                                endColumnIndex: 5
+                            },
+                            rows: [{ values: [
+                                { userEnteredValue: { numberValue: nextRemaining } },
+                                { userEnteredValue: { numberValue: nextRegistrations } }
+                            ] }],
+                            fields: 'userEnteredValue'
+                        }
+                    },
+                    {
+                        repeatCell: {
+                            range: {
+                                sheetId: noteUpdate.sheetId,
+                                startRowIndex: match.rowIndex,
+                                endRowIndex: match.rowIndex + 1,
+                                startColumnIndex: 4,
+                                endColumnIndex: 5
+                            },
+                            cell: { note: noteUpdate.note },
+                            fields: 'note'
+                        }
+                    }
+                ]
+            }
         });
         console.log(`[registration] updated schedule note for event "${eventLabel}"`);
 
@@ -4840,10 +4871,9 @@ async function buildRegistrantsNote(registrationsCount, fallbackRegistrant, exis
     return buildRegistrantsNoteFromList(registrationsCount, registrants, eventId, sections.reserve);
 }
 
-async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registrationsCount, fallbackRegistrant, removeRegistrant, eventId }) {
+async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registrationsCount, fallbackRegistrant, removeRegistrant, eventId, deferWrite = false }) {
     if (!scheduleSheet || rowIndex < 0 || !SPREADSHEET_ID || !sheetsClient) {
-        console.warn('[registration-note] skipping note update: missing schedule sheet, row index, spreadsheet, or sheets client');
-        return;
+        throw new Error('[registration-note] cannot update note: missing schedule sheet, row index, spreadsheet, or sheets client');
     }
 
     console.log(`[registration-note] updating note for ${scheduleSheet}:${rowIndex + 1}`, {
@@ -4855,8 +4885,7 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
 
     const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, scheduleSheet);
     if (sheetId === null || typeof sheetId === 'undefined') {
-        console.warn(`[registration-note] cannot resolve sheetId for ${scheduleSheet}`);
-        return;
+        throw new Error(`[registration-note] cannot resolve sheetId for ${scheduleSheet}`);
     }
 
     const existingNote = await getScheduleCellNote(scheduleSheet, rowIndex);
@@ -4921,6 +4950,10 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
         noteLength: nextNote.length
     });
 
+    if (deferWrite) {
+        return { note: nextNote, sheetId };
+    }
+
     await sheetsClient.spreadsheets.batchUpdate({
         spreadsheetId: SPREADSHEET_ID,
         requestBody: {
@@ -4944,6 +4977,7 @@ async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registr
         }
     });
     console.log(`[registration-note] note update complete for ${scheduleSheet}:${rowIndex + 1}`);
+    return true;
 }
 
 function getLocalDateKey(date) {
@@ -5344,19 +5378,6 @@ async function startSelectedEventsRegistration(chatId, user, options = {}) {
         return;
     }
 
-    if (isFriendMode) {
-        let registrationOwnerChatId = String(user.friendTargetChatId || '').trim();
-        if (!registrationOwnerChatId) {
-            registrationOwnerChatId = String(chatId || '').trim();
-        }
-
-        try {
-            await appendRegistrationRow(registrationOwnerChatId, registrantData);
-        } catch (error) {
-            console.error('❌ Не вдалося синхронізувати дані подруги у таблицю перед реєстрацією:', error && error.message ? error.message : error);
-        }
-    }
-
     const { successEvents, alreadyRegisteredEvents, reserveEvents, failedEvents } = await completeSelectedEventsRegistration(
         chatId,
         user,
@@ -5365,6 +5386,9 @@ async function startSelectedEventsRegistration(chatId, user, options = {}) {
         {
             skipReminders: isFriendMode,
             reserveMode: user.afishaReserveMode === true,
+            registrantChatId: String(chatId || ''),
+            friendChatId: isFriendMode ? String(user.friendTargetChatId || '').trim() : '',
+            friendProfile: isFriendMode ? registrantData : null,
             reminderOwnerChatId: isFriendMode
                 ? String(user.friendTargetChatId || '').trim()
                 : String(chatId)
@@ -6601,15 +6625,30 @@ async function registerForSelectedEventUnlocked(chatId, user, providedName, prov
     const reminderOwnerChatId = skipReminders
         ? String(options.reminderOwnerChatId || '').trim()
         : String(options.reminderOwnerChatId || chatId || '').trim();
+    const friendRecord = options.friendProfile
+        ? buildFriendRegistrationRecord({
+            registrantChatId: options.registrantChatId || chatId,
+            friendChatId: options.friendChatId,
+            friendName: providedName,
+            friendPhone: providedPhone,
+            eventId
+        })
+        : null;
 
     const seatsLeft = await getSeatsLeft(eventId);
-    if (seatsLeft <= 0) {
+    if (!friendRecord && seatsLeft <= 0) {
         // Місткість вичерпана саме на момент реєстрації (могло змінитись під час заповнення анкети) —
         // завжди переводимо в резерв, а не лише коли reserveMode був заздалегідь виставлений.
         return await registerForSelectedEventReserveUnlocked(chatId, user, providedName, providedPhone, options);
     }
 
-    const registrantProfile = await resolveRegistrantProfile(chatId, user, providedName || '', providedPhone || '');
+    if (friendRecord && !isValidFriendRegistrationRecord(friendRecord)) {
+        return { status: 'invalid-registrant' };
+    }
+
+    const registrantProfile = friendRecord
+        ? { userId: friendRecord.friendChatId, name: friendRecord.friendName, phone: friendRecord.friendPhone }
+        : await resolveRegistrantProfile(chatId, user, providedName || '', providedPhone || '');
     const friendRegistrationKey = buildFriendRegistrationKey(eventId, registrantProfile.name, registrantProfile.phone);
 
     const evObj = events.find(e => e.id === eventId);
@@ -6640,17 +6679,45 @@ async function registerForSelectedEventUnlocked(chatId, user, providedName, prov
         }
     }
 
-    // Оновлюємо лічильник у розкладі та зберігаємо реєстрацію у листі "Зареєстровані"
-    if (evObj) {
-        evObj.registrations = (evObj.registrations || 0) + 1;
-        try {
-            await incrementSheetRegistrationUnlocked(evObj, registrantProfile);
-        } catch (error) {
-            evObj.registrations = Math.max(0, evObj.registrations - 1);
-            throw error;
+    if (friendRecord) {
+        const friendResult = await registerFriendForEvent(friendRecord, {
+            hasAvailableSeat: async () => (await getSeatsLeft(eventId)) > 0,
+            isDuplicate: async () => {
+                if (evObj && await isRegistrantAlreadyInEventNote(evObj, registrantProfile)) return true;
+                return Array.isArray(friendEventRegistrations[chatId])
+                    && friendEventRegistrations[chatId].some((registration) => registration.registrationKey === friendRegistrationKey);
+            },
+            writeRegistrant: async (record) => appendRegistrationRow(record.friendChatId, Object.assign({}, options.friendProfile, {
+                name: record.friendName,
+                phone: record.friendPhone,
+                chatId: record.friendChatId
+            }), { matchByPhoneOrChatIdOnly: true }),
+            writeEventRegistration: async (record) => {
+                if (!evObj) throw new Error(`Event ${record.eventId} not found`);
+                await incrementSheetRegistrationUnlocked(evObj, {
+                    userId: record.friendChatId,
+                    name: record.friendName,
+                    phone: record.friendPhone
+                });
+            }
+        });
+
+        if (friendResult.status === 'no-seats') {
+            return await registerForSelectedEventReserveUnlocked(chatId, user, providedName, providedPhone, options);
         }
+        if (friendResult.status === 'failed') {
+            console.error('❌ Не вдалося атомарно зареєструвати подругу:', friendResult.error && friendResult.error.message ? friendResult.error.message : friendResult.error);
+            return { status: 'failed' };
+        }
+        if (friendResult.status !== 'success') {
+            return { status: friendResult.status };
+        }
+    } else if (evObj) {
+        // Update the schedule only after all registration checks have passed.
+        await incrementSheetRegistrationUnlocked(evObj, registrantProfile);
     }
 
+    // In-memory registration state is changed only after the Sheets write succeeds.
     if (user.step === 7) {
         if (!user.selectedEvents) user.selectedEvents = [];
         user.selectedEvents.push({ id: eventId, name: eventName });
@@ -6752,8 +6819,24 @@ async function registerForSelectedEventReserveUnlocked(chatId, user, providedNam
     const reminderOwnerChatId = skipReminders
         ? String(options.reminderOwnerChatId || '').trim()
         : String(options.reminderOwnerChatId || chatId || '').trim();
-    const registrantProfile = await resolveRegistrantProfile(chatId, user, providedName || '', providedPhone || '');
-    registrantProfile.userId = reminderOwnerChatId || String(chatId || '');
+    const friendRecord = options.friendProfile
+        ? buildFriendRegistrationRecord({
+            registrantChatId: options.registrantChatId || chatId,
+            friendChatId: options.friendChatId,
+            friendName: providedName,
+            friendPhone: providedPhone,
+            eventId
+        })
+        : null;
+    if (friendRecord && !isValidFriendRegistrationRecord(friendRecord)) {
+        return { status: 'invalid-registrant' };
+    }
+    const registrantProfile = friendRecord
+        ? { userId: friendRecord.friendChatId, name: friendRecord.friendName, phone: friendRecord.friendPhone }
+        : await resolveRegistrantProfile(chatId, user, providedName || '', providedPhone || '');
+    if (!friendRecord) {
+        registrantProfile.userId = reminderOwnerChatId || String(chatId || '');
+    }
 
     const event = events.find((item) => item.id === eventId);
     if (!event) {
@@ -6768,6 +6851,14 @@ async function registerForSelectedEventReserveUnlocked(chatId, user, providedNam
     const duplicateInReserve = await isRegistrantAlreadyInEventReserveNote(event, registrantProfile);
     if (duplicateInReserve) {
         return { status: 'already-reserved' };
+    }
+
+    if (friendRecord) {
+        await appendRegistrationRow(friendRecord.friendChatId, Object.assign({}, options.friendProfile, {
+            name: friendRecord.friendName,
+            phone: friendRecord.friendPhone,
+            chatId: friendRecord.friendChatId
+        }), { matchByPhoneOrChatIdOnly: true });
     }
 
     const added = await addRegistrantToReserveUnlocked(event, registrantProfile);
@@ -10030,18 +10121,16 @@ bot.on('message', async (msg) => {
                 });
                 
                 // Для реєстрації подруги намагаємось прив'язати запис до її chatId за номером телефону.
-                let registrationOwnerChatId = isFriendRegistrationMode(user)
-                    ? ''
+                const friendChatId = isFriendRegistrationMode(user)
+                    ? await resolveChatIdByPhone(registrationDraft.phone)
                     : String(chatId || '').trim();
                 if (isFriendRegistrationMode(user)) {
-                    const friendChatId = await resolveChatIdByPhone(registrationDraft.phone);
                     user.friendTargetChatId = friendChatId;
-                    if (friendChatId) {
-                        registrationOwnerChatId = friendChatId;
-                    }
                 }
 
-                await appendRegistrationRow(registrationOwnerChatId, registrationDraft);
+                await appendRegistrationRow(friendChatId, registrationDraft, {
+                    matchByPhoneOrChatIdOnly: isFriendRegistrationMode(user)
+                });
 
                 console.log(`✅ Реєстрація успішно збережена для ${chatId}`);
                 console.log(`===============================\n`);
@@ -10073,6 +10162,9 @@ bot.on('message', async (msg) => {
                         {
                             skipReminders: isFriendRegistrationMode(user),
                             reserveMode: user.afishaReserveMode === true,
+                            registrantChatId: String(chatId || ''),
+                            friendChatId: isFriendRegistrationMode(user) ? String(user.friendTargetChatId || '').trim() : '',
+                            friendProfile: isFriendRegistrationMode(user) ? registrationDraft : null,
                             reminderOwnerChatId: isFriendRegistrationMode(user)
                                 ? String(user.friendTargetChatId || '').trim()
                                 : String(chatId)

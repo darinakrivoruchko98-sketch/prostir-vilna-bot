@@ -16,6 +16,12 @@ function hasCompleteRegistrationProfile(profile) {
     );
 }
 
+function hasLikelyRegistrantNameShape(value) {
+    const tokens = String(value || '').trim().split(/\s+/).filter(Boolean);
+    return tokens.length >= 2 && tokens.every((token) => /^\p{L}+(?:['’ʼ-]\p{L}+)*$/u.test(token));
+}
+
 module.exports = {
-    hasCompleteRegistrationProfile
+    hasCompleteRegistrationProfile,
+    hasLikelyRegistrantNameShape
 };

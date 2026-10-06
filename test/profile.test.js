@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { hasCompleteRegistrationProfile } = require('../src/utils/profile');
+const { hasCompleteRegistrationProfile, hasLikelyRegistrantNameShape } = require('../src/utils/profile');
 
 test('treats a full profile as complete', () => {
   const profile = {
@@ -36,4 +36,9 @@ test('treats a missing profile field as incomplete', () => {
   };
 
   assert.equal(hasCompleteRegistrationProfile(profile), false);
+});
+
+test('accepts a person name and rejects event labels as registrant names', () => {
+  assert.equal(hasLikelyRegistrantNameShape('Іваненко Марія Олександрівна'), true);
+  assert.equal(hasLikelyRegistrantNameShape('21 серпня на 11.00'), false);
 });

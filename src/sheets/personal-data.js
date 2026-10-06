@@ -32,7 +32,7 @@ function normalizePhoneValue(value) {
     return String(value || '').replace(/\D/g, '');
 }
 
-function findExistingRowByIdentity(rows, values) {
+function findExistingRowByIdentity(rows, values, matchByPhoneOrChatIdOnly = false) {
     const inputUsername = normalizeIdentityValue(values[0]);
     const inputName = normalizeIdentityValue(values[1]);
     const inputPhone = normalizePhoneValue(values[2]);
@@ -51,6 +51,12 @@ function findExistingRowByIdentity(rows, values) {
 
         const hasData = rowUsername || rowName || rowPhone || rowChatId;
         if (!hasData) {
+            continue;
+        }
+
+        if (matchByPhoneOrChatIdOnly) {
+            if (inputChatId && rowChatId === inputChatId) return i + 1;
+            if (inputPhone && rowPhone === inputPhone && (!inputChatId || !rowChatId)) return i + 1;
             continue;
         }
 
@@ -93,7 +99,7 @@ function findFirstFreeRow(rows) {
     return targetRow;
 }
 
-async function appendRegistrationRow(chatId, user) {
+async function appendRegistrationRow(chatId, user, options = {}) {
     if (!config.PERSONAL_DATA_SPREADSHEET_ID) {
         throw new Error('PERSONAL_DATA_SPREADSHEET_ID not set');
     }
@@ -148,7 +154,7 @@ async function appendRegistrationRow(chatId, user) {
             });
             console.log(`✅ Лист прочитаний. Рядків: ${rows.length}`);
 
-            const existingRowNumber = findExistingRowByIdentity(rows, values);
+            const existingRowNumber = findExistingRowByIdentity(rows, values, options.matchByPhoneOrChatIdOnly === true);
             const targetRow = existingRowNumber || findFirstFreeRow(rows);
             const rowSnapshot = rows[targetRow - 1] || [];
             const valuesToWrite = mergeWithExistingRow(rowSnapshot, values);
@@ -192,7 +198,7 @@ async function appendRegistrationRow(chatId, user) {
                         range: 'A:M'
                     });
                     const rows = existingResp.data.values || [];
-                    const existingRowNumber = findExistingRowByIdentity(rows, values);
+                    const existingRowNumber = findExistingRowByIdentity(rows, values, options.matchByPhoneOrChatIdOnly === true);
                     const targetRow = existingRowNumber || findFirstFreeRow(rows);
                     const rowSnapshot = rows[targetRow - 1] || [];
                     const valuesToWrite = mergeWithExistingRow(rowSnapshot, values);

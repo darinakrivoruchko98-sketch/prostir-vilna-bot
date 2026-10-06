@@ -140,11 +140,6 @@ async function registerForSelectedEvent(chatId, user, providedName, providedPhon
         phone: registrantProfile.phone
     });
 
-    if (evObj) {
-        evObj.registrations = (evObj.registrations || 0) + 1;
-        if (typeof evObj.seats === 'number') evObj.seats = Math.max(0, evObj.seats - 1);
-    }
-
     if (user.step === 12) {
         if (!user.selectedEvents) user.selectedEvents = [];
         user.selectedEvents.push({ id: eventId, name: eventName });
