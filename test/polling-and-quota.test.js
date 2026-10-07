@@ -32,11 +32,11 @@ test('409 handling only reacts to real 409 and never stops/restarts polling in a
   assert.match(source, /process\.env\.RENDER/);
 });
 
-test('manual note sync has no separate 15s timer and runs from loadEventsFromSheet with a forced refresh only when the schedule changed', () => {
+test('manual note sync has no separate 15s timer and runs from loadEventsFromSheet with a forced refresh only on heavy (changed or 60s) cycles', () => {
   assert.doesNotMatch(source, /syncManualRegistrationsFromScheduleNotes\(\)\.catch/);
   assert.doesNotMatch(source, /}, 15 \* 1000\)/);
   const loader = between('async function loadEventsFromSheet() {', '/* ===== SAVE TO SHEET ===== */');
-  assert.match(loader, /syncManualRegistrationsFromScheduleNotes\(\{ forceRefresh: scheduleChanged \}\)/);
+  assert.match(loader, /syncManualRegistrationsFromScheduleNotes\(\{ forceRefresh: heavySyncDue \}\)/);
 });
 
 test('schedule note index is cached instead of re-read on every call', () => {

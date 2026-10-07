@@ -542,20 +542,35 @@ function getCachedSheetLookup(cacheKey, fn) {
     return valuePromise;
 }
 
-async function withGoogleSheetsRetry(operation, { label = 'Google Sheets request', attempts = 4 } = {}) {
+let sheetsQuotaCooldownUntil = 0;
+const SHEETS_QUOTA_COOLDOWN_MS = 30 * 1000;
+
+function isSheetsQuotaError(error) {
+    const msg = String((error && error.message) || error || '').toLowerCase();
+    const code = Number(error && (error.code || error.status || (error.response && error.response.status)));
+    return code === 429 || msg.includes('quota') || msg.includes('rate limit') || msg.includes('too many requests') || msg.includes('read requests');
+}
+
+function noteSheetsQuotaError(error) {
+    if (!isSheetsQuotaError(error)) return false;
+    sheetsQuotaCooldownUntil = Date.now() + SHEETS_QUOTA_COOLDOWN_MS;
+    return true;
+}
+
+// На 429 не множимо навантаження: максимум одна повторна спроба після паузи, а фонове оновлення
+// розкладу ставиться на cooldown (див. loadEventsFromSheet).
+async function withGoogleSheetsRetry(operation, { label = 'Google Sheets request', attempts = 2 } = {}) {
     let lastError;
     for (let attempt = 0; attempt < attempts; attempt++) {
         try {
             return await operation();
         } catch (error) {
             lastError = error;
-            const msg = String((error && error.message) || error || '').toLowerCase();
-            const isTemporaryQuota = msg.includes('quota') || msg.includes('rate limit') || msg.includes('too many requests') || msg.includes('read requests');
-            if (!isTemporaryQuota || attempt === attempts - 1) {
+            if (!noteSheetsQuotaError(error) || attempt === attempts - 1) {
                 throw error;
             }
-            const waitMs = 1500 * (attempt + 1);
-            logger.warn(`${label} hit quota, retrying in ${waitMs}ms`, { attempt: attempt + 1, message: msg });
+            const waitMs = 5000 + Math.floor(Math.random() * 1000);
+            logger.warn(`${label} hit quota, retrying once in ${waitMs}ms`, { attempt: attempt + 1 });
             await new Promise((resolve) => setTimeout(resolve, waitMs));
         }
     }
@@ -3697,6 +3712,30 @@ async function decrementSheetRegistration(event, registrantProfile) {
 
 const sheetIdCache = new Map();
 
+const SHEET_METADATA_TTL_MS = 10 * 60 * 1000;
+const sheetMetadataCache = new Map();
+
+// Один metadata-запит кешує id усіх листів (включно з відсутніми), тож відсутній лист
+// кандидат («Заходи») не викликає повторних запитів щоцикл.
+async function getSheetMetadata(spreadsheetId) {
+    const cached = sheetMetadataCache.get(spreadsheetId);
+    if (cached && cached.expiresAt > Date.now()) {
+        return cached.sheets;
+    }
+    const metadata = await sheetsClient.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets(properties(sheetId,title))'
+    });
+    const sheets = new Map();
+    for (const item of (metadata.data.sheets || [])) {
+        if (item && item.properties && item.properties.title) {
+            sheets.set(item.properties.title, item.properties.sheetId);
+        }
+    }
+    sheetMetadataCache.set(spreadsheetId, { sheets, expiresAt: Date.now() + SHEET_METADATA_TTL_MS });
+    return sheets;
+}
+
 async function getSheetIdByTitle(spreadsheetId, sheetTitle) {
     if (!spreadsheetId || !sheetTitle || !sheetsClient) {
         return null;
@@ -3708,20 +3747,65 @@ async function getSheetIdByTitle(spreadsheetId, sheetTitle) {
     }
 
     try {
-        const metadata = await sheetsClient.spreadsheets.get({
-            spreadsheetId,
-            fields: 'sheets(properties(sheetId,title))'
-        });
-        const sheet = (metadata.data.sheets || []).find((item) => item && item.properties && item.properties.title === sheetTitle);
-        const sheetId = sheet && sheet.properties ? sheet.properties.sheetId : null;
+        const sheets = await getSheetMetadata(spreadsheetId);
+        const sheetId = sheets.has(sheetTitle) ? sheets.get(sheetTitle) : null;
         if (sheetId !== null && sheetId !== undefined) {
             sheetIdCache.set(cacheKey, sheetId);
         }
         return sheetId;
     } catch (error) {
+        noteSheetsQuotaError(error);
         console.error(`❌ Не вдалося отримати sheetId для листа "${sheetTitle}":`, error && error.message ? error.message : error);
         return null;
     }
+}
+
+// Лише листи-кандидати, що реально існують; при будь-якій невизначеності повертає всіх кандидатів.
+async function getExistingScheduleSheets() {
+    try {
+        const sheets = await getSheetMetadata(SPREADSHEET_ID);
+        const existing = SCHEDULE_SHEET_CANDIDATES.filter((title) => sheets.has(title));
+        return existing.length > 0 ? existing : SCHEDULE_SHEET_CANDIDATES;
+    } catch (error) {
+        noteSheetsQuotaError(error);
+        return SCHEDULE_SHEET_CANDIDATES;
+    }
+}
+
+// Спільні дані останнього зчитування A:F (оновлюється кожні 10 с) та нотаток E:E.
+const sharedScheduleRows = new Map();
+const sharedScheduleNoteRows = new Map();
+const SHARED_SCHEDULE_ROWS_MAX_AGE_MS = 30 * 1000;
+const SHARED_SCHEDULE_NOTES_MAX_AGE_MS = 30 * 1000;
+
+function getSharedScheduleRows(scheduleSheet) {
+    const entry = sharedScheduleRows.get(scheduleSheet);
+    if (!entry || (Date.now() - entry.at) > SHARED_SCHEDULE_ROWS_MAX_AGE_MS) return null;
+    return entry.rows;
+}
+
+async function fetchScheduleNoteRows(scheduleSheet, maxAgeMs = SHARED_SCHEDULE_NOTES_MAX_AGE_MS) {
+    const entry = sharedScheduleNoteRows.get(scheduleSheet);
+    if (entry && (Date.now() - entry.at) <= maxAgeMs) {
+        return entry.noteRows;
+    }
+    const notesResp = await sheetsClient.spreadsheets.get({
+        spreadsheetId: SPREADSHEET_ID,
+        ranges: [`${scheduleSheet}!E:E`],
+        includeGridData: true,
+        fields: 'sheets(data(rowData(values(note))))'
+    });
+    const noteRows = notesResp
+        && notesResp.data
+        && notesResp.data.sheets
+        && notesResp.data.sheets[0]
+        && notesResp.data.sheets[0].data
+        && notesResp.data.sheets[0].data[0]
+        && Array.isArray(notesResp.data.sheets[0].data[0].rowData)
+        ? notesResp.data.sheets[0].data[0].rowData
+        : [];
+    sharedScheduleNoteRows.set(scheduleSheet, { noteRows, at: Date.now() });
+    return noteRows;
 }
 
 async function restoreScheduleRegistrationState(match, previousValues, previousNote) {
@@ -3945,6 +4029,8 @@ async function getCachedScheduleIndex(forceRefresh = false) {
 
     if (forceRefresh) {
         invalidateCache('schedule');
+        sharedScheduleRows.clear();
+        sharedScheduleNoteRows.clear();
     }
 
     const cacheKey = `index:${SPREADSHEET_ID}:${SCHEDULE_SHEET_CANDIDATES.join(',')}`;
@@ -3953,13 +4039,17 @@ async function getCachedScheduleIndex(forceRefresh = false) {
         const byEventId = new Map();
         const noteEventIdsBySheet = new Map();
 
-        for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
+        for (const scheduleSheet of await getExistingScheduleSheets()) {
             try {
-                const valuesResp = await withGoogleSheetsRetry(() => sheetsClient.spreadsheets.values.get({
-                    spreadsheetId: SPREADSHEET_ID,
-                    range: `${scheduleSheet}!A:E`
-                }), { label: `schedule-index-values:${scheduleSheet}` });
-                const rows = valuesResp.data.values || [];
+                // Рядки беремо зі спільного A:F-читання останнього 10-секундного циклу, якщо воно свіже.
+                let rows = getSharedScheduleRows(scheduleSheet);
+                if (!rows) {
+                    const valuesResp = await withGoogleSheetsRetry(() => sheetsClient.spreadsheets.values.get({
+                        spreadsheetId: SPREADSHEET_ID,
+                        range: `${scheduleSheet}!A:E`
+                    }), { label: `schedule-index-values:${scheduleSheet}` });
+                    rows = valuesResp.data.values || [];
+                }
                 rowsBySheet.set(scheduleSheet, rows);
 
                 for (let i = 0; i < rows.length; i++) {
@@ -3976,22 +4066,7 @@ async function getCachedScheduleIndex(forceRefresh = false) {
             }
 
             try {
-                const noteResp = await withGoogleSheetsRetry(() => sheetsClient.spreadsheets.get({
-                    spreadsheetId: SPREADSHEET_ID,
-                    ranges: [`${scheduleSheet}!E:E`],
-                    includeGridData: true,
-                    fields: 'sheets(data(rowData(values(note))))'
-                }), { label: `schedule-index-notes:${scheduleSheet}` });
-
-                const noteRows = noteResp
-                    && noteResp.data
-                    && noteResp.data.sheets
-                    && noteResp.data.sheets[0]
-                    && noteResp.data.sheets[0].data
-                    && noteResp.data.sheets[0].data[0]
-                    && Array.isArray(noteResp.data.sheets[0].data[0].rowData)
-                    ? noteResp.data.sheets[0].data[0].rowData
-                    : [];
+                const noteRows = await withGoogleSheetsRetry(() => fetchScheduleNoteRows(scheduleSheet), { label: `schedule-index-notes:${scheduleSheet}` });
 
                 const noteMap = new Map();
                 for (const [rowIndex, rowDataRow] of noteRows.entries()) {
@@ -4205,33 +4280,21 @@ async function buildScheduleEventNoteIndexUncached() {
         return index;
     }
 
-    for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
+    for (const scheduleSheet of await getExistingScheduleSheets()) {
         try {
-            const [valuesResp, notesResp] = await Promise.all([
-                sheetsClient.spreadsheets.values.get({
-                    spreadsheetId: SPREADSHEET_ID,
-                    range: `${scheduleSheet}!A:E`
-                }),
-                sheetsClient.spreadsheets.get({
-                    spreadsheetId: SPREADSHEET_ID,
-                    ranges: [`${scheduleSheet}!E:E`],
-                    includeGridData: true,
-                    fields: 'sheets(data(rowData(values(note))))'
-                })
+            // Рядки A:F вже зчитані 10-секундним циклом; нотатки E:E діляться з reconcile.
+            const sharedRows = getSharedScheduleRows(scheduleSheet);
+            const [rows, noteRows] = await Promise.all([
+                sharedRows
+                    ? Promise.resolve(sharedRows)
+                    : sheetsClient.spreadsheets.values.get({
+                        spreadsheetId: SPREADSHEET_ID,
+                        range: `${scheduleSheet}!A:E`
+                    }).then((valuesResp) => (valuesResp && valuesResp.data && Array.isArray(valuesResp.data.values)
+                        ? valuesResp.data.values
+                        : [])),
+                fetchScheduleNoteRows(scheduleSheet)
             ]);
-
-            const rows = valuesResp && valuesResp.data && Array.isArray(valuesResp.data.values)
-                ? valuesResp.data.values
-                : [];
-            const noteRows = notesResp
-                && notesResp.data
-                && notesResp.data.sheets
-                && notesResp.data.sheets[0]
-                && notesResp.data.sheets[0].data
-                && notesResp.data.sheets[0].data[0]
-                && Array.isArray(notesResp.data.sheets[0].data[0].rowData)
-                ? notesResp.data.sheets[0].data[0].rowData
-                : [];
 
             let dateContext = null;
             for (const [rowIndex, row] of rows.entries()) {
@@ -4273,29 +4336,15 @@ async function reconcileScheduleNotesWithEvents(loadedEvents) {
             .map((ev) => [ev.id, ev])
     );
 
-    for (const scheduleSheet of SCHEDULE_SHEET_CANDIDATES) {
+    for (const scheduleSheet of await getExistingScheduleSheets()) {
         try {
             const sheetId = await getSheetIdByTitle(SPREADSHEET_ID, scheduleSheet);
             if (sheetId === null || typeof sheetId === 'undefined') {
                 continue;
             }
 
-            const notesResp = await sheetsClient.spreadsheets.get({
-                spreadsheetId: SPREADSHEET_ID,
-                ranges: [`${scheduleSheet}!E:E`],
-                includeGridData: true,
-                fields: 'sheets(data(rowData(values(note))))'
-            });
-
-            const noteRows = notesResp
-                && notesResp.data
-                && notesResp.data.sheets
-                && notesResp.data.sheets[0]
-                && notesResp.data.sheets[0].data
-                && notesResp.data.sheets[0].data[0]
-                && Array.isArray(notesResp.data.sheets[0].data[0].rowData)
-                ? notesResp.data.sheets[0].data[0].rowData
-                : [];
+            // Reconcile потребує актуальних нотаток (maxAge 0); результат далі використовує індекс ручних реєстрацій.
+            const noteRows = await fetchScheduleNoteRows(scheduleSheet, 0);
 
             const requests = [];
             for (const [rowIndex, rowDataRow] of noteRows.entries()) {
@@ -4363,12 +4412,14 @@ async function reconcileScheduleNotesWithEvents(loadedEvents) {
                     spreadsheetId: SPREADSHEET_ID,
                     requestBody: { requests }
                 });
+                sharedScheduleNoteRows.delete(scheduleSheet);
             }
         } catch (error) {
             const message = (error && error.message ? String(error.message) : '').toLowerCase();
             if (message.includes('unable to parse range') || message.includes('not found')) {
                 continue;
             }
+            noteSheetsQuotaError(error);
             console.error(`❌ Помилка узгодження нотаток розкладу у листі ${scheduleSheet}:`, error && error.message ? error.message : error);
         }
     }
@@ -4838,7 +4889,7 @@ async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {
     // користувача, якого дійсно було видалено з резерву в таблиці (без гонки при паралелізмі).
     let promotionResult;
     try {
-        promotionResult = await scheduleSheetUtils.promoteFirstReserveRegistrantToRegistration(event);
+        promotionResult = await scheduleSheetUtils.promoteFirstReserveRegistrantToRegistration(event, { match });
     } catch (error) {
         logger.warn('Reserve promotion failed; keeping the open seat and reserve entry for retry', event.id, error && error.message ? error.message : error);
         return false;
@@ -5797,6 +5848,7 @@ const reservePromotionAttempts = new Map();
 // Запобігає накладанню циклів при інтервалі 10 с, якщо попереднє оновлення ще триває.
 async function loadEventsFromSheet() {
     if (loadEventsInProgress) return;
+    if (Date.now() < sheetsQuotaCooldownUntil) return;
     loadEventsInProgress = true;
     try {
         await loadEventsFromSheetOnce();
@@ -5821,6 +5873,7 @@ async function loadEventsFromSheetOnce() {
                 });
                 rows = resp.data.values || [];
                 if (rows && rows.length) {
+                    sharedScheduleRows.set(scheduleSheet, { rows, at: Date.now() });
                     activeScheduleSheet = scheduleSheet;
                     if (lastLoggedScheduleSheet !== scheduleSheet) {
                         lastLoggedScheduleSheet = scheduleSheet;
@@ -5834,11 +5887,14 @@ async function loadEventsFromSheetOnce() {
                     continue;
                 }
                 readErrors.push({ sheet: scheduleSheet, message: e && e.message ? e.message : String(e) });
+                if (noteSheetsQuotaError(e)) {
+                    break;
+                }
             }
         }
 
-        // Если всё ещё пусто, попробуем ещё общий диапазон
-        if (!rows || rows.length === 0) {
+        // Если всё ещё пусто, попробуем ещё общий диапазон (не при квоті — щоб не множити запити)
+        if ((!rows || rows.length === 0) && Date.now() >= sheetsQuotaCooldownUntil) {
             try {
                 const alt2 = await sheetsClient.spreadsheets.values.get({
                     spreadsheetId: SPREADSHEET_ID,
@@ -6001,7 +6057,7 @@ async function loadEventsFromSheetOnce() {
 
         syncReminderRegistrationsWithEvents();
         // Індекс нотаток кешується на 60 с; примусово оновлюємо лише коли змінився розклад.
-        await syncManualRegistrationsFromScheduleNotes({ forceRefresh: scheduleChanged });
+        await syncManualRegistrationsFromScheduleNotes({ forceRefresh: heavySyncDue });
         if (heavySyncDue) {
             lastHeavyScheduleSyncAt = Date.now();
         }
@@ -6014,6 +6070,7 @@ async function loadEventsFromSheetOnce() {
         }
 
     } catch (e) {
+        noteSheetsQuotaError(e);
         console.error('Error loading schedule from Sheets', e);
     }
 }

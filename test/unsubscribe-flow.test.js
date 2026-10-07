@@ -204,7 +204,7 @@ test('reserve promotion does not increment registrations a second time after the
 
     assert.notEqual(helperStart, -1);
     assert.notEqual(helperEnd, -1);
-    assert.match(helper, /scheduleSheetUtils\.promoteFirstReserveRegistrantToRegistration\(event\)/);
+    assert.match(helper, /scheduleSheetUtils\.promoteFirstReserveRegistrantToRegistration\(event, \{ match \}\)/);
     assert.doesNotMatch(helper, /^\s*event\.registrations\s*=/m);
 
     const scheduleLoaderStart = source.indexOf('async function loadEventsFromSheet');

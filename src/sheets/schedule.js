@@ -8,7 +8,7 @@ const { invalidateCache } = require('./cache');
 // Simple retry/backoff helper for Sheets calls
 function sleep(ms) { return new Promise((res) => setTimeout(res, ms)); }
 async function retryRequest(fn, opts = {}) {
-    const attempts = Number.isInteger(opts.attempts) ? opts.attempts : 5;
+    const attempts = Number.isInteger(opts.attempts) ? opts.attempts : 3;
     const base = Number.isFinite(opts.base) ? opts.base : 200;
     for (let attempt = 0; attempt < attempts; attempt++) {
         try {
@@ -17,6 +17,11 @@ async function retryRequest(fn, opts = {}) {
             const msg = (err && err.message) ? String(err.message).toLowerCase() : '';
             // Non-retriable errors
             if (msg.includes('unable to parse range') || msg.includes('not found') || msg.includes('notFound')) {
+                throw err;
+            }
+            // 429/quota: повтори лише множать навантаження — одразу віддаємо помилку наверх.
+            const status = Number(err && (err.code || err.status || (err.response && err.response.status)));
+            if (status === 429 || msg.includes('quota') || msg.includes('rate limit') || msg.includes('too many requests')) {
                 throw err;
             }
             if (attempt === attempts - 1) {
@@ -378,17 +383,41 @@ function ensureScheduleNoteEventIdTag(noteText, eventId) {
     return `${cleaned}\n\n${SCHEDULE_NOTE_EVENT_ID_TAG}${eventId}`;
 }
 
-async function getSheetIdByTitle(spreadsheetId, sheetTitle) {
+const SHEET_METADATA_TTL_MS = 10 * 60 * 1000;
+const sheetMetadataCache = new Map();
+
+async function getSheetMetadata(spreadsheetId) {
+    const cached = sheetMetadataCache.get(spreadsheetId);
+    if (cached && cached.client === state.sheetsClient && cached.expiresAt > Date.now()) {
+        return cached.sheets;
+    }
     const meta = await retryRequest(() => state.sheetsClient.spreadsheets.get({
         spreadsheetId,
         fields: 'sheets(properties(sheetId,title))'
     }));
-    const sheets = (meta.data && meta.data.sheets) || [];
-    const found = sheets.find((sheetItem) => {
-        const title = sheetItem && sheetItem.properties && sheetItem.properties.title;
-        return title === sheetTitle;
-    });
-    return found && found.properties ? found.properties.sheetId : null;
+    const sheets = new Map();
+    for (const sheetItem of ((meta.data && meta.data.sheets) || [])) {
+        const props = sheetItem && sheetItem.properties;
+        if (props && props.title) sheets.set(props.title, props.sheetId);
+    }
+    sheetMetadataCache.set(spreadsheetId, { sheets, client: state.sheetsClient, expiresAt: Date.now() + SHEET_METADATA_TTL_MS });
+    return sheets;
+}
+
+async function getSheetIdByTitle(spreadsheetId, sheetTitle) {
+    const sheets = await getSheetMetadata(spreadsheetId);
+    return sheets.has(sheetTitle) ? sheets.get(sheetTitle) : null;
+}
+
+// Лише існуючі листи-кандидати; при невизначеності повертає всіх кандидатів.
+async function getExistingScheduleSheets() {
+    try {
+        const sheets = await getSheetMetadata(config.SPREADSHEET_ID);
+        const existing = config.SCHEDULE_SHEET_CANDIDATES.filter((title) => sheets.has(title));
+        return existing.length > 0 ? existing : config.SCHEDULE_SHEET_CANDIDATES;
+    } catch (error) {
+        return config.SCHEDULE_SHEET_CANDIDATES;
+    }
 }
 
 async function getScheduleCellNote(scheduleSheet, rowIndex, columnLetter = 'E') {
@@ -589,7 +618,7 @@ function parseRegistrantsFromNote(noteText) {
 async function findScheduleRowByEventByNoteTag(event) {
     if (!event || !event.id || !state.sheetsClient || !config.SPREADSHEET_ID) return null;
 
-    for (const scheduleSheet of config.SCHEDULE_SHEET_CANDIDATES) {
+    for (const scheduleSheet of await getExistingScheduleSheets()) {
         try {
             const resp = await retryRequest(() => state.sheetsClient.spreadsheets.get({
                 spreadsheetId: config.SPREADSHEET_ID,
@@ -633,7 +662,7 @@ async function findScheduleRowForEvent(event) {
     const byTag = await findScheduleRowByEventByNoteTag(event);
     if (byTag) return byTag;
 
-    for (const scheduleSheet of config.SCHEDULE_SHEET_CANDIDATES) {
+    for (const scheduleSheet of await getExistingScheduleSheets()) {
         try {
             const resp = await retryRequest(() => state.sheetsClient.spreadsheets.values.get({
                 spreadsheetId: config.SPREADSHEET_ID,
@@ -1168,12 +1197,16 @@ async function removeRegistrantFromReserve(event, registrantProfile) {
     return true;
 }
 
-async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {
+async function promoteFirstReserveRegistrantToRegistrationUnlocked(event, options = {}) {
     if (!event || !state.sheetsClient || !config.SPREADSHEET_ID) {
         return false;
     }
 
-    const match = await findScheduleRowForEvent(event);
+    // Рядок уже знайдено викликачем — не шукаємо повторно. D/E/нотатки нижче читаються свіжими.
+    const hint = options && options.match;
+    const match = hint && hint.scheduleSheet && Number.isInteger(hint.rowIndex) && hint.rowIndex >= 0
+        ? hint
+        : await findScheduleRowForEvent(event);
     if (!match) {
         return false;
     }
@@ -1309,8 +1342,8 @@ async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {
     return { promoted };
 }
 
-async function promoteFirstReserveRegistrantToRegistration(event) {
-    return withRegistrationLock(event && event.id, () => promoteFirstReserveRegistrantToRegistrationUnlocked(event));
+async function promoteFirstReserveRegistrantToRegistration(event, options = {}) {
+    return withRegistrationLock(event && event.id, () => promoteFirstReserveRegistrantToRegistrationUnlocked(event, options));
 }
 
 async function incrementSheetRegistration(event, fallbackRegistrant) {
