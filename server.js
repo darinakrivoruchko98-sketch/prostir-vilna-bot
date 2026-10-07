@@ -1,6 +1,7 @@
  process.env.TZ = process.env.TZ || 'Europe/Kyiv';
 
 const config = require('./src/config');
+const sharedState = require('./src/state');
 require('dotenv').config();
 
 const fs = require("fs");
@@ -115,6 +116,7 @@ app.use(express.json());
 
 // Telegram бот з polling режимом
 const bot = new TelegramBot(TOKEN, { polling: true });
+sharedState.bot = bot;
 const originalSendMessage = bot.sendMessage.bind(bot);
 bot.sendMessage = function (...args) {
     if (args.length === 0) {
@@ -5526,6 +5528,8 @@ async function restoreRegistrationNotesToSheet() {
 async function initSheets() {
     try {
         sheetsClient = await createAuthorizedSheetsClient();
+        // src/sheets/* (promotion з резерву) читає клієнт зі спільного state, а не з локальної змінної.
+        sharedState.sheetsClient = sheetsClient;
 
         console.log("Google Sheets підключено ✅");
 
@@ -6025,6 +6029,7 @@ async function appendRegistrationRow(chatId, user) {
             console.warn(`sheetsClient not ready, attempt ${attempt}/${maxTries}`);
             try {
                 sheetsClient = await createAuthorizedSheetsClient();
+                sharedState.sheetsClient = sheetsClient;
                 console.log('✅ sheetsClient ініціалізовано повторно перед записом');
             } catch (reinitErr) {
                 lastErr = reinitErr;

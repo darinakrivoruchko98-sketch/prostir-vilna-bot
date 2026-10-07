@@ -804,11 +804,18 @@ async function appendEventReservation(event, fallbackRegistrant) {
 }
 
 async function promoteReserveRegistrantsIfNeeded(event) {
-    if (!event || !state.sheetsClient || !config.SPREADSHEET_ID) return { promoted: 0, reserveLeft: 0 };
+    if (!event || !state.sheetsClient || !config.SPREADSHEET_ID) {
+        logger.warn('[reserve-promotion] skipped: Sheets client is not initialised in shared state',
+            JSON.stringify({ event: event && event.id, hasClient: Boolean(state.sheetsClient), hasSpreadsheetId: Boolean(config.SPREADSHEET_ID) }));
+        return { promoted: 0, reserveLeft: 0 };
+    }
 
     return withRegistrationLock(event.id, async () => {
         const match = await findScheduleRowForEvent(event);
-        if (!match) return { promoted: 0, reserveLeft: 0 };
+        if (!match) {
+            logger.warn('[reserve-promotion] no schedule row match', event.id, event.name);
+            return { promoted: 0, reserveLeft: 0 };
+        }
 
         const response = await retryRequest(() => state.sheetsClient.spreadsheets.values.get({
             spreadsheetId: config.SPREADSHEET_ID,
@@ -816,6 +823,7 @@ async function promoteReserveRegistrantsIfNeeded(event) {
         }));
         const values = (response.data && response.data.values && response.data.values[0]) || [];
         const currentRemainingSeats = Math.max(0, parseInt(values[0] || '0', 10) || 0);
+        logger.info('[reserve-promotion] match', event.id, `${match.scheduleSheet}!row${match.rowIndex + 1}`, 'D=', currentRemainingSeats);
 
         let promotedCount = 0;
         while (promotedCount < currentRemainingSeats) {
@@ -824,6 +832,7 @@ async function promoteReserveRegistrantsIfNeeded(event) {
             promotedCount += 1;
         }
 
+        logger.info('[reserve-promotion] result', event.id, 'D=', currentRemainingSeats, 'promoted=', promotedCount, 'reserveLeft=', Math.max(0, Number(event.reserveCount) || 0));
         return { promoted: promotedCount, reserveLeft: Math.max(0, Number(event.reserveCount) || 0) };
     });
 }
@@ -1180,6 +1189,7 @@ async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {
     const registeredNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex, 'E');
     const registeredSection = parseScheduleNoteSections(registeredNote);
     const reservists = await getEffectiveReserveRegistrants(match.scheduleSheet, match.rowIndex);
+    logger.info('[reserve-promotion] D=', currentRemainingSeats, 'reserve list=', reservists.map((r) => `${r.name}|${r.userId}`).join(', ') || '(empty)');
     if (reservists.length === 0) {
         return false;
     }

@@ -250,6 +250,48 @@ test('schedule refresh promotes the first reservist after column D is manually c
   });
 });
 
+test('production Sheets refresh polls every minute and promotes from the refreshed available-seat count', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const initStart = source.indexOf('async function initSheets() {');
+  const initEnd = source.indexOf('\n// Викликаємо асинхронно', initStart);
+  const initSheets = source.slice(initStart, initEnd);
+  const loaderStart = source.indexOf('async function loadEventsFromSheet() {');
+  const loaderEnd = source.indexOf('\n/* ===== SAVE TO SHEET ===== */', loaderStart);
+  const loader = source.slice(loaderStart, loaderEnd);
+
+  assert.notEqual(initStart, -1);
+  assert.notEqual(initEnd, -1);
+  assert.notEqual(loaderStart, -1);
+  assert.notEqual(loaderEnd, -1);
+  assert.match(initSheets, /sheetsRefreshInterval = setInterval\(\(\) => \{[\s\S]*?loadEventsFromSheet\(\)/);
+  assert.match(initSheets, /}, 60000\)/);
+  assert.match(loader, /const availableSeats = await getSeatsLeft\(event\.id\)/);
+  assert.match(loader, /promoteReserveRegistrantsForAvailableSeats\(event, availableSeats\)/);
+});
+
+test('regression: production server publishes the Sheets client and bot to the shared state used by schedule promotion', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+
+  assert.match(source, /const sharedState = require\('\.\/src\/state'\)/);
+  assert.match(source, /sharedState\.bot = bot;/);
+  assert.match(source, /sheetsClient = await createAuthorizedSheetsClient\(\);\s*(?:\/\/[^\n]*\n\s*)?sharedState\.sheetsClient = sheetsClient;/);
+});
+
+test('regression: promoteReserveRegistrantsIfNeeded does nothing without a shared Sheets client', async () => {
+  const originalClient = state.sheetsClient;
+  state.sheetsClient = null;
+  try {
+    const result = await schedule.promoteReserveRegistrantsIfNeeded({ id: 'event-1', name: 'Test Event', date: new Date() });
+    assert.deepEqual(result, { promoted: 0, reserveLeft: 0 });
+  } finally {
+    state.sheetsClient = originalClient;
+  }
+});
+
 test('regression: column D 0 -> 3 with five reservists promotes the first three in FIFO order', async () => {
   const reservists = makeReserveQueue(5);
 
