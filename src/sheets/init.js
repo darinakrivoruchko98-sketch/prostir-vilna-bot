@@ -3,7 +3,7 @@ const config = require('../config');
 const { createAuthorizedSheetsClient } = require('./auth');
 const { parseEventFromRow } = require('../events/parser');
 const { promoteReserveRegistrantsIfNeeded } = require('./schedule');
-const { withCache } = require('./cache');
+const { withCache, invalidateCache } = require('./cache');
 
 function startPollingIfNeeded(bot) {
     if (state.pollingStarted) return;
@@ -19,8 +19,8 @@ async function loadEventsFromSheet() {
     }
 
     try {
-        const previousEventsById = new Map((state.events || []).map((event) => [event.id, event]));
         const cacheKey = `rows:${config.SPREADSHEET_ID}:${config.SCHEDULE_SHEET_CANDIDATES.join(',')}`;
+        invalidateCache('schedule', cacheKey);
         let rows = await withCache('schedule', cacheKey, 60000, async () => {
             const readErrors = [];
             for (const scheduleSheet of config.SCHEDULE_SHEET_CANDIDATES) {
@@ -101,10 +101,9 @@ async function loadEventsFromSheet() {
             }
 
             seen.add(ev.id);
-            const previousEvent = previousEventsById.get(ev.id);
-            if (previousEvent && Number.isFinite(previousEvent.seats) && ev.seats > previousEvent.seats) {
+            if (Number(ev.seats) > Number(ev.registrations)) {
                 try {
-                    await promoteReserveRegistrantsIfNeeded(ev, previousEvent.seats);
+                    await promoteReserveRegistrantsIfNeeded(ev);
                 } catch (promotionErr) {
                     console.error('⚠️ Не вдалося автоматично перенести резерв для заходу', ev.id, promotionErr && promotionErr.message ? promotionErr.message : promotionErr);
                 }

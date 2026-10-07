@@ -93,13 +93,16 @@ function parseEventFromRow(row, currentDateContext) {
         return { event: null, nextDateContext: dateBase || currentDateContext };
     }
 
+    const safeRemainingSeats = Math.max(0, Number.isFinite(seats) ? seats : 0);
+    const safeRegistrations = Math.max(0, Number.isFinite(registrations) ? registrations : 0);
+
     return {
         event: {
             id: `${title.replace(/\s+/g,'_')}_${formatSheetDate(eventDate)}_${formatSheetTime(eventDate)}`,
             name: title,
             date: eventDate,
-            seats: Number.isFinite(seats) ? seats : 0,
-            registrations: Number.isFinite(registrations) ? registrations : 0
+            seats: safeRemainingSeats + safeRegistrations,
+            registrations: safeRegistrations
         },
         nextDateContext: dateBase
     };

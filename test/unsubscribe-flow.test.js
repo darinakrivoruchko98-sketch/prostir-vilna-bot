@@ -214,5 +214,6 @@ test('reserve promotion does not increment registrations a second time after the
     assert.notEqual(scheduleLoaderStart, -1);
     assert.notEqual(scheduleLoadStart, -1);
     assert.notEqual(scheduleLoadEnd, -1);
-    assert.match(scheduleLoad, /previousRemaining === null \? currentRemaining : currentRemaining - previousRemaining/);
+    assert.match(scheduleLoad, /const availableSeats = await getSeatsLeft\(event\.id\)/);
+    assert.match(scheduleLoad, /promoteReserveRegistrantsForAvailableSeats\(event, availableSeats\)/);
 });

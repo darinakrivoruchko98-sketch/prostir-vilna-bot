@@ -803,87 +803,29 @@ async function appendEventReservation(event, fallbackRegistrant) {
     return { status: 'ok' };
 }
 
-async function promoteReserveRegistrantsIfNeeded(event, previousSeats) {
+async function promoteReserveRegistrantsIfNeeded(event) {
     if (!event || !state.sheetsClient || !config.SPREADSHEET_ID) return { promoted: 0, reserveLeft: 0 };
 
-    const match = await findScheduleRowForEvent(event);
-    if (!match) return { promoted: 0, reserveLeft: 0 };
+    return withRegistrationLock(event.id, async () => {
+        const match = await findScheduleRowForEvent(event);
+        if (!match) return { promoted: 0, reserveLeft: 0 };
 
-    const { scheduleSheet, rowIndex } = match;
-    const resp = await retryRequest(() => state.sheetsClient.spreadsheets.values.get({
-        spreadsheetId: config.SPREADSHEET_ID,
-        range: `${scheduleSheet}!D${rowIndex + 1}:E${rowIndex + 1}`
-    }));
-    const vals = (resp.data && resp.data.values && resp.data.values[0]) || [];
-    const currSeats = parseInt(vals[0] || '0', 10);
-    const currRegistrations = parseInt(vals[1] || '0', 10);
-    const increase = Math.max(0, currSeats - Math.max(0, parseInt(previousSeats || '0', 10)));
-    if (increase <= 0) return { promoted: 0, reserveLeft: 0 };
-
-    const existingNote = await getScheduleCellNote(scheduleSheet, rowIndex);
-    const sheetId = await getSheetIdByTitle(config.SPREADSHEET_ID, scheduleSheet);
-    const sections = parseScheduleNoteSections(existingNote);
-    if (sections.reserve.length === 0) return { promoted: 0, reserveLeft: 0 };
-
-    const promoted = sections.reserve.splice(0, Math.min(increase, sections.reserve.length));
-    if (promoted.length === 0) return { promoted: 0, reserveLeft: sections.reserve.length };
-
-    // Колонка D = ЗАЛИШОК місць — зменшується на кількість перенесених з резерву
-    const newSeats = Math.max(0, currSeats - promoted.length);
-    const newRegistrations = currRegistrations + promoted.length;
-
-    await retryRequest(() => state.sheetsClient.spreadsheets.values.update({
-        spreadsheetId: config.SPREADSHEET_ID,
-        range: `${scheduleSheet}!D${rowIndex + 1}:E${rowIndex + 1}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[String(newSeats), String(newRegistrations)]] }
-    }));
-    invalidateCache('schedule');
-
-    const noteText = buildScheduleNoteText({
-        registered: [...sections.registered, ...promoted],
-        reserve: sections.reserve,
-        registrationsCount: newRegistrations,
-        eventId: event.id
-    });
-
-    if (String(existingNote || '').trim() !== String(noteText || '').trim()) {
-        await retryRequest(() => state.sheetsClient.spreadsheets.batchUpdate({
+        const response = await retryRequest(() => state.sheetsClient.spreadsheets.values.get({
             spreadsheetId: config.SPREADSHEET_ID,
-            requestBody: {
-                requests: [{
-                    repeatCell: {
-                        range: {
-                            sheetId,
-                            startRowIndex: rowIndex,
-                            endRowIndex: rowIndex + 1,
-                            startColumnIndex: 4,
-                            endColumnIndex: 5
-                        },
-                        cell: { note: noteText },
-                        fields: 'note'
-                    }
-                }]
-            }
+            range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`
         }));
-    }
+        const values = (response.data && response.data.values && response.data.values[0]) || [];
+        const currentRemainingSeats = Math.max(0, parseInt(values[0] || '0', 10) || 0);
 
-    event.seats = newSeats;
-    event.registrations = newRegistrations;
-
-    if (state.bot && typeof state.bot.sendMessage === 'function') {
-        for (const person of promoted) {
-            const userId = String(person.userId || '').trim();
-            if (!userId) continue;
-            try {
-                await state.bot.sendMessage(userId, `✅ Вас перенесли з резерву до реєстрації на захід «${event.name}».`);
-            } catch (notifyErr) {
-                logger.warn('Failed to notify promoted reserve user', userId, notifyErr && notifyErr.message ? notifyErr.message : notifyErr);
-            }
+        let promotedCount = 0;
+        while (promotedCount < currentRemainingSeats) {
+            const result = await promoteFirstReserveRegistrantToRegistrationUnlocked(event);
+            if (!result || !result.promoted) break;
+            promotedCount += 1;
         }
-    }
 
-    return { promoted: promoted.length, reserveLeft: sections.reserve.length };
+        return { promoted: promotedCount, reserveLeft: Math.max(0, Number(event.reserveCount) || 0) };
+    });
 }
 
 async function updateScheduleRegistrationNote({ scheduleSheet, rowIndex, registrationsCount, fallbackRegistrant, eventId, removeRegistrant }) {
@@ -1217,7 +1159,7 @@ async function removeRegistrantFromReserve(event, registrantProfile) {
     return true;
 }
 
-async function promoteFirstReserveRegistrantToRegistration(event) {
+async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {
     if (!event || !state.sheetsClient || !config.SPREADSHEET_ID) {
         return false;
     }
@@ -1227,35 +1169,138 @@ async function promoteFirstReserveRegistrantToRegistration(event) {
         return false;
     }
 
+    const valuesResponse = await retryRequest(() => state.sheetsClient.spreadsheets.values.get({
+        spreadsheetId: config.SPREADSHEET_ID,
+        range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`
+    }));
+    const values = (valuesResponse.data && valuesResponse.data.values && valuesResponse.data.values[0]) || [];
+    const currentRemainingSeats = Math.max(0, parseInt(values[0] || '0', 10) || 0);
+    if (currentRemainingSeats <= 0) return false;
+
+    const registeredNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex, 'E');
+    const registeredSection = parseScheduleNoteSections(registeredNote);
     const reservists = await getEffectiveReserveRegistrants(match.scheduleSheet, match.rowIndex);
     if (reservists.length === 0) {
         return false;
     }
 
-    const promoted = reservists[0];
-    const remainingReserve = reservists.slice(1);
+    const isAlreadyRegistered = (candidate) => registeredSection.registered.some((registered) => {
+        const candidateUserId = normalizeRegistrantUserId(candidate.userId);
+        const registeredUserId = normalizeRegistrantUserId(registered.userId);
+        if (candidateUserId && registeredUserId && candidateUserId === registeredUserId) return true;
 
-    event.reserveCount = remainingReserve.length;
-    await updateSheetReserveCount(event);
-    await updateScheduleReserveNote({
-        scheduleSheet: match.scheduleSheet,
-        rowIndex: match.rowIndex,
-        reserveCount: event.reserveCount,
-        removeRegistrant: promoted,
+        const candidateName = normalizeRegistrantName(candidate.name);
+        const candidatePhone = normalizeRegistrantPhone(candidate.phone);
+        return Boolean(candidateName && candidatePhone
+            && candidateName === normalizeRegistrantName(registered.name)
+            && candidatePhone === normalizeRegistrantPhone(registered.phone));
+    });
+    const promotedIndex = reservists.findIndex((candidate) => !isAlreadyRegistered(candidate));
+    if (promotedIndex === -1) return false;
+
+    const promoted = reservists[promotedIndex];
+    const remainingReserve = reservists.filter((candidate, index) => index !== promotedIndex && !isAlreadyRegistered(candidate));
+    const currentRegistrations = Math.max(0, parseInt(values[1] || '0', 10) || 0);
+    const nextRemainingSeats = currentRemainingSeats - 1;
+    const nextRegistrations = currentRegistrations + 1;
+    const nextRegisteredNote = buildScheduleNoteText({
+        registered: [...registeredSection.registered, promoted],
+        registrationsCount: nextRegistrations,
         eventId: event.id
     });
+    const nextReserveNote = buildReserveNoteFromList(remainingReserve.length, remainingReserve, event.id);
+    const sheetId = await getSheetIdByTitle(config.SPREADSHEET_ID, match.scheduleSheet);
+    if (sheetId === null || sheetId === undefined) {
+        throw new Error(`Cannot find sheet id for ${match.scheduleSheet}`);
+    }
 
-    event.registrations = Math.max(0, Number(event.registrations) || 0) + 1;
-    await incrementSheetRegistration(event, {
-        name: promoted.name,
-        phone: promoted.phone,
-        userId: promoted.userId
-    });
+    await retryRequest(() => state.sheetsClient.spreadsheets.batchUpdate({
+        spreadsheetId: config.SPREADSHEET_ID,
+        requestBody: {
+            requests: [
+                {
+                    updateCells: {
+                        range: {
+                            sheetId,
+                            startRowIndex: match.rowIndex,
+                            endRowIndex: match.rowIndex + 1,
+                            startColumnIndex: 3,
+                            endColumnIndex: 5
+                        },
+                        rows: [{ values: [
+                            { userEnteredValue: { numberValue: nextRemainingSeats } },
+                            { userEnteredValue: { numberValue: nextRegistrations } }
+                        ] }],
+                        fields: 'userEnteredValue'
+                    }
+                },
+                {
+                    repeatCell: {
+                        range: {
+                            sheetId,
+                            startRowIndex: match.rowIndex,
+                            endRowIndex: match.rowIndex + 1,
+                            startColumnIndex: 4,
+                            endColumnIndex: 5
+                        },
+                        cell: { note: nextRegisteredNote },
+                        fields: 'note'
+                    }
+                },
+                {
+                    updateCells: {
+                        range: {
+                            sheetId,
+                            startRowIndex: match.rowIndex,
+                            endRowIndex: match.rowIndex + 1,
+                            startColumnIndex: 5,
+                            endColumnIndex: 6
+                        },
+                        rows: [{ values: [{ userEnteredValue: { numberValue: remainingReserve.length } }] }],
+                        fields: 'userEnteredValue'
+                    }
+                },
+                {
+                    repeatCell: {
+                        range: {
+                            sheetId,
+                            startRowIndex: match.rowIndex,
+                            endRowIndex: match.rowIndex + 1,
+                            startColumnIndex: 5,
+                            endColumnIndex: 6
+                        },
+                        cell: { note: nextReserveNote },
+                        fields: 'note'
+                    }
+                }
+            ]
+        }
+    }));
+    invalidateCache('schedule');
+
+    event.registrations = nextRegistrations;
+    event.reserveCount = remainingReserve.length;
+    event.seats = currentRemainingSeats + currentRegistrations;
+
+    if (state.bot && typeof state.bot.sendMessage === 'function') {
+        const userId = String(promoted.userId || '').trim();
+        if (userId) {
+            try {
+                await state.bot.sendMessage(userId, `✅ Для вас звільнилося місце, ви успішно зареєстровані на захід «${event.name}».`);
+            } catch (notifyError) {
+                logger.warn('Failed to notify promoted reserve user', userId, notifyError && notifyError.message ? notifyError.message : notifyError);
+            }
+        }
+    }
 
     // Повертаємо саме того реєстранта, якого реально видалено з резерву в таблиці,
     // щоб виклик у server.js не робив другий незалежний запит і не міг розсинхронізуватися
     // з тим, кого фактично перенесено (гонка при паралельних відписках).
     return { promoted };
+}
+
+async function promoteFirstReserveRegistrantToRegistration(event) {
+    return withRegistrationLock(event && event.id, () => promoteFirstReserveRegistrantToRegistrationUnlocked(event));
 }
 
 async function incrementSheetRegistration(event, fallbackRegistrant) {

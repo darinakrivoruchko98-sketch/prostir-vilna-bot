@@ -3603,9 +3603,7 @@ async function decrementSheetRegistrationUnlocked(event, registrantProfile) {
     }
 
     const registrationsCount = Number.isFinite(event.registrations) ? event.registrations : 0;
-    // event.seats у пам'яті = загальна місткість (D+E), тому залишок = місткість - реєстрації
-    const totalSeats = Number.isFinite(event.seats) ? Math.max(0, event.seats) : 0;
-    const remainingSeats = Math.max(0, totalSeats - registrationsCount);
+    let remainingSeats = 0;
     let previousValues = ['', ''];
     let previousNote = '';
 
@@ -3615,6 +3613,9 @@ async function decrementSheetRegistrationUnlocked(event, registrantProfile) {
             range: `${match.scheduleSheet}!D${match.rowIndex + 1}:E${match.rowIndex + 1}`
         });
         previousValues = (previousResponse.data.values || [])[0] || previousValues;
+        // Колонка D = залишок вільних місць у таблиці (може бути змінена вручну), тому відписка додає +1 до неї,
+        // а не перераховує її як місткість - реєстрації зі стану в пам'яті.
+        remainingSeats = Math.max(0, parseInt(previousValues[0] || '0', 10) || 0) + 1;
         previousNote = await getScheduleCellNote(match.scheduleSheet, match.rowIndex);
         await sheetsClient.spreadsheets.values.update({
             spreadsheetId: SPREADSHEET_ID,
@@ -3631,6 +3632,7 @@ async function decrementSheetRegistrationUnlocked(event, registrantProfile) {
             removeRegistrant: registrantProfile,
             eventId: event.id
         });
+        event.seats = remainingSeats + registrationsCount;
     } catch (error) {
         await restoreScheduleRegistrationState(match, previousValues, previousNote);
         console.error('❌ Не вдалося атомарно оновити відписку у розкладі:', error && error.message ? error.message : error);
@@ -4763,12 +4765,7 @@ async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {
         return false;
     }
 
-    // event.seats = загальна місткість, event.registrations = зайняті місця.
-    const seatsLeft = Math.max(0, (Number(event.seats) || 0) - (Number(event.registrations) || 0));
-    if (seatsLeft <= 0) {
-        return false;
-    }
-
+    // Наявність вільного місця (колонка D) перевіряє scheduleSheetUtils на актуальних даних таблиці.
     const match = await findScheduleRowByEvent(event);
     if (!match) {
         return false;
@@ -4777,7 +4774,13 @@ async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {
     // Хто саме перенесений визначаємо з РЕЗУЛЬТАТУ операції в schedule.js, а не окремим
     // повторним читанням резерву — так пам'ять і сповіщення завжди стосуються рівно того
     // користувача, якого дійсно було видалено з резерву в таблиці (без гонки при паралелізмі).
-    const promotionResult = await scheduleSheetUtils.promoteFirstReserveRegistrantToRegistration(event);
+    let promotionResult;
+    try {
+        promotionResult = await scheduleSheetUtils.promoteFirstReserveRegistrantToRegistration(event);
+    } catch (error) {
+        logger.warn('Reserve promotion failed; keeping the open seat and reserve entry for retry', event.id, error && error.message ? error.message : error);
+        return false;
+    }
     if (!promotionResult || !promotionResult.promoted) {
         return false;
     }
@@ -4814,7 +4817,7 @@ async function promoteFirstReserveRegistrantToRegistrationUnlocked(event) {
 
         try {
             await bot.sendMessage(promotedChatId,
-                `✅ Ви були в резерві на захід "${event.name}".\n\nЗвільнилося місце, вас додано до списку зареєстрованих.`, {
+                `✅ Для вас звільнилося місце, ви успішно зареєстровані на захід "${event.name}".`, {
                 reply_markup: {
                     keyboard: getMainMenuKeyboard(promotedChatId),
                     resize_keyboard: true
@@ -5883,15 +5886,13 @@ async function loadEventsFromSheet() {
         }
 
         for (const event of events) {
-            const previousEvent = previousEventsById.get(event.id);
-            const previousRemaining = previousEvent
-                ? Math.max(0, (Number(previousEvent.seats) || 0) - (Number(previousEvent.registrations) || 0))
-                : null;
-            const currentRemaining = Math.max(0, (Number(event.seats) || 0) - (Number(event.registrations) || 0));
-            const addedSeats = previousRemaining === null ? currentRemaining : currentRemaining - previousRemaining;
+            const availableSeats = await getSeatsLeft(event.id);
+            if (availableSeats <= 0) continue;
 
-            if (addedSeats > 0) {
-                await promoteReserveRegistrantsForAvailableSeats(event, addedSeats);
+            try {
+                await promoteReserveRegistrantsForAvailableSeats(event, availableSeats);
+            } catch (promotionError) {
+                console.error('⚠️ Не вдалося автоматично перенести резерв для заходу', event.id, promotionError && promotionError.message ? promotionError.message : promotionError);
             }
         }
 
