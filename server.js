@@ -67,7 +67,13 @@ const REMINDER_24H_HOURS_MAX = 24;
 const REMINDER_1H_MINUTES_MIN = 1;
 const REMINDER_1H_MINUTES_MAX = 60;
 const PENDING_REGISTRATION_REMINDER_TIMEOUT_MS = 5 * 60 * 1000;
-const EXIT_ON_POLLING_CONFLICT = String(process.env.EXIT_ON_POLLING_CONFLICT || '').trim().toLowerCase() === 'true';
+// На Render (RENDER=true) за замовчуванням завершуємо процес при стійкому 409: платформа перезапустить його,
+// а старий інстанс під час деплою вже буде зупинено. Явне EXIT_ON_POLLING_CONFLICT=false це вимикає.
+const EXIT_ON_POLLING_CONFLICT_RAW = String(process.env.EXIT_ON_POLLING_CONFLICT || '').trim().toLowerCase();
+const EXIT_ON_POLLING_CONFLICT = EXIT_ON_POLLING_CONFLICT_RAW
+    ? EXIT_ON_POLLING_CONFLICT_RAW === 'true'
+    : String(process.env.RENDER || '').trim().toLowerCase() === 'true';
+const POLLING_CONFLICT_EXIT_THRESHOLD = 3;
 const POLLING_CONFLICT_RETRY_MS = Number(process.env.POLLING_CONFLICT_RETRY_MS || 15000);
 // Таблиця для розкладу та реєстрацій на заходи
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || config.SPREADSHEET_ID;
@@ -115,7 +121,7 @@ const app = express();
 app.use(express.json());
 
 // Telegram бот з polling режимом
-const bot = new TelegramBot(TOKEN, { polling: true });
+const bot = new TelegramBot(TOKEN, { polling: false });
 sharedState.bot = bot;
 const originalSendMessage = bot.sendMessage.bind(bot);
 bot.sendMessage = function (...args) {
@@ -131,8 +137,8 @@ bot.sendMessage = function (...args) {
 
     return originalSendMessage(...args);
 };
-let stoppingBecauseOfPollingConflict = false;
-let pollingConflictRecoveryTimer = null;
+let pollingConflictCount = 0;
+let lastPollingConflictLogAt = 0;
 
 async function configureBotCommandMenus() {
     try {
@@ -167,45 +173,22 @@ const pollingErrorThreshold = 5; // Після 5 помилок на хвили�
 
 bot.on('polling_error', async (error) => {
     const message = String((error && error.message) || '');
-    const isConflict = message.includes('409 Conflict') || (error && error.code === 'ETELEGRAM' && message.includes('getUpdates'));
-    const isFatalNetwork = message.includes('EFATAL') || message.includes('ECONNREFUSED') || message.includes('ETIMEDOUT');
+    const isConflict = Boolean(error && error.response && error.response.statusCode === 409) || /\b409\b/.test(message);
 
-    // Конфлікт - інший інстанс працює
+    // Конфлікт - інший інстанс з тим самим токеном. Бібліотека сама повторює getUpdates,
+    // тому polling вручну не зупиняємо/не перезапускаємо (це створювало цикл stop/start).
     if (isConflict) {
-        console.error('❌ ETELEGRAM 409 Conflict: знайдено інший активний інстанс бота з тим самим токеном.');
-        console.error('ℹ️ Перевірте, що запущений лише один процес бота (Railway service/локальний nohup/PM2).');
-        console.error('ℹ️ Якщо був перехід з webhook на polling, видаліть webhook командою deleteWebhook перед стартом polling.');
-
-        if (stoppingBecauseOfPollingConflict || pollingConflictRecoveryTimer) {
-            return;
+        pollingConflictCount++;
+        const nowMs = Date.now();
+        if (nowMs - lastPollingConflictLogAt >= Math.max(1000, POLLING_CONFLICT_RETRY_MS)) {
+            lastPollingConflictLogAt = nowMs;
+            console.error(`❌ ETELEGRAM 409 Conflict (${pollingConflictCount}): інший активний інстанс бота з тим самим токеном. Перевірте, що працює лише один процес (Render/Railway/локально/PM2).`);
         }
 
-        stoppingBecauseOfPollingConflict = true;
-        try {
-            await bot.stopPolling();
-            console.error('🛑 Polling тимчасово зупинено через конфлікт.');
-        } catch (stopErr) {
-            console.error('⚠️ Не вдалося коректно зупинити polling:', stopErr);
-        }
-
-        if (EXIT_ON_POLLING_CONFLICT) {
-            console.error('⛔ EXIT_ON_POLLING_CONFLICT=true, завершуємо процес.');
+        if (EXIT_ON_POLLING_CONFLICT && pollingConflictCount >= POLLING_CONFLICT_EXIT_THRESHOLD) {
+            console.error('⛔ Стійкий 409 Conflict, завершуємо процес, щоб не конкурувати за polling.');
             process.exit(1);
-            return;
         }
-
-        console.warn(`↻ Повторна спроба запуску polling через ${POLLING_CONFLICT_RETRY_MS} мс...`);
-        pollingConflictRecoveryTimer = setTimeout(async () => {
-            try {
-                await bot.startPolling();
-                console.log('✅ Polling успішно відновлено після 409 Conflict.');
-            } catch (startErr) {
-                console.error('❌ Не вдалося відновити polling після 409 Conflict:', startErr && startErr.message ? startErr.message : startErr);
-            } finally {
-                stoppingBecauseOfPollingConflict = false;
-                pollingConflictRecoveryTimer = null;
-            }
-        }, Math.max(1000, POLLING_CONFLICT_RETRY_MS));
         return;
     }
 
@@ -314,7 +297,19 @@ setInterval(() => {
         console.log(`📊 Лічильник помилок polling скинуто (було ${pollingErrorCount})`);
     }
     pollingErrorCount = 0;
+    pollingConflictCount = 0;
 }, 60000);
+
+// Один polling: спочатку знімаємо можливий webhook, потім запускаємо polling рівно один раз.
+bot.deleteWebHook()
+    .catch((error) => {
+        console.warn('⚠️ deleteWebHook не вдалося виконати:', error && error.message ? error.message : error);
+    })
+    .then(() => bot.startPolling())
+    .then(() => console.log('🤖 Telegram polling запущено (один інстанс)'))
+    .catch((error) => {
+        console.error('❌ Не вдалося запустити polling:', error && error.message ? error.message : error);
+    });
 
 // Health check endpoints
 app.get('/', (req, res) => {
@@ -2373,12 +2368,12 @@ function schedulePendingManualNoteConfirmations() {
     }
 }
 
-async function syncManualRegistrationsFromScheduleNotes() {
+async function syncManualRegistrationsFromScheduleNotes(options = {}) {
     if (!SPREADSHEET_ID || !sheetsClient) {
         return;
     }
 
-    const noteIndex = await buildScheduleEventNoteIndex();
+    const noteIndex = await buildScheduleEventNoteIndex(options.forceRefresh === true);
     if (noteIndex.size === 0) {
         return;
     }
@@ -4138,7 +4133,18 @@ function extractRowNote(rowDataRow, cellIndex = 0) {
     return String((cell && cell.note) || '').trim();
 }
 
-async function buildScheduleEventNoteIndex() {
+async function buildScheduleEventNoteIndex(forceRefresh = false) {
+    if (!SPREADSHEET_ID || !sheetsClient) {
+        return new Map();
+    }
+    if (forceRefresh) {
+        invalidateCache('schedule-note-index');
+    }
+    const cacheKey = `${SPREADSHEET_ID}:${SCHEDULE_SHEET_CANDIDATES.join(',')}`;
+    return await withCache('schedule-note-index', cacheKey, 60000, () => buildScheduleEventNoteIndexUncached());
+}
+
+async function buildScheduleEventNoteIndexUncached() {
     const index = new Map();
 
     if (!SPREADSHEET_ID || !sheetsClient) {
@@ -5572,13 +5578,7 @@ async function initSheets() {
             });
         }, 60 * 1000); // 1 хвилина
 
-        setInterval(() => {
-            syncManualRegistrationsFromScheduleNotes().catch((error) => {
-                console.error('❌ Помилка синхронізації ручних реєстрацій з нотаток:', error && error.message ? error.message : error);
-            });
-        }, 15 * 1000);
-        
-        console.log('⏰ Система нагадувань активована (перевірка щохвилини, синхронізація нотаток кожні 15 сек)');
+        console.log('⏰ Система нагадувань активована (перевірка щохвилини; синхронізація нотаток виконується в loadEventsFromSheet)');
 
     } catch (err) {
         console.error("❌ Google Sheets не підключено:", err && err.message ? err.message : err);
@@ -5892,6 +5892,8 @@ async function loadEventsFromSheet() {
         for (const event of events) {
             const availableSeats = await getSeatsLeft(event.id);
             if (availableSeats <= 0) continue;
+            // Без резерву промоція не потрібна — не робимо зайвих читань Sheets.
+            if (!(Number(event.reserveCount) > 0)) continue;
 
             try {
                 await promoteReserveRegistrantsForAvailableSeats(event, availableSeats);
@@ -5905,7 +5907,7 @@ async function loadEventsFromSheet() {
         // Додаткова діагностика
         const futureCount = events.filter(e => e.date > now).length;
         syncReminderRegistrationsWithEvents();
-        await syncManualRegistrationsFromScheduleNotes();
+        await syncManualRegistrationsFromScheduleNotes({ forceRefresh: true });
         console.log(`   📊 Поточний час: ${now.toLocaleString('uk-UA')}`);
         console.log(`   📊 Майбутніх заходів: ${futureCount} з ${events.length}`);
 

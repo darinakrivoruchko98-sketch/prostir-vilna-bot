@@ -1,0 +1,50 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+
+function between(start, end) {
+  const from = source.indexOf(start);
+  assert.notEqual(from, -1, `missing: ${start}`);
+  const to = source.indexOf(end, from);
+  assert.notEqual(to, -1, `missing: ${end}`);
+  return source.slice(from, to);
+}
+
+test('there is exactly one Telegram bot and one polling start, preceded by deleteWebHook', () => {
+  assert.equal((source.match(/new TelegramBot\(/g) || []).length, 1);
+  assert.match(source, /new TelegramBot\(TOKEN, \{ polling: false \}\)/);
+  assert.equal((source.match(/\.then\(\(\) => bot\.startPolling\(\)\)/g) || []).length, 1);
+  assert.match(source, /bot\.deleteWebHook\(\)[\s\S]*?\.then\(\(\) => bot\.startPolling\(\)\)/);
+  assert.doesNotMatch(source, /\.launch\(/);
+});
+
+test('409 handling only reacts to real 409 and never stops/restarts polling in a loop', () => {
+  const handler = between("bot.on('polling_error'", '// Recent actions for simple undo');
+  assert.match(handler, /statusCode === 409/);
+  assert.doesNotMatch(handler, /code === 'ETELEGRAM' && message\.includes\('getUpdates'\)/);
+  const conflictBlock = handler.slice(handler.indexOf('if (isConflict)'), handler.indexOf('// Тимчасові мережеві'));
+  assert.ok(conflictBlock.length > 0);
+  assert.doesNotMatch(conflictBlock, /startPolling\(\)|stopPolling\(\)/);
+  assert.match(handler, /EXIT_ON_POLLING_CONFLICT && pollingConflictCount >= POLLING_CONFLICT_EXIT_THRESHOLD/);
+  assert.match(source, /process\.env\.RENDER/);
+});
+
+test('manual note sync has no separate 15s timer and runs from loadEventsFromSheet with a fresh index', () => {
+  assert.doesNotMatch(source, /syncManualRegistrationsFromScheduleNotes\(\)\.catch/);
+  assert.doesNotMatch(source, /}, 15 \* 1000\)/);
+  const loader = between('async function loadEventsFromSheet() {', '/* ===== SAVE TO SHEET ===== */');
+  assert.match(loader, /syncManualRegistrationsFromScheduleNotes\(\{ forceRefresh: true \}\)/);
+});
+
+test('schedule note index is cached instead of re-read on every call', () => {
+  const fn = between('async function buildScheduleEventNoteIndex(forceRefresh = false) {', 'async function buildScheduleEventNoteIndexUncached()');
+  assert.match(fn, /withCache\('schedule-note-index'/);
+});
+
+test('reserve promotion in the refresh loop is skipped for events without reserve but kept otherwise', () => {
+  const loader = between('async function loadEventsFromSheet() {', '/* ===== SAVE TO SHEET ===== */');
+  assert.match(loader, /if \(!\(Number\(event\.reserveCount\) > 0\)\) continue;[\s\S]*?promoteReserveRegistrantsForAvailableSeats\(event, availableSeats\)/);
+});
