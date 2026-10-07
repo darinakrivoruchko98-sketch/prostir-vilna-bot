@@ -2,6 +2,7 @@
 
 const config = require('./src/config');
 const sharedState = require('./src/state');
+const { buildUndoCallbackData, resolveUndoEventId, isUndoCallbackData } = require('./src/utils/undo-callback');
 require('dotenv').config();
 
 const fs = require("fs");
@@ -274,11 +275,20 @@ async function performUndoForChat(chatId, fallbackEventId = '') {
 bot.on('callback_query', async (callbackQuery) => {
     try {
         const data = String(callbackQuery.data || '');
-        if (!data.startsWith('UNDO_REGISTER:')) {
+        if (!isUndoCallbackData(data)) {
             return;
         }
         const chatId = callbackQuery.from && callbackQuery.from.id;
-        const eventId = data.slice('UNDO_REGISTER:'.length).trim();
+        const candidateEventIds = [
+            ...(userEventRegistrations[chatId] || []).map((entry) => entry.eventId),
+            ...(userEventReserveRegistrations[chatId] || []).map((entry) => entry.eventId),
+            ...getAllEvents().map((event) => event.id)
+        ];
+        const recentAction = recentActions.get(String(chatId));
+        if (recentAction && recentAction.action && recentAction.action.eventId) {
+            candidateEventIds.push(recentAction.action.eventId);
+        }
+        const eventId = resolveUndoEventId(data, candidateEventIds);
         await bot.answerCallbackQuery(callbackQuery.id, { text: 'Виконується відміна...' });
         const undoRes = await performUndoForChat(chatId, eventId);
         if (undoRes.ok) {
@@ -412,6 +422,10 @@ const REMINDERS_STATE_META_KEY = '_meta';
 const FEEDBACK_PROMPT_HOUR = 19;
 const FEEDBACK_PROMPT_MINUTE = 0;
 const FEEDBACK_HISTORY_DAYS_TO_KEEP = 30;
+// Дешеве оновлення розкладу (1 читання A:F) кожні 10 с; важкі читання нотаток — не частіше ніж раз на 60 с.
+const SCHEDULE_REFRESH_INTERVAL_MS = 10 * 1000;
+const SCHEDULE_HEAVY_SYNC_INTERVAL_MS = 60 * 1000;
+const RESERVE_PROMOTION_RETRY_MS = 60 * 1000;
 const MANUAL_NOTE_CONFIRMATION_DELAY_MS = Number(process.env.MANUAL_NOTE_CONFIRMATION_DELAY_MS || 15000);
 const FEEDBACK_BUTTON_YES = '✅ Так, залишити відгук';
 const FEEDBACK_BUTTON_NO = '❌ Ні, дякую';
@@ -2279,7 +2293,7 @@ function getManualRegistrationDetectedAtMs(registration) {
     return Number.isNaN(parsed.getTime()) ? Date.now() : parsed.getTime();
 }
 
-async function sendManualRegistrationConfirmation(chatId, registration) {
+async function sendManualRegistrationConfirmation(chatId, registration, options = {}) {
     const eventDate = getRegistrationConfirmationDate(registration);
     const eventName = String(registration && registration.eventName || '').trim() || 'обраний захід';
     const eventId = String(registration && registration.eventId || '').trim();
@@ -2300,8 +2314,8 @@ async function sendManualRegistrationConfirmation(chatId, registration) {
         details += `\n🕐 ${dateStr} о ${timeStr}`;
     }
 
-    const replyMarkup = eventId
-        ? { inline_keyboard: [[{ text: 'Відмінити', callback_data: `UNDO_REGISTER:${eventId}` }]] }
+    const replyMarkup = eventId && options.withoutButton !== true
+        ? { inline_keyboard: [[{ text: 'Відмінити', callback_data: buildUndoCallbackData(eventId) }]] }
         : undefined;
 
     await bot.sendMessage(String(chatId), `✅ <b>Вас зареєстровано на захід</b>\n\n${details}`, {
@@ -2310,9 +2324,28 @@ async function sendManualRegistrationConfirmation(chatId, registration) {
     });
 }
 
+const MANUAL_CONFIRMATION_MAX_NETWORK_ATTEMPTS = 5;
+
+function logTelegramSendError(prefix, error) {
+    console.error(prefix, error && error.message ? error.message : error);
+    const cause = error && error.cause;
+    if (cause) {
+        console.error('   cause:', cause && cause.message ? cause.message : cause, cause && cause.code ? `(code=${cause.code})` : '');
+    }
+    const nested = error && (error.errors || (cause && cause.errors));
+    if (Array.isArray(nested)) {
+        nested.forEach((item, index) => {
+            console.error(`   errors[${index}]:`, item && item.message ? item.message : item, item && item.code ? `(code=${item.code}, ${item.address || ''}:${item.port || ''})` : '');
+        });
+    }
+}
+
 function scheduleManualNoteConfirmation(chatId, registration, delayMs = MANUAL_NOTE_CONFIRMATION_DELAY_MS) {
     const chatKey = String(chatId || '').trim();
     if (!chatKey || !registration || registration.manualRegistrationConfirmed === true) {
+        return false;
+    }
+    if ((Number(registration.manualConfirmationNetworkAttempts) || 0) >= MANUAL_CONFIRMATION_MAX_NETWORK_ATTEMPTS) {
         return false;
     }
 
@@ -2339,7 +2372,24 @@ function scheduleManualNoteConfirmation(chatId, registration, delayMs = MANUAL_N
             saveReminderStateToDisk();
             console.log(`✅ Надіслано підтвердження ручної реєстрації з нотатки для ${chatKey} (${target.eventName})`);
         } catch (error) {
-            console.error(`❌ Не вдалося надіслати підтвердження ручної реєстрації для ${chatKey}:`, error && error.message ? error.message : error);
+            const errorText = String((error && error.message) || '');
+            if (errorText.includes('BUTTON_DATA_INVALID')) {
+                // Некоректна кнопка не зникне сама — шлемо підтвердження без кнопки й більше не повторюємо.
+                try {
+                    await sendManualRegistrationConfirmation(chatKey, target, { withoutButton: true });
+                    target.manualRegistrationConfirmed = true;
+                    saveReminderStateToDisk();
+                    console.warn(`⚠️ BUTTON_DATA_INVALID: підтвердження для ${chatKey} (${target.eventName}) надіслано без кнопки`);
+                } catch (fallbackError) {
+                    logTelegramSendError(`❌ Не вдалося надіслати підтвердження ручної реєстрації без кнопки для ${chatKey}:`, fallbackError);
+                }
+                return;
+            }
+
+            // Мережева/інша помилка — не вважаємо підтвердженням, але обмежуємо кількість повторів.
+            target.manualConfirmationNetworkAttempts = (Number(target.manualConfirmationNetworkAttempts) || 0) + 1;
+            saveReminderStateToDisk();
+            logTelegramSendError(`❌ Не вдалося надіслати підтвердження ручної реєстрації для ${chatKey} (спроба ${target.manualConfirmationNetworkAttempts}/${MANUAL_CONFIRMATION_MAX_NETWORK_ATTEMPTS}):`, error);
         }
     }, timeoutMs);
 
@@ -2402,11 +2452,14 @@ async function syncManualRegistrationsFromScheduleNotes(options = {}) {
         const registrants = parseRegistrantsFromNote(noteText);
         for (const registrant of registrants) {
             const phoneKey = normalizeRegistrantPhone(registrant && registrant.phone);
-            if (!phoneKey) {
-                continue;
+            const noteUserId = Number(String(registrant && registrant.userId || '').trim());
+            let recipientChatId = '';
+            if (phoneKey) {
+                recipientChatId = await resolveChatIdByPhone(phoneKey, resolveCache);
+            } else if (Number.isInteger(noteUserId) && noteUserId > 0) {
+                // Без телефону в нотатці користуємось userId (лише коли телефону немає, щоб не підміняти друзів власником).
+                recipientChatId = String(noteUserId);
             }
-
-            const recipientChatId = await resolveChatIdByPhone(phoneKey, resolveCache);
             if (!recipientChatId) {
                 continue;
             }
@@ -2416,7 +2469,8 @@ async function syncManualRegistrationsFromScheduleNotes(options = {}) {
             }
 
             const alreadyAdded = userEventRegistrations[recipientChatId]
-                .some((registration) => registration.eventId === event.id && normalizeRegistrantPhone(registration.registrantPhone) === phoneKey);
+                .some((registration) => registration.eventId === event.id
+                    && (!phoneKey || normalizeRegistrantPhone(registration.registrantPhone) === phoneKey));
             if (alreadyAdded) {
                 continue;
             }
@@ -5431,7 +5485,7 @@ async function startSelectedEventsRegistration(chatId, user, options = {}) {
     if (!isFriendMode && successEvents && successEvents.length > 0) {
         const lastEvent = successEvents[successEvents.length - 1];
         if (lastEvent && lastEvent.id) {
-            replyMarkup = Object.assign({}, replyMarkup, { inline_keyboard: [[{ text: 'Відмінити', callback_data: `UNDO_REGISTER:${lastEvent.id}` }]] });
+            replyMarkup = Object.assign({}, replyMarkup, { inline_keyboard: [[{ text: 'Відмінити', callback_data: buildUndoCallbackData(lastEvent.id) }]] });
         }
     }
 
@@ -5557,7 +5611,7 @@ async function initSheets() {
                 .catch((error) => {
                     console.error('❌ Помилка оновлення розкладу або очищення нотаток:', error && error.message ? error.message : error);
                 });
-        }, 60000);
+        }, SCHEDULE_REFRESH_INTERVAL_MS);
         
         // Разова перевірка одразу після ініціалізації
         checkAndSendReminders().catch((error) => {
@@ -5734,7 +5788,24 @@ setInterval(() => {
 // (Завантаження розкладу буде ініційовано після підключення Sheets у initSheets)
 
 /* ===== LOAD EVENTS FROM SHEET ===== */
+let loadEventsInProgress = false;
+let lastLoggedScheduleSheet = '';
+let lastScheduleSignature = '';
+let lastHeavyScheduleSyncAt = 0;
+const reservePromotionAttempts = new Map();
+
+// Запобігає накладанню циклів при інтервалі 10 с, якщо попереднє оновлення ще триває.
 async function loadEventsFromSheet() {
+    if (loadEventsInProgress) return;
+    loadEventsInProgress = true;
+    try {
+        await loadEventsFromSheetOnce();
+    } finally {
+        loadEventsInProgress = false;
+    }
+}
+
+async function loadEventsFromSheetOnce() {
     if (!sheetsClient || !SPREADSHEET_ID) return;
 
     try {
@@ -5751,7 +5822,10 @@ async function loadEventsFromSheet() {
                 rows = resp.data.values || [];
                 if (rows && rows.length) {
                     activeScheduleSheet = scheduleSheet;
-                    console.log(`   Використано лист ${scheduleSheet}`);
+                    if (lastLoggedScheduleSheet !== scheduleSheet) {
+                        lastLoggedScheduleSheet = scheduleSheet;
+                        console.log(`   Використано лист ${scheduleSheet}`);
+                    }
                     break;
                 }
             } catch (e) {
@@ -5786,10 +5860,17 @@ async function loadEventsFromSheet() {
             throw new Error(`Не вдалося зчитати розклад із таблиці ${SPREADSHEET_ID}. ${details}`);
         }
 
-        // ДІАГНОСТИКА: логуємо перші рядки таблиці
-        console.log(`\n🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):`);
-        for (let i = 0; i < Math.min(5, rows.length); i++) {
-            console.log(`   Рядок ${i}: ${JSON.stringify(rows[i])}`);
+        const scheduleSignature = require('crypto').createHash('sha1').update(JSON.stringify(rows)).digest('hex');
+        const scheduleChanged = scheduleSignature !== lastScheduleSignature;
+        lastScheduleSignature = scheduleSignature;
+        const heavySyncDue = scheduleChanged || (Date.now() - lastHeavyScheduleSyncAt) >= SCHEDULE_HEAVY_SYNC_INTERVAL_MS;
+
+        if (scheduleChanged) {
+            // ДІАГНОСТИКА: логуємо перші рядки таблиці (лише при зміні, щоб не спамити логи кожні 10 с)
+            console.log(`\n🔍 ДІАГНОСТИКА ЗАВАНТАЖЕННЯ Розкладу (перші 5 рядків):`);
+            for (let i = 0; i < Math.min(5, rows.length); i++) {
+                console.log(`   Рядок ${i}: ${JSON.stringify(rows[i])}`);
+            }
         }
 
         // Очистити поточні заходи перед завантаженням
@@ -5830,14 +5911,18 @@ async function loadEventsFromSheet() {
 
             seen.add(ev.id);
             events.push(ev);
-            console.log(`   📅 Завантажено: ${ev.name} | ${ev.date.toLocaleDateString('uk-UA')} ${ev.date.toLocaleTimeString('uk-UA', {hour: '2-digit', minute: '2-digit'})} | ${ev.seats} місць`);
+            if (scheduleChanged) {
+                console.log(`   📅 Завантажено: ${ev.name} | ${ev.date.toLocaleDateString('uk-UA')} ${ev.date.toLocaleTimeString('uk-UA', {hour: '2-digit', minute: '2-digit'})} | ${ev.seats} місць`);
+            }
         }
 
         if (events.length === 0) {
             console.warn(`⚠️ Розклад прочитано, але заходів не знайдено. Перевірте дані у листі ${SCHEDULE_SHEET_NAME}.`);
         }
 
-        await reconcileScheduleNotesWithEvents(events);
+        if (heavySyncDue) {
+            await reconcileScheduleNotesWithEvents(events);
+        }
 
         const previousEvents = Array.from(previousEventsById.values());
         const eventRemap = buildLikelyEditedEventMap(previousEvents, events);
@@ -5895,21 +5980,38 @@ async function loadEventsFromSheet() {
             // Без резерву промоція не потрібна — не робимо зайвих читань Sheets.
             if (!(Number(event.reserveCount) > 0)) continue;
 
+            // Якщо стан не змінився і попередня спроба нічого не перенесла — не повторюємо частіше за хвилину.
+            const promotionSignature = `${event.seats}|${event.registrations}|${event.reserveCount}`;
+            const lastAttempt = reservePromotionAttempts.get(event.id);
+            if (lastAttempt && lastAttempt.signature === promotionSignature && (Date.now() - lastAttempt.at) < RESERVE_PROMOTION_RETRY_MS) {
+                continue;
+            }
+
             try {
-                await promoteReserveRegistrantsForAvailableSeats(event, availableSeats);
+                const promotedAny = await promoteReserveRegistrantsForAvailableSeats(event, availableSeats);
+                if (promotedAny) {
+                    reservePromotionAttempts.delete(event.id);
+                } else {
+                    reservePromotionAttempts.set(event.id, { signature: promotionSignature, at: Date.now() });
+                }
             } catch (promotionError) {
                 console.error('⚠️ Не вдалося автоматично перенести резерв для заходу', event.id, promotionError && promotionError.message ? promotionError.message : promotionError);
             }
         }
 
-        console.log(`✅ Розклад завантажено з Sheets (${events.length} заходів)`);
-        
-        // Додаткова діагностика
-        const futureCount = events.filter(e => e.date > now).length;
         syncReminderRegistrationsWithEvents();
-        await syncManualRegistrationsFromScheduleNotes({ forceRefresh: true });
-        console.log(`   📊 Поточний час: ${now.toLocaleString('uk-UA')}`);
-        console.log(`   📊 Майбутніх заходів: ${futureCount} з ${events.length}`);
+        // Індекс нотаток кешується на 60 с; примусово оновлюємо лише коли змінився розклад.
+        await syncManualRegistrationsFromScheduleNotes({ forceRefresh: scheduleChanged });
+        if (heavySyncDue) {
+            lastHeavyScheduleSyncAt = Date.now();
+        }
+
+        if (heavySyncDue) {
+            const futureCount = events.filter(e => e.date > now).length;
+            console.log(`✅ Розклад завантажено з Sheets (${events.length} заходів)`);
+            console.log(`   📊 Поточний час: ${now.toLocaleString('uk-UA')}`);
+            console.log(`   📊 Майбутніх заходів: ${futureCount} з ${events.length}`);
+        }
 
     } catch (e) {
         console.error('Error loading schedule from Sheets', e);

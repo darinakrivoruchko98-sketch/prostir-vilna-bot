@@ -209,7 +209,7 @@ test('reserve promotion does not increment registrations a second time after the
 
     const scheduleLoaderStart = source.indexOf('async function loadEventsFromSheet');
     const scheduleLoadStart = source.indexOf('for (const event of events) {', scheduleLoaderStart);
-    const scheduleLoadEnd = source.indexOf('\n        console.log(`✅ Розклад завантажено з Sheets', scheduleLoadStart);
+    const scheduleLoadEnd = source.indexOf('\n        syncReminderRegistrationsWithEvents();', scheduleLoadStart);
     const scheduleLoad = source.slice(scheduleLoadStart, scheduleLoadEnd);
     assert.notEqual(scheduleLoaderStart, -1);
     assert.notEqual(scheduleLoadStart, -1);

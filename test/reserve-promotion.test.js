@@ -250,7 +250,7 @@ test('schedule refresh promotes the first reservist after column D is manually c
   });
 });
 
-test('production Sheets refresh polls every minute and promotes from the refreshed available-seat count', () => {
+test('production Sheets refresh polls every 10 seconds and promotes from the refreshed available-seat count', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const source = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
@@ -266,7 +266,8 @@ test('production Sheets refresh polls every minute and promotes from the refresh
   assert.notEqual(loaderStart, -1);
   assert.notEqual(loaderEnd, -1);
   assert.match(initSheets, /sheetsRefreshInterval = setInterval\(\(\) => \{[\s\S]*?loadEventsFromSheet\(\)/);
-  assert.match(initSheets, /}, 60000\)/);
+  assert.match(initSheets, /}, SCHEDULE_REFRESH_INTERVAL_MS\);/);
+  assert.match(source, /const SCHEDULE_REFRESH_INTERVAL_MS = 10 \* 1000;/);
   assert.match(loader, /const availableSeats = await getSeatsLeft\(event\.id\)/);
   assert.match(loader, /promoteReserveRegistrantsForAvailableSeats\(event, availableSeats\)/);
 });
