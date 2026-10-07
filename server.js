@@ -9,6 +9,7 @@ const fs = require("fs");
 const path = require("path");
 const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
+const { createRecentKeyTracker } = require('./src/utils/update-dedupe');
 const { createAuthorizedSheetsClient } = require('./src/sheets/auth');
 const { cancelAfishaRegistrationButton, isRegistrationCancelText } = require('./src/utils/registration-flow');
 const { withCache, invalidateCache } = require('./src/sheets/cache');
@@ -124,6 +125,18 @@ app.use(express.json());
 // Telegram бот з polling режимом
 const bot = new TelegramBot(TOKEN, { polling: false });
 sharedState.bot = bot;
+
+// Той самий Telegram update (update_id) або callback_query.id не обробляємо вдруге.
+const processedUpdates = createRecentKeyTracker();
+const processedCallbackQueries = createRecentKeyTracker();
+const originalProcessUpdate = bot.processUpdate.bind(bot);
+bot.processUpdate = function (update) {
+    if (update && processedUpdates.seenBefore(update.update_id)) {
+        console.warn(`[updates] пропущено повторний update_id=${update.update_id}`);
+        return;
+    }
+    return originalProcessUpdate(update);
+};
 const originalSendMessage = bot.sendMessage.bind(bot);
 bot.sendMessage = function (...args) {
     if (args.length === 0) {
@@ -274,6 +287,10 @@ async function performUndoForChat(chatId, fallbackEventId = '') {
 
 bot.on('callback_query', async (callbackQuery) => {
     try {
+        if (callbackQuery && processedCallbackQueries.seenBefore(callbackQuery.id)) {
+            console.warn(`[updates] пропущено повторний callback_query.id=${callbackQuery.id}`);
+            return;
+        }
         const data = String(callbackQuery.data || '');
         if (!isUndoCallbackData(data)) {
             return;
@@ -5354,6 +5371,7 @@ async function checkPendingRegistrationSelections() {
 function resetSelectedEventsFlow(user) {
     clearPendingRegistrationSelection(user);
     delete user.afishaMultiRegistration;
+    delete user.registrationAction;
     delete user.afishaReserveMode;
     delete user.afishaEventIndex;
     delete user.currentMultiEventId;
@@ -5369,6 +5387,13 @@ function resetSelectedEventsFlow(user) {
 
 async function completeSelectedEventsRegistration(chatId, user, registrantName, registrantPhone, options = {}) {
     const selectedEvents = [...(user.selectedEventsList || [])];
+    const action = user.registrationAction;
+    if (!action || !action.id) {
+        console.warn(`[registration] немає актуальної registration action для користувача ${chatId} — реєстрацію не запущено`);
+        return { successEvents: [], alreadyRegisteredEvents: [], reserveEvents: [], failedEvents: [] };
+    }
+    options = Object.assign({}, options, { registrationActionId: action.id });
+    let hadError = false;
     const successEvents = [];
     const alreadyRegisteredEvents = [];
     const reserveEvents = [];
@@ -5398,13 +5423,18 @@ async function completeSelectedEventsRegistration(chatId, user, registrantName, 
         } else if (result.status === 'no-seats') {
             failedEvents.push(`${formatSelectedEventLine(details)} — місця закінчилися`);
         } else {
+            hadError = true;
             failedEvents.push(`${formatSelectedEventLine(details)} — не вдалося зареєструвати`);
         }
     }
 
-    resetSelectedEventsFlow(user);
-    user.step = 0;
-    user.registrationMode = false;
+    // Вибір і registration action очищаємо лише коли всі реєстрації дії завершилися без збоїв;
+    // після помилки Sheets/API вибір залишається для повторної спроби.
+    if (!hadError) {
+        resetSelectedEventsFlow(user);
+        user.step = 0;
+        user.registrationMode = false;
+    }
 
     return { successEvents, alreadyRegisteredEvents, reserveEvents, failedEvents };
 }
@@ -5461,6 +5491,11 @@ async function startSelectedEventsRegistration(chatId, user, options = {}) {
 
     clearPendingRegistrationSelection(user);
     user.afishaMultiRegistration = true;
+    // Marker актуальної дії: створюється лише тут, при свіжому виборі користувача.
+    user.registrationAction = {
+        id: `${chatId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+        eventIds: user.selectedEventsList.map((selectedEvent) => selectedEvent.id)
+    };
     const isFriendMode = isFriendRegistrationMode(user);
     const registrantData = isFriendMode
         ? getActiveRegistrationDraft(user)
@@ -5510,6 +5545,11 @@ async function startSelectedEventsRegistration(chatId, user, options = {}) {
                 : String(chatId)
         }
     );
+
+    // Вибір уже спожито іншим викликом — повторного повідомлення не надсилаємо.
+    if (!successEvents.length && !alreadyRegisteredEvents.length && !reserveEvents.length && !failedEvents.length) {
+        return;
+    }
 
     if (instantAfisha && !isFriendMode) {
         delete user.lastAfishaRegisteredEventId;
@@ -7082,7 +7122,16 @@ async function registerForSelectedEventReserveUnlocked(chatId, user, providedNam
 
 async function registerForSelectedEvent(chatId, user, providedName, providedPhone, options = {}) {
     const eventId = user && user.selectedEventId;
-    return withRegistrationLock(eventId, () => registerForSelectedEventUnlocked(chatId, user, providedName, providedPhone, options));
+    return withRegistrationLock(eventId, () => {
+        // Реєструємо лише захід актуальної registration action; старий selectedEventId сам по собі не дає права на реєстрацію.
+        const action = user.registrationAction;
+        if (!eventId || user.selectedEventId !== eventId || !action || !options.registrationActionId
+            || action.id !== options.registrationActionId || !action.eventIds.includes(eventId)) {
+            console.warn(`[registration] пропущено реєстрацію: eventId "${eventId}" не відповідає поточному вибору користувача ${chatId}`);
+            return { status: 'failed' };
+        }
+        return registerForSelectedEventUnlocked(chatId, user, providedName, providedPhone, options);
+    });
 }
 
 async function registerForSelectedEventReserve(chatId, user, providedName, providedPhone, options = {}) {
@@ -9769,6 +9818,7 @@ bot.on('message', async (msg) => {
     if (isRegistrationCancelText(text)) {
         clearPendingRegistrationSelection(user);
         delete user.afishaMultiRegistration;
+        delete user.registrationAction;
         delete user.afishaFullRegistration;
         delete user.selectedEventsList;
         delete user.currentSelectedEventName;
