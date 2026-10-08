@@ -13,23 +13,13 @@ function between(start, end) {
   return source.slice(from, to);
 }
 
-test('there is exactly one Telegram bot and one polling start, preceded by deleteWebHook', () => {
+test('there is exactly one Telegram bot, using webhook instead of polling', () => {
   assert.equal((source.match(/new TelegramBot\(/g) || []).length, 1);
   assert.match(source, /new TelegramBot\(TOKEN, \{ polling: false \}\)/);
-  assert.equal((source.match(/\.then\(\(\) => bot\.startPolling\(\)\)/g) || []).length, 1);
-  assert.match(source, /bot\.deleteWebHook\(\)[\s\S]*?\.then\(\(\) => bot\.startPolling\(\)\)/);
+  assert.doesNotMatch(source, /\.startPolling\(|\.stopPolling\(|deleteWebHook\(|polling_error/);
+  assert.match(source, /app\.post\(WEBHOOK_PATH, createWebhookHandler\(bot, process\.env\.WEBHOOK_SECRET\)\)/);
+  assert.match(source, /app\.listen\([\s\S]*?registerWebhook\(bot/);
   assert.doesNotMatch(source, /\.launch\(/);
-});
-
-test('409 handling only reacts to real 409 and never stops/restarts polling in a loop', () => {
-  const handler = between("bot.on('polling_error'", '// Recent actions for simple undo');
-  assert.match(handler, /statusCode === 409/);
-  assert.doesNotMatch(handler, /code === 'ETELEGRAM' && message\.includes\('getUpdates'\)/);
-  const conflictBlock = handler.slice(handler.indexOf('if (isConflict)'), handler.indexOf('// Тимчасові мережеві'));
-  assert.ok(conflictBlock.length > 0);
-  assert.doesNotMatch(conflictBlock, /startPolling\(\)|stopPolling\(\)/);
-  assert.match(handler, /EXIT_ON_POLLING_CONFLICT && pollingConflictCount >= POLLING_CONFLICT_EXIT_THRESHOLD/);
-  assert.match(source, /process\.env\.RENDER/);
 });
 
 test('manual note sync has no separate 15s timer and runs from loadEventsFromSheet with a forced refresh only on heavy (changed or 60s) cycles', () => {

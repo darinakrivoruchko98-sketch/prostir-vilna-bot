@@ -9,6 +9,7 @@ const fs = require("fs");
 const path = require("path");
 const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
+const { WEBHOOK_PATH, createWebhookHandler, registerWebhook } = require("./src/telegram-webhook");
 const { createRecentKeyTracker } = require('./src/utils/update-dedupe');
 const { createAuthorizedSheetsClient } = require('./src/sheets/auth');
 const { cancelAfishaRegistrationButton, isRegistrationCancelText } = require('./src/utils/registration-flow');
@@ -69,14 +70,6 @@ const REMINDER_24H_HOURS_MAX = 24;
 const REMINDER_1H_MINUTES_MIN = 1;
 const REMINDER_1H_MINUTES_MAX = 60;
 const PENDING_REGISTRATION_REMINDER_TIMEOUT_MS = 5 * 60 * 1000;
-// На Render (RENDER=true) за замовчуванням завершуємо процес при стійкому 409: платформа перезапустить його,
-// а старий інстанс під час деплою вже буде зупинено. Явне EXIT_ON_POLLING_CONFLICT=false це вимикає.
-const EXIT_ON_POLLING_CONFLICT_RAW = String(process.env.EXIT_ON_POLLING_CONFLICT || '').trim().toLowerCase();
-const EXIT_ON_POLLING_CONFLICT = EXIT_ON_POLLING_CONFLICT_RAW
-    ? EXIT_ON_POLLING_CONFLICT_RAW === 'true'
-    : String(process.env.RENDER || '').trim().toLowerCase() === 'true';
-const POLLING_CONFLICT_EXIT_THRESHOLD = 3;
-const POLLING_CONFLICT_RETRY_MS = Number(process.env.POLLING_CONFLICT_RETRY_MS || 15000);
 // Таблиця для розкладу та реєстрацій на заходи
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID || config.SPREADSHEET_ID;
 const SCHEDULE_SHEET_NAME = process.env.SCHEDULE_SHEET_NAME || config.SCHEDULE_SHEET_NAME;
@@ -122,7 +115,7 @@ if (!TOKEN) {
 const app = express();
 app.use(express.json());
 
-// Telegram бот з polling режимом
+// Telegram бот (webhook режим)
 const bot = new TelegramBot(TOKEN, { polling: false });
 sharedState.bot = bot;
 
@@ -151,9 +144,6 @@ bot.sendMessage = function (...args) {
 
     return originalSendMessage(...args);
 };
-let pollingConflictCount = 0;
-let lastPollingConflictLogAt = 0;
-
 async function configureBotCommandMenus() {
     try {
         const userCommands = [
@@ -181,55 +171,6 @@ async function configureBotCommandMenus() {
 }
 
 configureBotCommandMenus();
-
-let pollingErrorCount = 0;
-const pollingErrorThreshold = 5; // Після 5 помилок на хвилину - перезавантажити
-
-bot.on('polling_error', async (error) => {
-    const message = String((error && error.message) || '');
-    const isConflict = Boolean(error && error.response && error.response.statusCode === 409) || /\b409\b/.test(message);
-
-    // Конфлікт - інший інстанс з тим самим токеном. Бібліотека сама повторює getUpdates,
-    // тому polling вручну не зупиняємо/не перезапускаємо (це створювало цикл stop/start).
-    if (isConflict) {
-        pollingConflictCount++;
-        const nowMs = Date.now();
-        if (nowMs - lastPollingConflictLogAt >= Math.max(1000, POLLING_CONFLICT_RETRY_MS)) {
-            lastPollingConflictLogAt = nowMs;
-            console.error(`❌ ETELEGRAM 409 Conflict (${pollingConflictCount}): інший активний інстанс бота з тим самим токеном. Перевірте, що працює лише один процес (Render/Railway/локально/PM2).`);
-        }
-
-        if (EXIT_ON_POLLING_CONFLICT && pollingConflictCount >= POLLING_CONFLICT_EXIT_THRESHOLD) {
-            console.error('⛔ Стійкий 409 Conflict, завершуємо процес, щоб не конкурувати за polling.');
-            process.exit(1);
-        }
-        return;
-    }
-
-    // Тимчасові мережеві ошибки - логуємо але не зупиняємо
-    if (isFatalNetwork) {
-        pollingErrorCount++;
-        console.error(`⚠️ Мережева ошибка polling (${pollingErrorCount}/${pollingErrorThreshold}):`, message);
-        
-        if (pollingErrorCount >= pollingErrorThreshold) {
-            console.error('🔴 Занадто багато мережевих помилок, перезапускаємо polling...');
-            pollingErrorCount = 0;
-            try {
-                await bot.stopPolling();
-                // Чекаємо 2 секунди перед перезапуском
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                await bot.startPolling();
-                console.log('✅ Polling перезапущено');
-            } catch (e) {
-                console.error('❌ Не вдалося перезапустити polling:', e.message);
-            }
-        }
-        return;
-    }
-
-    // Інші помилки - просто логуємо
-    console.error('⚠️ polling_error:', error);
-});
 
 // Recent actions for simple undo (keyed by chatId)
 const recentActions = new Map();
@@ -318,31 +259,14 @@ bot.on('callback_query', async (callbackQuery) => {
     }
 });
 
-// Скидаємо лічильник помилок кожну хвилину
-setInterval(() => {
-    if (pollingErrorCount > 0) {
-        console.log(`📊 Лічильник помилок polling скинуто (було ${pollingErrorCount})`);
-    }
-    pollingErrorCount = 0;
-    pollingConflictCount = 0;
-}, 60000);
-
-// Один polling: спочатку знімаємо можливий webhook, потім запускаємо polling рівно один раз.
-bot.deleteWebHook()
-    .catch((error) => {
-        console.warn('⚠️ deleteWebHook не вдалося виконати:', error && error.message ? error.message : error);
-    })
-    .then(() => bot.startPolling())
-    .then(() => console.log('🤖 Telegram polling запущено (один інстанс)'))
-    .catch((error) => {
-        console.error('❌ Не вдалося запустити polling:', error && error.message ? error.message : error);
-    });
+// Telegram webhook: оновлення проходять через існуючий bot.processUpdate (з дедуплікацією)
+app.post(WEBHOOK_PATH, createWebhookHandler(bot, process.env.WEBHOOK_SECRET));
 
 // Health check endpoints
 app.get('/', (req, res) => {
     res.json({ 
         status: 'ok', 
-        mode: 'polling',
+        mode: 'webhook',
         timestamp: new Date().toISOString() 
     });
 });
@@ -352,7 +276,7 @@ app.get('/health', (req, res) => {
         status: 'healthy',
         uptime: process.uptime(),
         events: events.length,
-        mode: 'polling'
+        mode: 'webhook'
     });
 });
 
@@ -363,8 +287,10 @@ const effectiveAppealsGroupId = typeof APPEALS_GROUP_ID !== 'undefined'
 // Запускаємо Express сервер ПЕРШИМ
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Сервер запущено на порті ${PORT}`);
-    console.log(`📡 Режим: Polling (Надійний для Railway)`);
-    console.log(`🤖 Бот прослуховує оновлення у режимі polling...`);
+    console.log(`📡 Режим: Webhook`);
+    registerWebhook(bot, { url: process.env.WEBHOOK_URL, secret: process.env.WEBHOOK_SECRET })
+        .then((fullUrl) => console.log(`🤖 Telegram webhook встановлено: ${fullUrl}`))
+        .catch((error) => console.error('❌ Не вдалося встановити webhook:', error && error.message ? error.message : error));
     console.log(`\n📋 КОНФІГУРАЦІЯ ГРУП:`);
     console.log(`   GROUP_ID: ${GROUP_ID}`);
     console.log(`   CHAT_ID: ${CHAT_ID}`);
@@ -13604,6 +13530,6 @@ bot.on('message', async (msg) => {
 
 });
 
-console.log("⏳ Бот ініціалізується. Режим роботи: polling (без webhook).");
+console.log("⏳ Бот ініціалізується. Режим роботи: webhook.");
 console.log("📋 Розклад:", config.SPREADSHEET_ID);
 console.log("👤 Персональні дані:", config.PERSONAL_DATA_SPREADSHEET_ID);

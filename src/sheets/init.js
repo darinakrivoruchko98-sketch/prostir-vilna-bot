@@ -5,13 +5,6 @@ const { parseEventFromRow } = require('../events/parser');
 const { promoteReserveRegistrantsIfNeeded } = require('./schedule');
 const { withCache, invalidateCache } = require('./cache');
 
-function startPollingIfNeeded(bot) {
-    if (state.pollingStarted) return;
-    bot.startPolling();
-    state.pollingStarted = true;
-    console.log("🤖 Telegram polling запущено ✅");
-}
-
 async function loadEventsFromSheet() {
     if (!state.sheetsClient || !config.SPREADSHEET_ID) {
         console.warn("⚠️ sheetsClient або SPREADSHEET_ID не готові");
@@ -164,7 +157,6 @@ async function initSheets(bot) {
         state.bot = bot;
 
         console.log("Google Sheets підключено ✅");
-        startPollingIfNeeded(bot);
 
         // Перевірити/створити лист "Реєстрації"
         try {
@@ -194,7 +186,6 @@ async function initSheets(bot) {
 }
 
 module.exports = {
-    startPollingIfNeeded,
     initSheets,
     loadEventsFromSheet,
 };
