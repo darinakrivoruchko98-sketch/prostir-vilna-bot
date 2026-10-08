@@ -17,6 +17,7 @@ const { withCache, invalidateCache } = require('./src/sheets/cache');
 const { buildBeneficiarySummary, parseRegistrantsFromNoteText } = require('./src/utils/beneficiary-summary');
 const { hasCompleteRegistrationProfile, hasLikelyRegistrantNameShape } = require('./src/utils/profile');
 const { buildFriendRegistrationRecord, isValidFriendRegistrationRecord, registerFriendForEvent } = require('./src/utils/friend-registration');
+const personalDataSheetUtils = require('./src/sheets/personal-data');
 const { shouldSkipAiIntentDetection } = require('./src/utils/intent-detection');
 const { createNotificationDeduper } = require('./src/utils/notification-dedup');
 const { clearFeedbackFlowState } = require('./src/utils/feedback-state');
@@ -1210,7 +1211,6 @@ function loadReminderStateFromDisk() {
         userEventReserveRegistrations = restoredReserves;
         friendEventReserveRegistrations = restoredFriendReserves;
         rebuildFeedbackCandidatesFromActiveRegistrations();
-        schedulePendingManualNoteConfirmations();
         const restoredCount = Object.values(userEventRegistrations).reduce((sum, items) => sum + items.length, 0);
         const restoredFriendCount = Object.values(friendEventRegistrations).reduce((sum, items) => sum + items.length, 0);
         console.log(`♻️ Відновлено ${restoredCount} реєстрацій, ${restoredFriendCount} реєстрацій подруг і резерви з ${REMINDERS_STATE_PATH}`);
@@ -2376,6 +2376,7 @@ function schedulePendingManualNoteConfirmations() {
     }
 }
 
+// Лише відновлює userEventRegistrations з нотаток для нагадувань; повідомлень користувачам не надсилає.
 async function syncManualRegistrationsFromScheduleNotes(options = {}) {
     if (!SPREADSHEET_ID || !sheetsClient) {
         return;
@@ -2389,7 +2390,6 @@ async function syncManualRegistrationsFromScheduleNotes(options = {}) {
     const now = new Date();
     let hasReminderChanges = false;
     let addedRegistrations = 0;
-    let queuedConfirmations = 0;
     const resolveCache = new Map();
 
     for (const event of getAllEvents()) {
@@ -2444,17 +2444,13 @@ async function syncManualRegistrationsFromScheduleNotes(options = {}) {
                 reminded1h: false,
                 manualRegistrationSource: 'sheet-note',
                 manualRegistrationDetectedAt: detectedAtIso,
-                manualRegistrationConfirmed: false
+                manualRegistrationConfirmed: true
             };
 
             userEventRegistrations[recipientChatId].push(registration);
             recordFeedbackCandidate(recipientChatId, event.date, event.name);
             hasReminderChanges = true;
             addedRegistrations += 1;
-
-            if (scheduleManualNoteConfirmation(recipientChatId, registration, MANUAL_NOTE_CONFIRMATION_DELAY_MS)) {
-                queuedConfirmations += 1;
-            }
         }
     }
 
@@ -2462,10 +2458,8 @@ async function syncManualRegistrationsFromScheduleNotes(options = {}) {
         saveReminderStateToDisk();
     }
 
-    schedulePendingManualNoteConfirmations();
-
-    if (addedRegistrations > 0 || queuedConfirmations > 0) {
-        console.log(`ℹ️ Синхронізація нотаток: додано ${addedRegistrations} реєстрацій, заплановано ${queuedConfirmations} підтверджень`);
+    if (addedRegistrations > 0) {
+        console.log(`ℹ️ Синхронізація нотаток: відновлено ${addedRegistrations} реєстрацій для нагадувань`);
     }
 }
 
@@ -6043,12 +6037,17 @@ async function loadEventsFromSheetOnce() {
 
 /* ===== SAVE TO SHEET ===== */
 
-async function appendRegistrationRow(chatId, user) {
+async function appendRegistrationRow(chatId, user, options = {}) {
 
     if (!PERSONAL_DATA_SPREADSHEET_ID) {
         throw new Error('PERSONAL_DATA_SPREADSHEET_ID not set');
     }
 
+    const requestedChatId = String(chatId || '').trim();
+    const registrantChatId = String(options.registrantChatId || '').trim();
+    const safeChatId = options.matchByPhoneOrChatIdOnly === true && requestedChatId === registrantChatId
+        ? ''
+        : requestedChatId;
     const values = [
         String((user && user.username) || ''),
         user.name || "",
@@ -6062,7 +6061,7 @@ async function appendRegistrationRow(chatId, user) {
         user.employment || "",
         user.beneficiaryCategory || "",
         user.gzn || "",
-        String(chatId || '')
+        safeChatId
     ];
 
     const normalizeUsername = (value) => String(value || '').trim().toLowerCase().replace(/^@+/, '');
@@ -6087,6 +6086,10 @@ async function appendRegistrationRow(chatId, user) {
     };
 
     const findExistingRowByIdentity = (rows) => {
+        if (options.matchByPhoneOrChatIdOnly === true) {
+            return personalDataSheetUtils.findExistingRowByIdentity(rows, values, true);
+        }
+
         const inputUsername = normalizeUsername(values[0]);
         const inputName = normalizeName(values[1]);
         const inputPhone = normalizePhone(values[2]);
@@ -6755,9 +6758,6 @@ async function registerForSelectedEventUnlocked(chatId, user, providedName, prov
     }
 
     const skipReminders = options.skipReminders === true;
-    const reminderOwnerChatId = skipReminders
-        ? String(options.reminderOwnerChatId || '').trim()
-        : String(options.reminderOwnerChatId || chatId || '').trim();
     const friendRecord = options.friendProfile
         ? buildFriendRegistrationRecord({
             registrantChatId: options.registrantChatId || chatId,
@@ -6767,6 +6767,11 @@ async function registerForSelectedEventUnlocked(chatId, user, providedName, prov
             eventId
         })
         : null;
+    const reminderOwnerChatId = friendRecord
+        ? friendRecord.friendChatId
+        : skipReminders
+            ? String(options.reminderOwnerChatId || '').trim()
+            : String(options.reminderOwnerChatId || chatId || '').trim();
 
     const seatsLeft = await getSeatsLeft(eventId);
     if (!friendRecord && seatsLeft <= 0) {
@@ -6824,7 +6829,7 @@ async function registerForSelectedEventUnlocked(chatId, user, providedName, prov
                 name: record.friendName,
                 phone: record.friendPhone,
                 chatId: record.friendChatId
-            }), { matchByPhoneOrChatIdOnly: true }),
+            }), { matchByPhoneOrChatIdOnly: true, registrantChatId: record.registrantChatId }),
             writeEventRegistration: async (record) => {
                 if (!evObj) throw new Error(`Event ${record.eventId} not found`);
                 await incrementSheetRegistrationUnlocked(evObj, {
@@ -6991,7 +6996,7 @@ async function registerForSelectedEventReserveUnlocked(chatId, user, providedNam
             name: friendRecord.friendName,
             phone: friendRecord.friendPhone,
             chatId: friendRecord.friendChatId
-        }), { matchByPhoneOrChatIdOnly: true });
+        }), { matchByPhoneOrChatIdOnly: true, registrantChatId: friendRecord.registrantChatId });
     }
 
     const added = await addRegistrantToReserveUnlocked(event, registrantProfile);
@@ -10272,7 +10277,8 @@ bot.on('message', async (msg) => {
                 }
 
                 await appendRegistrationRow(friendChatId, registrationDraft, {
-                    matchByPhoneOrChatIdOnly: isFriendRegistrationMode(user)
+                    matchByPhoneOrChatIdOnly: isFriendRegistrationMode(user),
+                    registrantChatId: isFriendRegistrationMode(user) ? String(chatId || '') : ''
                 });
 
                 console.log(`✅ Реєстрація успішно збережена для ${chatId}`);
