@@ -9798,7 +9798,7 @@ bot.on('message', async (msg) => {
     }
 
     // === ОБРОБКА ЗВЕРНЕНЬ - ПЕРЕВІРЯЄМО ПЕРШИМ ===
-    if (text === "Скасувати" && user.context === 'appeal') {
+    if (matchesCommand(text, "Скасувати") && user.context === 'appeal') {
         console.log(`✅ Скасування звернення для ${chatId}`);
         user.context = null;
         user.step = 0;
@@ -12095,7 +12095,7 @@ bot.on('message', async (msg) => {
         user.context = 'contacts';
         const contactsReplyMarkup = {
             keyboard: [
-                [{ text: "Написати звернення" }],
+                [{ text: "💌 Написати звернення" }],
                 [{ text: NAVIGATION_BUTTONS.menu }]
             ],
             resize_keyboard: true
@@ -12425,7 +12425,7 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    if (text === "Написати звернення") {
+    if (matchesCommand(text, "Написати звернення")) {
         user.context = 'appeal';
         user.step = 1;
         
@@ -12443,7 +12443,7 @@ bot.on('message', async (msg) => {
         bot.sendMessage(chatId, appealInstructions, {
             parse_mode: 'HTML',
             reply_markup: {
-                keyboard: [[{ text: "Скасувати" }]],
+                keyboard: [[{ text: "❌ Скасувати" }]],
                 resize_keyboard: true
             }
         });
