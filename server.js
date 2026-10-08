@@ -3635,6 +3635,8 @@ async function decrementSheetRegistrationUnlocked(event, registrantProfile) {
             removeRegistrant: registrantProfile,
             eventId: event.id
         });
+        // Індекс нотаток кешується на 60 с — без скидання sync повернув би щойно скасовану реєстрацію зі старої нотатки.
+        invalidateCache('schedule-note-index');
         event.seats = remainingSeats + registrationsCount;
     } catch (error) {
         await restoreScheduleRegistrationState(match, previousValues, previousNote);
@@ -9746,7 +9748,13 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    if (isRegistrationCancelText(text)) {
+    // Кнопка афіші «❌ Відмінити реєстрацію» після успішної реєстрації має реально скасувати запис (обробляється нижче).
+    const isAfishaUndoButton = text === '❌ Відмінити реєстрацію'
+        && user.context === 'afisha'
+        && !user.registrationMode
+        && !user.afishaMultiRegistration;
+
+    if (isRegistrationCancelText(text) && !isAfishaUndoButton) {
         clearPendingRegistrationSelection(user);
         delete user.afishaMultiRegistration;
         delete user.registrationAction;
