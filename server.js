@@ -1631,17 +1631,42 @@ function matchesCommand(text, ...variants) {
 }
 
 const MAIN_MENU_BUTTONS = {
-    afisha: '🎭 Афіша заходів',
-    unsubscribe: '❌ Відписатись від заходів',
-    friend: '👭 Зареєструвати подругу',
+    afisha: '✨ Афіша заходів',
+    unsubscribe: '⛔ Відписатись від заходів',
+    friend: '🤍 Зареєструвати подругу',
     unsubscribeFriend: '👭❌ Відписати подругу',
     editProfile: '✏️ Редагувати профіль',
-    consultations: '🗨️ Індивідуальні консультації',
-    violenceHelp: '🚨 Допомога при насильстві',
+    consultations: '💬 Індивідуальні консультації',
+    violenceHelp: '🕊️ Допомога при насильстві',
     reminders: '🔔 Нагадування',
     statistics: '🧮 Статистика',
     contacts: '📞 Контакти'
 };
+
+// Фото розділу «Контакти» лежить у репозиторії (assets/), шлях від __dirname працює і локально, і на Render.
+const CONTACTS_PHOTO_PATH = path.join(__dirname, 'assets', 'contacts.jpg');
+// Підпис до фото в Telegram — не більше 1024 символів, тому текст має вміщатись в один sendPhoto.
+const TELEGRAM_CAPTION_MAX_LENGTH = 1024;
+const CONTACTS_CAPTION = `🩵 <b>Простір «Вільна»</b>
+
+Безпечний жіночий простір підтримки, прийняття та відновлення.
+
+🕐 <b>Графік:</b> 11:00 – 20:00 (середа–неділя)
+📍 <b>Адреса:</b> м. Дніпро, вул. Дмитра Донцова, 4
+💬 <b>Telegram-група:</b> https://t.me/vilna_dnipro
+
+💌 <b>Наша команда:</b>
+
+👩🏻 <b>Менеджерка Бондаренко Христина</b> 🪻
+@devohka_bonda — запис на заходи, розклад, організаційні питання.
+
+👩🏻 <b>Соціальна фахівчиня Дарина Криворучко</b> 🌷
+@DarynaVilna — соціальні консультації та супровід у складних обставинах.
+
+👩🏻 <b>Психологиня Людмила Вознюк</b> 🌹
+@luidmila_psi — індивідуальні консультації та групи підтримки.
+
+Ми поруч. Ти не одна 🩵`;
 
 const NAVIGATION_BUTTONS = {
     menu: '🏠 Повернутися в меню',
@@ -1670,12 +1695,12 @@ const AFISHA_ACTION_BUTTONS = {
 
 const AFISHA_DAY_BUTTONS = {
     monday: '🩵 Понеділок',
-    tuesday: '🩷 Вівторок',
-    wednesday: '💜 Середа',
-    thursday: '💙 Четвер',
-    friday: "💚 П'ятниця",
-    saturday: '💛 Субота',
-    sunday: '❤️ Неділя'
+    tuesday: '🤍 Вівторок',
+    wednesday: '🩶 Середа',
+    thursday: '🩵 Четвер',
+    friday: "🤍 П'ятниця",
+    saturday: '🩶 Субота',
+    sunday: '🩵 Неділя'
 };
 
 const WEEKDAY_INDEX_BY_NAME = {
@@ -7423,10 +7448,6 @@ async function processParsedEvents(parsedEvents) {
             [{ text: MAIN_MENU_BUTTONS.reminders }]
         ];
 
-        if (isAdminUserId(chatId)) {
-            buttons.push([{ text: MAIN_MENU_BUTTONS.statistics }]);
-        }
-
         buttons.push([{ text: MAIN_MENU_BUTTONS.contacts }]);
         return buttons;
     }
@@ -12069,50 +12090,30 @@ bot.on('message', async (msg) => {
 
     if (matchesCommand(text, MAIN_MENU_BUTTONS.contacts, 'Контакти')) {
         clearFriendRegistrationState(user);
-        const contactsMessage = `
-    🩵 <b>Простір «Вільна»</b>
+        const contactsMessage = CONTACTS_CAPTION;
 
-«Вільна» — це безпечний жіночий простір підтримки, прийняття та відновлення.
-Ми створили місце, де можна бути собою, говорити відкрито, отримувати фахову допомогу та відчувати опору.
-
-🕐 <b>Графік роботи:</b> 11:00 – 20:00 (середа–неділя)
-
-📍 <b>Адреса:</b>
-м. Дніпро, вул. Дмитра Донцова, 4
-
-💬 <b>Наша Telegram-група:</b>
-<a href="https://t.me/vilna_dnipro">https://t.me/vilna_dnipro</a>
-
-💌 <b>Наша команда:</b>
-
-👩🏻 <b>Менеджерка Бондаренко Христина</b> 🪻
-@devohka_bonda
-допоможе з організаційними питаннями, записом на заходи, реєстрацією, розкладом та зорієнтує щодо можливостей простору.
-
-👩🏻 <b>Соціальна фахівчиня Дарина Криворучко</b> 🌷
-@DarynaVilna
-надає соціальні консультації, здійснює супровід у складних життєвих обставинах та допомагає знайти необхідні ресурси й підтримку.
-
-👩🏻 <b>Психологиня Людмила Вознюк</b> 🌹
-@luidmila_psi
-проводить індивідуальні консультації та групи підтримки, допомагає впоратися з тривогою, емоційним виснаженням, переживаннями та кризовими станами.
-
-📩 Ви можете написати напряму фахівчині або залишити звернення через цей чат-бот — ми обов'язково зв'яжемося з вами.
-
-Ми поруч. Ти не одна 🩵
-        `;
-        
         user.context = 'contacts';
-        bot.sendMessage(chatId, contactsMessage, {
-            parse_mode: 'HTML',
-            reply_markup: {
-                keyboard: [
-                    [{ text: "Написати звернення" }],
-                    [{ text: NAVIGATION_BUTTONS.menu }]
-                ],
-                resize_keyboard: true
-            }
-        });
+        const contactsReplyMarkup = {
+            keyboard: [
+                [{ text: "Написати звернення" }],
+                [{ text: NAVIGATION_BUTTONS.menu }]
+            ],
+            resize_keyboard: true
+        };
+
+        try {
+            await bot.sendPhoto(chatId, fs.createReadStream(CONTACTS_PHOTO_PATH), {
+                caption: contactsMessage,
+                parse_mode: 'HTML',
+                reply_markup: contactsReplyMarkup
+            }, { filename: 'contacts.jpg', contentType: 'image/jpeg' });
+        } catch (photoError) {
+            logger.warn('Contacts photo send failed, sending text only', photoError && photoError.message ? photoError.message : photoError);
+            await bot.sendMessage(chatId, contactsMessage, {
+                parse_mode: 'HTML',
+                reply_markup: contactsReplyMarkup
+            });
+        }
         return;
     }
 
