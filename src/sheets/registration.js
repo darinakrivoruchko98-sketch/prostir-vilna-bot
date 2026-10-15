@@ -198,7 +198,7 @@ async function getSeatsLeft(eventId) {
         console.warn('getSeatsLeft: failed to read seat state from schedule', error && error.message ? error.message : error);
     }
 
-    return Math.max(0, Number(event.seats) || 0);
+    return Math.max(0, (Number(event.seats) || 0) - (Number(event.registrations) || 0));
 }
 
 async function appendEventRegistration(user, event, registrantInfo) {

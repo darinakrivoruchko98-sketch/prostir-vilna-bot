@@ -4,6 +4,7 @@ const state = require('../src/state');
 const config = require('../src/config');
 const { invalidateCache } = require('../src/sheets/cache');
 const { appendRegistrationRow, resolveKnownUser } = require('../src/sheets/personal-data');
+const { buildFriendRegistrationRecord, registerFriendForEvent } = require('../src/utils/friend-registration');
 const { applyKnownUserProfile } = require('../src/handlers/registration');
 const { buildScheduleNoteText, extractScheduleNoteEventId } = require('../src/sheets/schedule');
 
@@ -104,6 +105,96 @@ test('friend profile without chatId writes to the registered-users sheet without
     assert.equal(updates[0].requestBody.values[0][1], 'Іваненко Марія Олександрівна');
     assert.equal(updates[0].requestBody.values[0][2], '380990635980');
     assert.equal(updates[0].requestBody.values[0][12], '');
+  } finally {
+    state.sheetsClient = originalClient;
+    config.PERSONAL_DATA_SPREADSHEET_ID = originalSpreadsheetId;
+    config.PERSONAL_DATA_SHEET_NAME = originalSheetName;
+    invalidateCache('personal-data');
+  }
+});
+
+test('friend registration with the registrant chatId never updates the registrant profile', async () => {
+  const originalClient = state.sheetsClient;
+  const originalSpreadsheetId = config.PERSONAL_DATA_SPREADSHEET_ID;
+  const originalSheetName = config.PERSONAL_DATA_SHEET_NAME;
+  const header = ['username', 'name', 'phone', 'birth', 'status', 'children', 'health', 'evacuation', 'impact', 'employment', 'category', 'gzn', 'chatId'];
+  const registrantRow = ['', 'Акаунт А', '380501111111', '01.01.1980', 'ВПО', '0', 'Ні', '', '', 'Працюю', 'Категорія A', 'Ні', '111'];
+  const friendRow = ['', 'Подруга Б', '380502222222', '02.02.1990', 'ВПО', '1', 'Ні', '', '', 'Працюю', 'Категорія B', 'Так', ''];
+  const updates = [];
+  const eventRegistrations = [];
+
+  async function runScenario(initialRows, expectedFriendRowNumber) {
+    const rows = initialRows.map((row) => [...row]);
+    invalidateCache('personal-data');
+    state.sheetsClient = {
+      spreadsheets: {
+        get: async () => ({ data: { sheets: [{ properties: { title: 'Зареєстровані' } }] } }),
+        values: {
+          get: async () => ({ data: { values: rows } }),
+          update: async (request) => {
+            updates.push(request);
+            const rowNumber = Number(request.range.match(/A(\d+):M/)[1]);
+            rows[rowNumber - 1] = request.requestBody.values[0];
+          }
+        }
+      }
+    };
+
+    const friendProfile = {
+      name: 'Подруга Б',
+      phone: '380502222222',
+      birth: '02.02.1990',
+      status: 'ВПО',
+      childrenCount: '1',
+      health: 'Ні',
+      employment: 'Працюю',
+      beneficiaryCategory: 'Категорія B',
+      gzn: 'Так'
+    };
+    const friendRecord = buildFriendRegistrationRecord({
+      registrantChatId: '111',
+      friendChatId: '111',
+      friendName: friendProfile.name,
+      friendPhone: friendProfile.phone,
+      eventId: 'event-b'
+    });
+    const result = await registerFriendForEvent(friendRecord, {
+      hasAvailableSeat: async () => true,
+      isDuplicate: async () => false,
+      writeRegistrant: async (record) => appendRegistrationRow(record.friendChatId, friendProfile, {
+        matchByPhoneOrChatIdOnly: true,
+        registrantChatId: record.registrantChatId
+      }),
+      writeEventRegistration: async (record) => eventRegistrations.push({
+        eventId: record.eventId,
+        userId: record.friendChatId,
+        name: record.friendName,
+        phone: record.friendPhone
+      })
+    });
+
+    assert.equal(result.status, 'success');
+    assert.deepEqual(rows[1], registrantRow, 'registrant A row must remain unchanged');
+    assert.equal(rows[expectedFriendRowNumber - 1][1], 'Подруга Б');
+    assert.equal(rows[expectedFriendRowNumber - 1][2], '380502222222');
+    assert.notEqual(rows[expectedFriendRowNumber - 1][12], '111');
+    assert.equal(friendRecord.registrantChatId, '111');
+    assert.equal(friendRecord.friendChatId, '');
+  }
+
+  config.PERSONAL_DATA_SPREADSHEET_ID = 'friend-e2e-sheet';
+  config.PERSONAL_DATA_SHEET_NAME = 'Зареєстровані';
+
+  try {
+    await runScenario([header, registrantRow], 3);
+    await runScenario([header, registrantRow, friendRow], 3);
+    assert.equal(updates.length, 2);
+    assert.equal(updates[0].range, 'Зареєстровані!A3:M3');
+    assert.equal(updates[1].range, 'Зареєстровані!A3:M3');
+    assert.deepEqual(eventRegistrations, [
+      { eventId: 'event-b', userId: '', name: 'Подруга Б', phone: '380502222222' },
+      { eventId: 'event-b', userId: '', name: 'Подруга Б', phone: '380502222222' }
+    ]);
   } finally {
     state.sheetsClient = originalClient;
     config.PERSONAL_DATA_SPREADSHEET_ID = originalSpreadsheetId;

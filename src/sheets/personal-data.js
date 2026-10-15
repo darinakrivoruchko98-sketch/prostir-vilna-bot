@@ -47,7 +47,9 @@ function findExistingRowByIdentity(rows, values, matchByPhoneOrChatIdOnly = fals
         const rowUsername = normalizeIdentityValue(row[0]);
         const rowName = normalizeIdentityValue(row[1]);
         const rowPhone = normalizePhoneValue(row[2]);
-        const rowChatId = normalizeIdentityValue(row[12] || row[11] || row[10] || '');
+        const rowChatId = normalizeIdentityValue(matchByPhoneOrChatIdOnly
+            ? row[12]
+            : (row[12] || row[11] || row[10] || ''));
 
         const hasData = rowUsername || rowName || rowPhone || rowChatId;
         if (!hasData) {
@@ -55,8 +57,10 @@ function findExistingRowByIdentity(rows, values, matchByPhoneOrChatIdOnly = fals
         }
 
         if (matchByPhoneOrChatIdOnly) {
-            if (inputChatId && rowChatId === inputChatId) return i + 1;
-            if (inputPhone && rowPhone === inputPhone && (!inputChatId || !rowChatId)) return i + 1;
+            const phoneMatch = inputPhone && rowPhone === inputPhone
+                && (!rowChatId || (inputChatId && rowChatId === inputChatId));
+            const chatIdMatch = inputChatId && rowChatId === inputChatId;
+            if (phoneMatch || chatIdMatch) return i + 1;
             continue;
         }
 
@@ -71,6 +75,17 @@ function findExistingRowByIdentity(rows, values, matchByPhoneOrChatIdOnly = fals
     }
 
     return null;
+}
+
+function buildRegistrationRowWritePlan(rows, values, options = {}) {
+    const existingRowNumber = findExistingRowByIdentity(rows, values, options.matchByPhoneOrChatIdOnly === true);
+    const targetRow = existingRowNumber || findFirstFreeRow(rows);
+    const rowSnapshot = rows[targetRow - 1] || [];
+    const valuesToWrite = mergeWithExistingRow(rowSnapshot, values);
+
+    if (options.matchByPhoneOrChatIdOnly === true && !normalizeIdentityValue(values[12])) valuesToWrite[12] = '';
+
+    return { existingRowNumber, targetRow, valuesToWrite };
 }
 
 function mergeWithExistingRow(existingRow, values) {
@@ -118,7 +133,12 @@ async function appendRegistrationRow(chatId, user, options = {}) {
     // K: Категорія
     // L: ГЗН
     // M: Чат ID
-    const values = buildRegistrationValues(chatId, user);
+    const requestedChatId = String(chatId || '').trim();
+    const registrantChatId = String(options.registrantChatId || '').trim();
+    const safeChatId = options.matchByPhoneOrChatIdOnly === true && requestedChatId === registrantChatId
+        ? ''
+        : requestedChatId;
+    const values = buildRegistrationValues(safeChatId, user);
 
     console.log(`appendRegistrationRow -> writing to ${config.PERSONAL_DATA_SHEET_NAME}:`, values);
 
@@ -154,10 +174,7 @@ async function appendRegistrationRow(chatId, user, options = {}) {
             });
             console.log(`✅ Лист прочитаний. Рядків: ${rows.length}`);
 
-            const existingRowNumber = findExistingRowByIdentity(rows, values, options.matchByPhoneOrChatIdOnly === true);
-            const targetRow = existingRowNumber || findFirstFreeRow(rows);
-            const rowSnapshot = rows[targetRow - 1] || [];
-            const valuesToWrite = mergeWithExistingRow(rowSnapshot, values);
+            const { existingRowNumber, targetRow, valuesToWrite } = buildRegistrationRowWritePlan(rows, values, options);
             console.log(`📝 ${existingRowNumber ? 'Оновлення' : 'Запис'} рядка ${targetRow}`);
 
             const range = sheetName ? `${sheetName}!A${targetRow}:M${targetRow}` : `A${targetRow}:M${targetRow}`;
@@ -198,10 +215,7 @@ async function appendRegistrationRow(chatId, user, options = {}) {
                         range: 'A:M'
                     });
                     const rows = existingResp.data.values || [];
-                    const existingRowNumber = findExistingRowByIdentity(rows, values, options.matchByPhoneOrChatIdOnly === true);
-                    const targetRow = existingRowNumber || findFirstFreeRow(rows);
-                    const rowSnapshot = rows[targetRow - 1] || [];
-                    const valuesToWrite = mergeWithExistingRow(rowSnapshot, values);
+                    const { existingRowNumber, targetRow, valuesToWrite } = buildRegistrationRowWritePlan(rows, values, options);
 
                     await state.sheetsClient.spreadsheets.values.update({
                         spreadsheetId: config.PERSONAL_DATA_SPREADSHEET_ID,
@@ -354,6 +368,8 @@ async function resolveKnownUser(chatId, knownUsers, lookupUser) {
 module.exports = {
     appendRegistrationRow,
     buildRegistrationValues,
+    buildRegistrationRowWritePlan,
+    findExistingRowByIdentity,
     findUserByChatId,
     resolveKnownUser,
     parsePersonalDataRow,

@@ -7,9 +7,12 @@ function buildFriendRegistrationRecord({
     friendPhone,
     eventId
 } = {}) {
+    const normalizedRegistrantChatId = String(registrantChatId || '').trim();
+    const requestedFriendChatId = String(friendChatId || '').trim();
+
     return {
-        registrantChatId: String(registrantChatId || '').trim(),
-        friendChatId: String(friendChatId || '').trim(),
+        registrantChatId: normalizedRegistrantChatId,
+        friendChatId: requestedFriendChatId === normalizedRegistrantChatId ? '' : requestedFriendChatId,
         friendName: String(friendName || '').trim(),
         friendPhone: String(friendPhone || '').replace(/\D/g, ''),
         eventId: String(eventId || '').trim()
