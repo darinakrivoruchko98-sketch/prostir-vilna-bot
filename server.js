@@ -9,6 +9,7 @@ const fs = require("fs");
 const path = require("path");
 const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
+const { startSelfKeepAlive } = require('./src/utils/keep-alive');
 const { WEBHOOK_PATH, createWebhookHandler, registerWebhook } = require("./src/telegram-webhook");
 const { createRecentKeyTracker } = require('./src/utils/update-dedupe');
 const { createAuthorizedSheetsClient } = require('./src/sheets/auth');
@@ -50,7 +51,7 @@ const BUILD_MARKER = process.env.BUILD_MARKER || 'appeals-fix-2026-07-23-01';
 const BROADCAST_OWNER_CHAT_ID = Number(String(process.env.BROADCAST_OWNER_CHAT_ID || process.env.DARYNA_CHAT_ID || config.DARYNA_CHAT_ID || '375328037').trim());
 const BROADCAST_ALL_TRIGGER_REGEX = /❗️?|‼️/;
 const BROADCAST_TARGETED_TRIGGER_REGEX = /❕/;
-const APP_TIME_ZONE = process.env.TZ || 'Europe/Kyiv';
+const APP_TIME_ZONE = process.env.APP_TIME_ZONE || 'Europe/Kyiv';
 const BENEFICIARY_SUMMARY_STORAGE_PATH = path.join(__dirname, 'data', 'beneficiary-summary-cache.json');
 // Захист ідентичності бота: якщо хтось змінить назву/опис через BotFather, бот відновить їх автоматично
 const BOT_USERNAME = process.env.BOT_USERNAME || '';
@@ -273,6 +274,8 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
+    // Зовнішній безкоштовний монітор будить сервіс і заодно доназдоганяє пропущені запити на відгук (ідемпотентно).
+    triggerDailyFeedbackCatchUp();
     res.json({ 
         status: 'healthy',
         uptime: process.uptime(),
@@ -2939,7 +2942,22 @@ async function sendDailyFeedbackPrompt(chatId, dateKey) {
     setFeedbackStatus(chatId, dateKey, 'requested');
 }
 
+let dailyFeedbackCheckInFlight = false;
+
 async function checkAndSendDailyFeedbackRequests() {
+    // Повільна відправка не має перекриватися з наступним тиком, інакше статус ще не збережений і запит піде двічі.
+    if (dailyFeedbackCheckInFlight) {
+        return;
+    }
+    dailyFeedbackCheckInFlight = true;
+    try {
+        await runDailyFeedbackCheck();
+    } finally {
+        dailyFeedbackCheckInFlight = false;
+    }
+}
+
+async function runDailyFeedbackCheck() {
     const now = new Date();
     const { hour, minute } = getCurrentTimePartsInAppTimeZone(now);
     if (hour < FEEDBACK_PROMPT_HOUR || (hour === FEEDBACK_PROMPT_HOUR && minute < FEEDBACK_PROMPT_MINUTE)) {
@@ -2972,6 +2990,8 @@ async function checkAndSendDailyFeedbackRequests() {
             await sendDailyFeedbackPrompt(chatId, dateKey);
             sentCount += 1;
             hasStateChanges = true;
+            // Зберігаємо одразу: рестарт посеред розсилки не має повторити запит тим, хто вже отримав.
+            saveReminderStateToDisk();
         } catch (error) {
             console.error(`❌ Не вдалося надіслати запит відгуку chatId=${chatId}:`, error && error.message ? error.message : error);
         }
@@ -5656,17 +5676,10 @@ async function initSheets() {
             console.error('❌ Помилка першої перевірки нагадувань:', error);
         });
 
-        checkAndSendDailyFeedbackRequests().catch((error) => {
-            console.error('❌ Помилка першої перевірки запитів на відгук:', error);
-        });
-
         // Запускаємо перевірку нагадувань щохвилини
         setInterval(() => {
             checkAndSendReminders().catch((error) => {
                 console.error('❌ Помилка перевірки нагадувань:', error);
-            });
-            checkAndSendDailyFeedbackRequests().catch((error) => {
-                console.error('❌ Помилка перевірки запитів на відгук:', error);
             });
         }, 60 * 1000); // 1 хвилина
 
@@ -5678,6 +5691,32 @@ async function initSheets() {
         // Не падаємо - сервер має працювати навіть без Sheets
     }
 }
+
+// Запити на відгук не залежать від Google Sheets/initSheets: працюють на стані з диска та в памяті.
+function triggerDailyFeedbackCatchUp() {
+    checkAndSendDailyFeedbackRequests().catch((error) => {
+        console.error('❌ Помилка перевірки запитів на відгук (health):', error);
+    });
+}
+
+let dailyFeedbackTimer = null;
+function startDailyFeedbackScheduler() {
+    if (dailyFeedbackTimer) {
+        return dailyFeedbackTimer;
+    }
+    const run = () => checkAndSendDailyFeedbackRequests().catch((error) => {
+        console.error('❌ Помилка перевірки запитів на відгук:', error);
+    });
+    run();
+    dailyFeedbackTimer = setInterval(run, 60 * 1000);
+    return dailyFeedbackTimer;
+}
+startDailyFeedbackScheduler();
+
+// Render free засинає без вхідного трафіку (таймери тоді не працюють) — пінгуємо власний /health.
+startSelfKeepAlive({
+    baseUrl: process.env.KEEP_ALIVE_URL || process.env.RENDER_EXTERNAL_URL || process.env.WEBHOOK_URL
+});
 
 // Викликаємо асинхронно - не блокує старт сервера
 initSheets().catch(err => {
