@@ -7477,18 +7477,22 @@ async function processParsedEvents(parsedEvents) {
     const AI_INTENT_TAGS = ['SHOW_DAY', 'REGISTER_EVENT', 'SHOW_AFFISHA', 'UNKNOWN'];
 
     function getMainMenuKeyboard(chatId) {
-        const buttons = [
-            [{ text: MAIN_MENU_BUTTONS.afisha }],
-            [{ text: MAIN_MENU_BUTTONS.unsubscribe }],
-            [{ text: MAIN_MENU_BUTTONS.friend }],
-            [{ text: MAIN_MENU_BUTTONS.editProfile }],
-            [{ text: MAIN_MENU_BUTTONS.consultations }],
-            [{ text: MAIN_MENU_BUTTONS.violenceHelp }],
-            [{ text: MAIN_MENU_BUTTONS.reminders }]
+        const menuButtons = [
+            MAIN_MENU_BUTTONS.afisha,
+            MAIN_MENU_BUTTONS.unsubscribe,
+            MAIN_MENU_BUTTONS.friend,
+            MAIN_MENU_BUTTONS.editProfile,
+            MAIN_MENU_BUTTONS.consultations,
+            MAIN_MENU_BUTTONS.violenceHelp,
+            MAIN_MENU_BUTTONS.reminders,
+            MAIN_MENU_BUTTONS.contacts
         ];
 
-        buttons.push([{ text: MAIN_MENU_BUTTONS.contacts }]);
-        return buttons;
+        const keyboard = [];
+        for (let index = 0; index < menuButtons.length; index += 2) {
+            keyboard.push(menuButtons.slice(index, index + 2).map((text) => ({ text })));
+        }
+        return keyboard;
     }
 
     function buildStatisticsSelectionKeyboard() {
