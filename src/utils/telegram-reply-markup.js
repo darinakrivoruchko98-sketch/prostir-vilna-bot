@@ -11,7 +11,16 @@ function normalizeSendOptions(options = {}) {
         const hasKeyboard = Object.prototype.hasOwnProperty.call(replyMarkup, 'keyboard');
         const hasForceReply = Object.prototype.hasOwnProperty.call(replyMarkup, 'force_reply');
 
-        if (!hasKeyboard && !hasForceReply) {
+        if (hasKeyboard && Array.isArray(replyMarkup.keyboard)) {
+            const buttons = replyMarkup.keyboard.flat();
+            if (buttons.length > 1) {
+                const keyboard = [];
+                for (let index = 0; index < buttons.length; index += 2) {
+                    keyboard.push(buttons.slice(index, index + 2));
+                }
+                normalized.reply_markup = { ...replyMarkup, keyboard };
+            }
+        } else if (!hasForceReply) {
             normalized.reply_markup = { ...replyMarkup, remove_keyboard: true };
         }
     }

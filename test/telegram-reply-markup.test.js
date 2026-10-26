@@ -13,6 +13,34 @@ test('normalizeSendOptions preserves explicit keyboard markup', () => {
     assert.deepEqual(result.reply_markup, input.reply_markup);
 });
 
+test('normalizeSendOptions lays out reply keyboard buttons in two columns', () => {
+    const input = {
+        reply_markup: {
+            keyboard: [
+                [{ text: 'Дата 1' }],
+                [{ text: 'Дата 2' }],
+                [{ text: 'Дата 3' }],
+                [{ text: 'Повернутися в меню' }]
+            ],
+            resize_keyboard: true
+        }
+    };
+
+    const result = normalizeSendOptions(input);
+
+    assert.deepEqual(result.reply_markup.keyboard, [
+        [{ text: 'Дата 1' }, { text: 'Дата 2' }],
+        [{ text: 'Дата 3' }, { text: 'Повернутися в меню' }]
+    ]);
+    assert.equal(result.reply_markup.resize_keyboard, true);
+});
+
+test('normalizeSendOptions preserves a single-button reply keyboard', () => {
+    const input = { reply_markup: { keyboard: [[{ text: 'Назад' }]] } };
+    const result = normalizeSendOptions(input);
+    assert.deepEqual(result.reply_markup, input.reply_markup);
+});
+
 test('normalizeSendOptions preserves force_reply markup', () => {
     const input = { reply_markup: { force_reply: true } };
     const result = normalizeSendOptions(input);
