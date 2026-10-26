@@ -13536,7 +13536,7 @@ bot.on('message', async (msg) => {
                 return;
             }
 
-            await bot.sendMessage(chatId, 'Не зовсім зрозумілий запит. Будь ласка, оберіть потрібний розділ:', {
+            await bot.sendMessage(chatId, 'Оберіть потрібний розділ, натиснувши кнопку нижче👇', {
                 reply_markup: {
                     keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
@@ -13554,7 +13554,7 @@ bot.on('message', async (msg) => {
                 return;
             }
 
-            await bot.sendMessage(chatId, 'Не зовсім зрозумілий запит. Будь ласка, оберіть потрібний розділ:', {
+            await bot.sendMessage(chatId, 'Оберіть потрібний розділ, натиснувши кнопку нижче👇', {
                 reply_markup: {
                     keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
@@ -13569,7 +13569,7 @@ bot.on('message', async (msg) => {
                 return;
             }
 
-            await bot.sendMessage(chatId, 'Не зовсім зрозумілий запит. Будь ласка, оберіть потрібний розділ:', {
+            await bot.sendMessage(chatId, 'Оберіть потрібний розділ, натиснувши кнопку нижче👇', {
                 reply_markup: {
                     keyboard: getMainMenuKeyboard(chatId),
                     resize_keyboard: true
